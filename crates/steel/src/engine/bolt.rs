@@ -548,11 +548,13 @@ fn frame_and_bearings(
 /// which errs long and never under. A listed part whose box the axes cross but whose bearing
 /// ring no fastener ever finds material in (every crossing falls into a larger opening or past
 /// the part's outline) is refused: the group would not clamp it. `auto` picks the smallest
-/// standard length that covers the largest grip plus the washers the shank passes through
-/// (under the head and under the nut, when placed), the nut and the thread protrusion, so every
-/// fastener of the group is identical (the bolt length is measured from under the head, so a
-/// washer under the head lies on the shank, EN 1993-1-8 3.6 / EN 15048-1 clamp length). A
-/// fixed length shorter than that same requirement is refused.
+/// standard length that covers the largest grip plus the head height, the washers the shank
+/// passes through (under the head and under the nut, when placed), the nut and the thread
+/// protrusion, so every fastener of the group is identical. The bearing plane is the joint
+/// face: the head assembly stacks outside the joint and the nut stack hangs downward from the
+/// thread tip, so the covering length seats the nut washer exactly on the far plate (issue
+/// 555 audit item 9, the review on the 1111 batch; EN 1993-1-8 3.6 / EN 15048-1 clamp
+/// length). A fixed length shorter than that same requirement is refused.
 pub fn place_bolt_group(
     inputs: &BoltGroupInputs,
     bounds: &BTreeMap<ElementId, Bounds>,

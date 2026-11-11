@@ -565,7 +565,12 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
         }
         Some(_) => return Err(integrity("drawing prim profile disagrees")),
     };
-    let drawing = Drawing::admit(DrawingSpec {
+    // The stored revision re-admits through the decode-time admission: revisions authored
+    // before the glyph set grew carry names or titles the every-mark-draws rule now refuses,
+    // and retroactively blocking every document command on them would leave no migration
+    // path. The structural rules stay; a drawn export of such a revision refuses through
+    // `Drawing::ensure_drawable_text` until it is retitled.
+    let drawing = Drawing::admit_stored(DrawingSpec {
         id,
         name: text(root, "drawing:name", "string")?.to_owned(),
         source,

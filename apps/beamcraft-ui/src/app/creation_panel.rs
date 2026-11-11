@@ -284,7 +284,13 @@ impl App {
             // The cut's kept half-spaces: a snap target they hide never offers itself (issue
             // 569 item 17), like the view's own slab and work area below.
             let cut_planes = self.cut.as_ref().and_then(|cut| cut.effective().ok());
-            let grids = if self.grids_shown() {
+            // A view that hides the grid kind hides its lines, so it hides its snaps too
+            // (issue 569 item 13, the review on the 1111 batch): `grids_shown` is only the
+            // pane's guides switch.
+            let shown = pane.view.and_then(|id| self.views.book.get(&id));
+            let grids = if self.grids_shown()
+                && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
+            {
                 self.grid_scene.query_grids.as_slice()
             } else {
                 &[]

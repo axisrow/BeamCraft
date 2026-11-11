@@ -462,9 +462,25 @@ fn finite_point(point: [f64; 2]) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// Validates one geometry against the D07 slice bounds. Public because the closed intent reader
-/// rebuilds geometry from persisted bytes and must pass it through the same bounds.
+/// Validates one geometry against the D07 slice bounds, with the every-mark-draws glyph rule
+/// over a drawn text. Public because the closed intent reader rebuilds geometry from persisted
+/// bytes and must pass it through the same bounds.
 pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError> {
+    validate_geometry_for(geometry, true)
+}
+
+/// The decode-time structural validation of one geometry: the same bounds without the
+/// presentation-era every-mark-draws rule, so a stored revision whose drawn text carries a
+/// character the glyph set grew to refuse still re-admits ([`super::Drawing::admit_stored`]);
+/// its drawn export refuses through [`super::Drawing::ensure_drawable_text`] instead.
+pub fn validate_geometry_stored(geometry: &DraftingGeometry) -> Result<(), CommandError> {
+    validate_geometry_for(geometry, false)
+}
+
+fn validate_geometry_for(
+    geometry: &DraftingGeometry,
+    require_drawable: bool,
+) -> Result<(), CommandError> {
     match geometry {
         DraftingGeometry::Line { a, b } => {
             finite_point(*a)?;
@@ -596,8 +612,10 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
             // Every admitted character must draw as an original stroke glyph: a text that
             // silently blanked the marks it cannot draw lied about its own content (visual
             // audit finding 11). Supported set: capitals (ASCII lowercase folds onto
-            // them), digits, space and the drawing punctuation.
-            if text.chars().find(|ch| !super::svg::draws(*ch)).is_some() {
+            // them), digits, space and the drawing punctuation. The rule gates authoring
+            // only; the decode path re-admits what an older glyph set accepted and the
+            // drawn export refuses instead (the review on the 1111 batch).
+            if require_drawable && text.chars().find(|ch| !super::svg::draws(*ch)).is_some() {
                 return Err(invalid(
                     "drafting",
                     "text draws with the drawing's own stroke glyphs; a character outside \

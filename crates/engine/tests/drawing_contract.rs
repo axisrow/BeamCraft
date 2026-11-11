@@ -119,6 +119,48 @@ fn titles_and_the_name_admit_only_what_the_stroke_glyphs_draw() {
 }
 
 #[test]
+fn a_stored_revision_re_admits_text_the_glyph_set_grew_to_refuse_and_its_export_gates() {
+    // The glyph rule is presentation-era (the review on the 1111 batch): a drawing authored
+    // while the name admitted any bounded label must still open after the upgrade, because
+    // gating decode would refuse every document command on it with no migration path. The
+    // authoring admission refuses the same text, and the stored revision's drawn export
+    // refuses honestly until the document is retitled.
+    let mut s = spec();
+    s.name = "Чертёж вала".into();
+    assert_eq!(Drawing::admit(s.clone()).unwrap_err().field, "name");
+    let stored = Drawing::admit_stored(s).unwrap();
+    assert_eq!(stored.ensure_drawable_text().unwrap_err().field, "name");
+    let mut s = spec();
+    s.name = "SHAFT DRAWING".into();
+    let authored = Drawing::admit(s).unwrap();
+    assert!(authored.ensure_drawable_text().is_ok());
+    // The same rule over a drawn text object: the old fixture content (a guillemet) refuses
+    // the authoring admission and the drawn export, and the stored revision still opens.
+    let layer = LayerSpec {
+        id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000009").unwrap(),
+        name: "Outlines".into(),
+        visible: true,
+    };
+    let entity = DraftingSpec {
+        id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap(),
+        geometry: DraftingGeometry::Text {
+            anchor: [12.0, 3.0],
+            text: "Note «B» +50%".to_owned(),
+            height: 3.5,
+            rotation: -0.25,
+        },
+        layer: layer.id,
+        line_type: LineType::Continuous,
+    };
+    let mut s = spec();
+    s.layers = vec![layer];
+    s.drafting = vec![entity];
+    assert_eq!(Drawing::admit(s.clone()).unwrap_err().field, "drafting");
+    let stored = Drawing::admit_stored(s).unwrap();
+    assert_eq!(stored.ensure_drawable_text().unwrap_err().field, "drafting");
+}
+
+#[test]
 fn admission_accepts_only_member_vertex_references_of_the_selected_owner() {
     let admitted = Drawing::admit(spec()).unwrap();
     assert_eq!(admitted.spec(), &spec());

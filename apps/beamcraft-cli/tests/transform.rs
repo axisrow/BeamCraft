@@ -346,6 +346,87 @@ fn a_member_mirror_reflects_the_path_and_refuses_a_polybeam() {
 }
 
 #[test]
+fn a_mirror_of_an_omega_profile_refuses_instead_of_rebuilding_upside_down() {
+    // The straight-member re-encode is exact only for height-symmetric families. An omega
+    // (hat) profile is not, and the previous across-flip encode that mirrored it exactly is
+    // gone with the depth re-encode, so a mirror would silently rebuild the hat
+    // upside-down: it refuses with nothing written (the review on the 1111 batch).
+    let f = Fixture::new();
+    let published = f.dir("mirror-omega");
+    std::fs::create_dir_all(&published).unwrap();
+    let profile = text(
+        at(
+            &f.ok(&[
+                "define-profile",
+                "--store",
+                &published,
+                "--family",
+                "omega",
+                "--h",
+                "200",
+                "--b",
+                "150",
+                "--c",
+                "20",
+                "--t",
+                "2",
+                "--r",
+                "3",
+            ]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let created = f.ok(&[
+        "create-member",
+        "--store",
+        &published,
+        "--profile-digest",
+        &profile,
+        "--start",
+        "0,0,0",
+        "--end",
+        "2000,0,0",
+        "--kind",
+        "beam",
+    ]);
+    let id = text(at(&created, &["member"]), "element_id");
+    let dir = f.dir("mirror-omega-ws");
+    f.ok(&[
+        "create-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+        "--user-id",
+        USER,
+    ]);
+    assert_eq!(
+        f.code(&[
+            "update-element",
+            "--store",
+            &dir,
+            "--id",
+            &id,
+            "--mirror-point",
+            "0,0,0",
+            "--mirror-normal",
+            "0,1,0",
+        ]),
+        "UNSUPPORTED_GEOMETRY"
+    );
+    // Nothing was written: the head member keeps its unmirrored path.
+    let head = f.ok(&["inspect-elements", "--store", &published]);
+    let members = at(&head, &["members"]).array().unwrap();
+    assert_eq!(members.len(), 1);
+    let points = at(&members[0], &["axis_points_mm"]).array().unwrap();
+    assert_eq!(points.len(), 2);
+    let start = points[0].array().unwrap();
+    let start: Vec<f64> = start.iter().map(|v| v.float().unwrap()).collect();
+    assert_eq!(start, vec![0.0, 0.0, 0.0]);
+}
+
+#[test]
 fn a_drilled_member_refuses_the_copy_the_array_and_the_mirror() {
     let f = Fixture::new();
     let published = f.dir("drilled");

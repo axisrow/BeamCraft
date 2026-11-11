@@ -429,11 +429,14 @@ pub fn fit_end_to_part(
         ));
     }
     // The target's extent midpoint decides the nearer tool face: a plate's contour centre at
-    // half the thickness, a member's axis midpoint.
+    // the mid of its authored thickness band (the phantom slab mid would flip the side
+    // decision for a bottom or middle plate — the tool side of the same audit item already
+    // reads its band, issue 569 items 6-9), a member's axis midpoint.
     let target = match (plate, member) {
         (Some(authored), _) => {
             let (cx, cy) = bbox_center(authored.contour_points_mm.iter().map(|p| [p[0], p[1]]));
-            let reference = [cx, cy, authored.thickness_mm / 2.0];
+            let [low, high] = authored.local_z_band_mm();
+            let reference = [cx, cy, (low + high) / 2.0];
             Some((
                 &authored.placement,
                 authored.placement.orientation_xyzw,
@@ -1525,6 +1528,65 @@ mod tests {
             assert_eq!(record.point_mm, [2000.0, 0.0, 0.0]);
             assert_eq!(record.normal, [1.0, 0.0, 0.0]);
             assert_eq!(record.keep, KeepSide::Positive);
+        }
+    }
+
+    #[test]
+    fn a_fit_reads_the_target_thickness_side_not_the_phantom_slab() {
+        // Issue 569 items 6-9, target half (the review on the 1111 batch): a `bottom`
+        // 100 mm target spans world x = 0..100, so the reference midpoint sits at x = 50 and
+        // the fit trims flush with the tool's near face at x = 90. Reading the phantom slab
+        // mid (local t/2, world x = 150) picks the tool's far face at x = 100 instead and the
+        // fit removes nothing. The same body authored as `top` one placement back fits
+        // identically, so the decision follows the band, not the absolute position.
+        let orientation = [0.5, 0.5, 0.5, 0.5];
+        let bottom = AuthoredPlate {
+            thickness_mm: 100.0,
+            thickness_side: Some(crate::model::command::PlateSide::Bottom),
+            placement: Placement {
+                translation_mm: [100.0, -300.0, -300.0],
+                orientation_xyzw: orientation,
+            },
+            ..tool(9, 600.0, 600.0, 100.0, Placement::IDENTITY)
+        };
+        let top = AuthoredPlate {
+            thickness_mm: 100.0,
+            placement: Placement {
+                translation_mm: [0.0, -300.0, -300.0],
+                orientation_xyzw: orientation,
+            },
+            ..tool(10, 600.0, 600.0, 100.0, Placement::IDENTITY)
+        };
+        let fitting = AuthoredPlate {
+            thickness_mm: 10.0,
+            placement: Placement {
+                translation_mm: [90.0, -300.0, -300.0],
+                orientation_xyzw: orientation,
+            },
+            ..tool(7, 600.0, 600.0, 10.0, Placement::IDENTITY)
+        };
+        for (target_id, authored) in [(id(9), &bottom), (id(10), &top)] {
+            let command = FitEndToPart {
+                target_id,
+                operation_id: op(210),
+                tool_id: id(7),
+            };
+            let outcome =
+                fit_end_to_part(&command, Some(authored), None, Some(&fitting), &none, 0).unwrap();
+            let CutTarget::Plate(fitted) = &outcome.target else {
+                panic!("expected the plate target");
+            };
+            let [record] = fitted.cuts.as_slice() else {
+                panic!("expected one cut record");
+            };
+            // The derived plane lives in the target's own frame: the trim is flush with the
+            // tool's near real face (target-local z = -10 for the bottom band, z = 90 for the
+            // top band), keeping the material side the authored band mid lies on. The phantom
+            // slab mid would pick the tool's far face instead and trim nothing.
+            let expected_face = if target_id == id(9) { -10.0 } else { 90.0 };
+            assert_eq!(record.point_mm, [300.0, 300.0, expected_face]);
+            assert_eq!(record.normal, [0.0, 0.0, 1.0]);
+            assert_eq!(record.keep, KeepSide::Negative);
         }
     }
 
