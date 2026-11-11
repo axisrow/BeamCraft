@@ -10122,4 +10122,342 @@ mod navigation_tests {
         assert!(camera.navigate(orbit, pan, zoom).is_err());
         assert!(camera.distance().is_finite(), "mouse pan");
     }
+
+    // ===== issue 584 (items 3, 6, 7): the recheck of the 569/562 visual fixes =====
+    use super::App;
+    use super::tests::{headless, on_the_menu};
+
+    /// Hands a finished reload to the window, like the tests module's `deliver`.
+    fn deliver(app: &mut App, reloaded: crate::source::Reloaded) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(reloaded).unwrap();
+        app.reload_job = Some(rx);
+        app.poll_reload();
+    }
+
+    /// A full app frame at an arbitrary window size: the labels and text-galley rects it drew
+    /// (issue 584 item 7 resizes the window; `app_frame` is fixed at 1280×800). `time`
+    /// advances egui's clock, so tooltip delays can elapse across frames.
+    fn frame_at_size(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        size: [f32; 2],
+        time: f64,
+    ) -> (Vec<(String, egui::Pos2)>, Vec<egui::Rect>) {
+        let mut eframe_frame = eframe::Frame::_new_kittest();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(size[0], size[1]),
+                )),
+                events,
+                time: Some(time),
+                ..Default::default()
+            },
+            |ui| eframe::App::ui(app, ui, &mut eframe_frame),
+        );
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        for shape in &output.shapes {
+            if let egui::Shape::Text(text) = &shape.shape {
+                labels.push((
+                    text.galley.text().to_owned(),
+                    text.pos + text.galley.size() / 2.0,
+                ));
+                rects.push(egui::Rect::from_min_size(text.pos, text.galley.size()));
+            }
+        }
+        output.drop_without_applying_deltas();
+        (labels, rects)
+    }
+
+    /// The strips frame the way `workspace_has_dense_entity_and_snap_strips` drives them: the
+    /// panels composed directly, since the headless window shows no model chrome of its own.
+    /// Returns the square switch buttons the status strips drew, in paint order: the 20
+    /// entity filters first, then the 14 snap switches.
+    fn strip_buttons_at_size(
+        app: &mut App,
+        ctx: &egui::Context,
+        size: [f32; 2],
+    ) -> Vec<egui::Rect> {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(size[0], size[1]),
+                )),
+                time: Some(0.1),
+                ..Default::default()
+            },
+            |ui| {
+                app.header(ui);
+                app.ribbon(ui);
+                app.status_bar(ui);
+                app.inspector(ui);
+                app.project_browser(ui);
+                egui::CentralPanel::default().show(ui, |_| {});
+            },
+        );
+        let band_top = size[1] - 60.0;
+        let mut buttons = Vec::new();
+        for clipped in &output.shapes {
+            if let egui::Shape::Rect(rect) = &clipped.shape {
+                let r = rect.rect;
+                if r.top() >= band_top
+                    && (16.0..=40.0).contains(&r.width())
+                    && (r.width() - r.height()).abs() < 1.0
+                {
+                    buttons.push(r);
+                }
+            }
+        }
+        output.drop_without_applying_deltas();
+        buttons
+    }
+
+    #[test]
+    fn the_snap_strip_never_paints_over_the_entity_filters_on_a_narrow_window() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        for size in [[900.0, 650.0], [800.0, 600.0]] {
+            let buttons = strip_buttons_at_size(&mut app, &ctx, size);
+            // The entity strip is always its 20 filters (switches.rs asserts the count); the
+            // snap switches follow, what of them the strip's room shows.
+            assert!(
+                buttons.len() > 20,
+                "the status strips drew at {size:?}, drew {}: {buttons:?}",
+                buttons.len()
+            );
+            let (entities, snaps) = buttons.split_at(20);
+            let filters_right = entities
+                .iter()
+                .map(|rect| rect.right())
+                .fold(f32::NEG_INFINITY, f32::max);
+            let snaps_left = snaps
+                .iter()
+                .map(|rect| rect.left())
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                filters_right <= snaps_left,
+                "at {size:?} the snap strip starts at {snaps_left} but the filters reach {filters_right}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_elided_store_path_shows_a_single_tooltip_on_hover() {
+        let Some(mut app) = headless() else { return };
+        let deep = std::env::temp_dir().join(
+            "bc-584-item3/Example Engineering/Shared documents/BeamCraft projects/2026-014 Client project/Warehouse extension/Structural steel/Detailing models/Main building",
+        );
+        app.source.store = deep.clone();
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        let (labels, rects) = frame_at_size(&mut app, &ctx, vec![], [1280.0, 800.0], 0.1);
+        let footer = labels
+            .iter()
+            .zip(rects.iter())
+            .find(|((text, _), _)| {
+                text.contains("Detailing models") || text.contains("bc-584-item3")
+            })
+            .map(|(_, rect)| *rect)
+            .unwrap_or_else(|| panic!("the store path footer was not drawn"));
+        // The pointer parks on the footer; egui shows the tooltip after its 0.5 s hover
+        // delay, so the clock advances and the capture frame carries no pointer event. The
+        // popup renders a frame after the delay elapses, hence the holding frame.
+        let hover = vec![egui::Event::PointerMoved(footer.center())];
+        frame_at_size(&mut app, &ctx, hover, [1280.0, 800.0], 0.4);
+        frame_at_size(&mut app, &ctx, vec![], [1280.0, 800.0], 0.9);
+        let (labels, rects) = frame_at_size(&mut app, &ctx, vec![], [1280.0, 800.0], 1.4);
+        // Every tooltip holds the whole path, wrapped, so its galley stands several text rows
+        // tall; the footer line never does. The middle segment survives no elision.
+        let tooltips = labels
+            .iter()
+            .zip(rects.iter())
+            .filter(|(label, rect)| {
+                label.0.contains("2026-014 Client project") && rect.height() > 20.0
+            })
+            .count();
+        assert_eq!(
+            tooltips, 1,
+            "one tooltip with the full path, drew {tooltips}"
+        );
+    }
+
+    #[test]
+    fn a_view_that_hides_the_grid_kind_hides_its_snap_targets() {
+        use beamcraft_engine::query::pick::SnapKind;
+        use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
+        use beamcraft_model::id::ElementId;
+        let Some(mut app) = headless() else { return };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file(), "build beamcraft-cli before native tests");
+        let root = std::env::temp_dir().join(format!(
+            "bc-584-hidden-grid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.to_str().unwrap().to_owned();
+        let views_file = format!("{store}.views.usda");
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .arg(command)
+                .args(["--store", &store])
+                .args(args)
+                .env(
+                    "BEAMCRAFT_CONFIG_DIR",
+                    std::env::temp_dir().join("bc-584-cli-config"),
+                )
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{command}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        };
+        run(
+            "create-plate",
+            &[
+                "--contour",
+                "-500,-500;12500,-500;12500,5500;-500,5500",
+                "--thickness",
+                "20",
+                "--thickness-side",
+                "bottom",
+                "--name",
+                "SLAB",
+            ],
+        );
+        run(
+            "save-view",
+            &[
+                "--file",
+                &views_file,
+                "--name",
+                "Hide grid",
+                "--yaw",
+                "-0.9",
+                "--pitch",
+                "0.6",
+                "--span",
+                "20000",
+                "--hidden-kinds",
+                "grid",
+                "--default",
+                "true",
+            ],
+        );
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reloaded = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
+        deliver(&mut app, reloaded);
+        let book = crate::views::load(&root).unwrap();
+        app.views.baseline = book.clone();
+        app.views.book = book;
+        let hide = app
+            .views
+            .book
+            .views()
+            .iter()
+            .find(|view| view.name == "Hide grid")
+            .cloned()
+            .unwrap_or_else(|| panic!("the saved view was not in the book"));
+        assert!(
+            !hide.shows_kind(beamcraft_engine::ElementKind::Grid),
+            "the saved view hides the grid kind"
+        );
+        // The window opens the default view: its plane camera, the scene origin and reach.
+        let extent = {
+            let loaded = app.loaded.as_ref().unwrap();
+            let [a, b, c] = loaded.summary.min;
+            let [d, e, f] = loaded.summary.max;
+            ((d - a).hypot(e - b).hypot(f - c) * 2.0).max(1000.0)
+        };
+        let origin = app.view_origin();
+        let camera = crate::camera::Camera::from_view(&hide, origin, extent).unwrap();
+        let pane = app.views.active_pane_mut().unwrap();
+        pane.view = Some(hide.id);
+        pane.camera = camera;
+        // The drawn grid of the repro store, the same lines the window's grid job loads.
+        app.grid_scene.query_grids = vec![Grid {
+            id: ElementId::parse("01990000-0000-7000-8000-000000004001").unwrap(),
+            name: "Main".into(),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+            u: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: ElementId::parse("01990000-0000-7000-8000-000000004002").unwrap(),
+                label: "B".into(),
+                start_mm: [-2000.0, 5000.0],
+                end_mm: [14000.0, 5000.0],
+            }]),
+            v: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: ElementId::parse("01990000-0000-7000-8000-000000004003").unwrap(),
+                label: "2".into(),
+                start_mm: [6000.0, -2000.0],
+                end_mm: [6000.0, 7000.0],
+            }]),
+        }];
+        app.set_bench(super::workbench::Bench::Beam);
+        for kind in SnapKind::ALL {
+            app.selection
+                .set_snap(kind, kind == SnapKind::GridIntersection);
+        }
+        let view = app
+            .views
+            .active_pane()
+            .unwrap()
+            .camera
+            .view(app.aspect())
+            .unwrap();
+        let local = std::array::from_fn(|i| ([6000., 5000., 0.][i] - origin[i]) as f32);
+        let [x, y, _] = view.project(local);
+        let ray = crate::edit::ray_through(&view, [x, y], origin).unwrap();
+        let (point, kind) = app.creation_hit(ray, false).unwrap();
+        assert!(
+            !matches!(
+                kind,
+                Some(SnapKind::GridIntersection | SnapKind::GridLine | SnapKind::GridEnd)
+            ),
+            "the view hides the grid but the Beam tool snapped {kind:?} at {point:?}"
+        );
+        // The control: the free 3D view with the same camera still snaps to the grid, so the
+        // assertion above proves the view gate and not a broken setup.
+        app.views.active_pane_mut().unwrap().view = None;
+        let (point, kind) = app.creation_hit(ray, false).unwrap();
+        assert_eq!(
+            kind,
+            Some(SnapKind::GridIntersection),
+            "the free view snaps to 2/B, snapped {kind:?} at {point:?}"
+        );
+        assert!(
+            point
+                .iter()
+                .zip([6000., 5000., 0.])
+                .all(|(a, b)| (a - b).abs() < 10.0),
+            "the snap lands on the 2/B intersection, got {point:?}"
+        );
+    }
 }

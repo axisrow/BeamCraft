@@ -1122,11 +1122,22 @@ impl App {
                     ) {
                         self.set_bench(Bench::Select);
                     }
+                    // The snap strip takes only the room the entity strip leaves: at a
+                    // narrow window it scrolls there instead of being painted over the
+                    // filters (issue 562 item 47).
+                    let room = (ui.max_rect().right() - ui.min_rect().right()).max(0.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.allocate_ui_with_layout(
-                            vec2(super::switches::snaps_width(), 24.0),
+                            vec2(super::switches::snaps_width().min(room), 24.0),
                             egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| super::switches::snaps(ui, &mut self.selection),
+                            |ui| {
+                                egui::ScrollArea::horizontal().id_salt("status-snaps").show(
+                                    ui,
+                                    |ui| {
+                                        super::switches::snaps(ui, &mut self.selection);
+                                    },
+                                );
+                            },
                         );
                     });
                 });
@@ -1570,13 +1581,15 @@ impl App {
                         ui.add(
                             // The path elides on one line with a tooltip: a deep folder wraps
                             // past the window edge otherwise, and the tail is never drawn
-                            // (issue 569 item 26).
+                            // (issue 569 item 26). The elision's own tooltip stays off: it
+                            // stacks a second copy of this hover text (issue 584 item 3).
                             egui::Label::new(
                                 RichText::new(self.source.store.display().to_string())
                                     .size(10.0)
                                     .color(palette.side_text()),
                             )
-                            .truncate(),
+                            .truncate()
+                            .show_tooltip_when_elided(false),
                         )
                         .on_hover_text(self.source.store.display().to_string());
                     });
