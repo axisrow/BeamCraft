@@ -222,7 +222,9 @@ fn paint_overlays(
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
-                    grids.paint(ui, rect, view, scene.origin_mm, None);
+                    // No saved view here: the CLI screenshot poses the camera itself, so no
+                    // depth slab filters the guides.
+                    grids.paint(ui, rect, view, scene.origin_mm, None, None);
                     if !annotations.is_empty() {
                         crate::app::annotation_panel::paint(
                             ui,

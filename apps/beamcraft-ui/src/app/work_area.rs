@@ -71,6 +71,45 @@ fn tab_width(ui: &egui::Ui, title: &str) -> f32 {
     (galley.size().x + 44.0).clamp(96.0, 200.0)
 }
 
+/// The twelve edges of an axis-aligned box: the selection outline of a body whose snapshot
+/// entry carries no semantic features, such as a bolt group's merged mesh (issue 584 item 9).
+/// Display bounds only, like any outline — never a quantity.
+pub(super) fn box_edges(
+    beamcraft_engine::Aabb { min, max }: beamcraft_engine::Aabb,
+) -> Vec<[[f64; 3]; 2]> {
+    let [x0, y0, z0] = min;
+    let [x1, y1, z1] = max;
+    let (a, b, c, d) = ([x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]);
+    let (e, f, g, h) = ([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]);
+    vec![
+        [a, b],
+        [b, c],
+        [c, d],
+        [d, a], // the bottom ring
+        [e, f],
+        [f, g],
+        [g, h],
+        [h, e], // the top ring
+        [a, e],
+        [b, f],
+        [c, g],
+        [d, h], // the four uprights
+    ]
+}
+
+/// The selection outline of `text` over the snapshot: the body's semantic edges when it has
+/// them, otherwise its display bounds' twelve edges — a body without semantic features, such
+/// as a bolt group's merged mesh, must still show what is selected (issue 584 item 9).
+fn selection_edges(snapshot: &beamcraft_engine::ViewSnapshot, text: &str) -> Vec<[[f64; 3]; 2]> {
+    let id = beamcraft_engine::ElementId::parse(text).ok();
+    id.and_then(|id| beamcraft_engine::query::feature::element_edges(snapshot, &id).ok())
+        .or_else(|| {
+            id.and_then(|id| snapshot.element_bounds(&id).ok())
+                .map(box_edges)
+        })
+        .unwrap_or_default()
+}
+
 impl App {
     /// Width over height of the active pane's image; 1.6 without a pane.
     pub(super) fn aspect(&self) -> f32 {
@@ -884,6 +923,7 @@ impl App {
                     &view,
                     l.summary.origin_mm,
                     self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
+                    shown,
                 );
             }
             if let Ok(rows) = self.annotation.rows.as_deref()
@@ -912,12 +952,7 @@ impl App {
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
                 if self.selection_edges.0 != key {
-                    let edges = beamcraft_engine::ElementId::parse(&selected.id)
-                        .ok()
-                        .and_then(|id| {
-                            beamcraft_engine::query::feature::element_edges(&l.snapshot, &id).ok()
-                        })
-                        .unwrap_or_default();
+                    let edges = selection_edges(&l.snapshot, &selected.id);
                     self.selection_edges = (key, edges);
                 }
                 let painter = ui.painter_at(response.rect);
@@ -1131,5 +1166,177 @@ impl App {
                 self.start_select(ray);
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_box_outline_has_twelve_edges_around_its_bounds() {
+        let edges = box_edges(beamcraft_engine::Aabb {
+            min: [0.0, 0.0, 0.0],
+            max: [300.0, 150.0, 20.0],
+        });
+        assert_eq!(edges.len(), 12);
+        assert!(edges.contains(&[[0.0, 0.0, 0.0], [300.0, 0.0, 0.0]]));
+        assert!(edges.contains(&[[300.0, 150.0, 20.0], [0.0, 150.0, 20.0]]));
+    }
+
+    #[test]
+    fn a_selected_bolt_group_outlines_its_bounds() {
+        // Issue 584 item 9: the group's merged mesh carries no semantic features, so the
+        // selection outline fell back to nothing and the viewport stayed unchanged. The
+        // display bounds step in; a plate on the same snapshot keeps its own edges.
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-584d-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let bare = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        bare(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+        ]);
+        for (name, z) in [("PA", "0"), ("PB", "10")] {
+            let mut args = vec![
+                "create-plate",
+                "--width",
+                "300",
+                "--length",
+                "150",
+                "--thickness",
+                "10",
+                "--name",
+                name,
+            ];
+            if z != "0" {
+                args.extend(["--translation", "0,0,10"]);
+            }
+            let output = std::process::Command::new(&cli)
+                .args(&args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        let listing = run(&["inspect-elements"]);
+        let plates = |listing: &beamcraft_json::Json| {
+            listing
+                .get("plates")
+                .and_then(|j| j.array())
+                .unwrap()
+                .iter()
+                .filter_map(|p| p.get("element_id").ok().and_then(|j| j.string().ok()))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        let parts = plates(&listing);
+        assert_eq!(parts.len(), 2, "the two plates are listed");
+        let plate = parts.first().unwrap().clone();
+        let parts = parts.join(",");
+        let library = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/libraries/synthetic-fasteners.usda");
+        bare(&[
+            "create-bolt-group",
+            "--store",
+            store.to_str().unwrap(),
+            "--name",
+            "BG",
+            "--parts",
+            &parts,
+            "--fastener-library",
+            library.to_str().unwrap(),
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,75,0",
+            "--point2",
+            "300,75,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "50",
+            "--count",
+            "3",
+            "--pitch",
+            "100",
+        ]);
+        let listing = run(&["bolts"]);
+        let groups = listing.get("bolt_groups").and_then(|j| j.array()).unwrap();
+        assert_eq!(groups.len(), 1, "the group is committed");
+        let group = groups
+            .first()
+            .and_then(|g| g.get("id").ok())
+            .and_then(|j| j.string().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| panic!("the group lists its id"));
+        let snapshot = crate::source::load(&cli, &store, &crate::stats::Stats::default()).unwrap();
+        let id = beamcraft_engine::ElementId::parse(&group).unwrap();
+        assert!(
+            beamcraft_engine::query::feature::element_edges(&snapshot, &id).is_err(),
+            "the merged mesh carries no semantic features"
+        );
+        let edges = selection_edges(&snapshot, &group);
+        assert_eq!(
+            edges.len(),
+            12,
+            "the bounds outline the selected group: {edges:?}"
+        );
+        // The primary path is untouched where features exist.
+        assert!(
+            beamcraft_engine::query::feature::element_edges(
+                &snapshot,
+                &beamcraft_engine::ElementId::parse(&plate).unwrap()
+            )
+            .is_ok(),
+            "a plate keeps its semantic edges"
+        );
+        assert!(!selection_edges(&snapshot, &plate).is_empty());
     }
 }

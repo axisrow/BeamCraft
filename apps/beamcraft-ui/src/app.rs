@@ -2363,6 +2363,16 @@ impl App {
         if let Some(note) = &self.colour_note {
             match note {
                 Ok(message) => {
+                    // One counting rule (issue 584 item 10): the note reports the overlay
+                    // actually applied, re-counted here like the header above — a delivery
+                    // that re-derives the catalogue overlay updates the colours without
+                    // rewriting the note, and the two counts cannot drift apart.
+                    let message = match self.colour.as_ref() {
+                        Some((name, overlay)) => {
+                            format!("`{name}` colours {} element(s).", overlay.len())
+                        }
+                        None => message.clone(),
+                    };
                     ui.label(message);
                 }
                 Err(message) => {
@@ -3620,6 +3630,74 @@ pub(crate) mod tests {
         app.poll_colour();
         assert!(app.colour.is_none());
         assert!(matches!(app.colour_note, Some(Err(_))));
+    }
+
+    #[test]
+    fn the_colour_note_counts_the_overlay_the_header_counts() {
+        // Issue 584 item 10: the first delivery writes the note through the auto default,
+        // a live refresh re-derives the overlay without rewriting it, and the panel showed
+        // two different counts. The note is counted from the applied overlay at display
+        // time, like the header.
+        let Some(mut app) = headless() else { return };
+        let dir =
+            std::env::temp_dir().join(format!("bc-colour-note-{}-{}", std::process::id(), line!()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The test's own colour sets: a set of the user's own suppresses the default.
+        app.colour_sets = crate::colour_sets::Sets::load(Some(&dir)).0;
+        assert!(!app.colour_sets.has_own());
+        let texts = |app: &mut App| {
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(500.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| app.colour_panel(ui),
+            );
+            let labels = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        // The window opens on two coloured elements: the auto default applies and reports.
+        deliver(&mut app, refreshed(2));
+        assert_eq!(app.colour.as_ref().map(|(_, o)| o.len()), Some(2));
+        assert!(
+            matches!(app.colour_note, Some(Ok(_))),
+            "{:?}",
+            app.colour_note
+        );
+        // Another process adds two elements; the live refresh re-derives the overlay.
+        deliver(&mut app, refreshed(4));
+        let overlay_len = app.colour.as_ref().map(|(_, o)| o.len());
+        assert_eq!(overlay_len, Some(4), "the refresh re-derived the overlay");
+        let labels = texts(&mut app);
+        let note = labels
+            .iter()
+            .find(|t| t.contains("colours") && t.contains("element(s)"))
+            .unwrap_or_else(|| panic!("the panel shows the note: {labels:?}"));
+        assert!(
+            note.contains("4 element(s)"),
+            "the note counts the applied overlay: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|t| t.contains(": 4 element(s) coloured")),
+            "the header counts the same overlay: {labels:?}"
+        );
+        assert!(
+            !labels.iter().any(|t| t.contains("2 element(s)")),
+            "no stale count survives the refresh: {labels:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
