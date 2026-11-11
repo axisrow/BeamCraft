@@ -190,6 +190,12 @@
    "text": "A storey placement is the point (0, 0, elevation) relative to the building placement. Element placements stay relative to the building placement, so a level adds no arithmetic to any element number."
   },
   {
+   "rule_id": "IFCX-LVL-005",
+   "severity": "error",
+   "f04_code": "INTEGRITY_ERROR",
+   "text": "An element whose part-of record names an element that is not an exported IfcElementAssembly - no such element, or a kind without the assembly mapping - refuses the export: the aggregation would dangle."
+  },
+  {
    "rule_id": "IFCX-PLC-001",
    "severity": "mapping",
    "f04_code": "-",
@@ -654,10 +660,10 @@
   }
  ],
  "case_counts": {
-  "logical_cases": 105,
+  "logical_cases": 106,
   "positive": 52,
-  "negative": 53,
-  "rules": 78
+  "negative": 54,
+  "rules": 79
  },
  "cases": [
   {
@@ -5652,6 +5658,77 @@
     "IfcElementQuantity": 0,
     "quantity_IfcRelDefinesByProperties": 0,
     "BeamCraft_Element": "written with VolumeStatus missing"
+   }
+  },
+  {
+   "case_id": "E01-NEG-54",
+   "title": "A part-of record naming a missing element refuses the export",
+   "rules": [
+    "IFCX-LVL-005"
+   ],
+   "polarity": "negative",
+   "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "assembly",
+      "name": "BASE-JOINT"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300011",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "part_of": "019a7bf0-0000-7000-8000-0000003000ff"
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "failed",
+    "primary_code": "INTEGRITY_ERROR",
+    "file_written": false
    }
   }
  ]
