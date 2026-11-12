@@ -469,9 +469,18 @@ impl Scan {
             .and_then(|body| body.strip_suffix(')'))
             .unwrap_or(attributes);
         self.global_id(id, attributes);
+        // The units assignment may reference every member of the IfcUnit select type
+        // (IfcSIUnit, IfcConversionBasedUnit, IfcContextDependentUnit, IfcDerivedUnit);
+        // a member kept out of this list is reported as a missing instance even when it
+        // exists.
         let interpreted = matches!(
             name.as_str(),
-            "IFCSIUNIT" | "IFCPROJECT" | "IFCUNITASSIGNMENT" | "IFCCONVERSIONBASEDUNIT"
+            "IFCSIUNIT"
+                | "IFCPROJECT"
+                | "IFCUNITASSIGNMENT"
+                | "IFCCONVERSIONBASEDUNIT"
+                | "IFCCONTEXTDEPENDENTUNIT"
+                | "IFCDERIVEDUNIT"
         );
         if name == "IFCPROJECT" {
             self.out.project_count += 1;
@@ -639,6 +648,7 @@ impl Scan {
 
     /// The length reading of the `IfcUnitAssignment` at `#id`: its SI length units. The
     /// conversion-based ones are counted by the instance scan; their factors are losses.
+    /// A derived or context-dependent unit cannot change the length unit and is no loss.
     /// Every shape the scan cannot split is a loss, never a silent `None`.
     fn units_of_assignment(&mut self, id: u64) -> Option<UnitsReading> {
         let body = self.interpreted_by_id(id).map(|e| e.body.clone())?;
@@ -683,7 +693,10 @@ impl Scan {
                         si.push(reading);
                     }
                 }
-                "IFCCONVERSIONBASEDUNIT" => {}
+                // A conversion-based unit is counted by the instance scan; its factor is
+                // not interpreted here. A derived or context-dependent unit cannot change
+                // the length unit, so neither one is a loss.
+                "IFCCONVERSIONBASEDUNIT" | "IFCCONTEXTDEPENDENTUNIT" | "IFCDERIVEDUNIT" => {}
                 other => self.loss(
                     "UNKNOWN_UNIT_KIND",
                     format!(

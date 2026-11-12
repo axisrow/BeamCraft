@@ -12,6 +12,7 @@
 )]
 
 use beamcraft_ifc::guid;
+use beamcraft_ifc::read;
 use beamcraft_ifc::verify::{self, Value};
 use beamcraft_ifc::{
     Declared, ElementData, Entity, ExportModel, LevelData, Limits, MaterialData, Mesh, Pose,
@@ -594,5 +595,19 @@ fn the_reader_rejects_damaged_files() {
             .unwrap()
             .check()
             .is_err()
+    );
+}
+
+#[test]
+fn a_written_file_scans_without_losses() {
+    let file = String::from_utf8(write(&model())).unwrap();
+    let out = read::inspect(file.as_bytes()).unwrap();
+    assert_eq!(out.losses, Vec::new(), "{:?}", out.losses);
+    assert_eq!(
+        out.length_unit,
+        Some(read::UnitsReading {
+            meters_per_unit: 0.001,
+            origin: "project_units",
+        })
     );
 }
