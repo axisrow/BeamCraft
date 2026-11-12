@@ -1,7 +1,8 @@
 # E04: IFC reference conversion study — the minimum input contract
 
-Date: 2026-11-05. Status: **input-side slice; the conversion itself is not implemented and is
-blocked on owner decisions recorded in
+Date: 2026-11-05. Status: **input-side slice delivered; the shapes reader (2026-11-12) reads
+the placed geometry; the conversion into a stored reference is not implemented and is blocked
+on owner decisions recorded in
 [Apibim-com/BeamCraft#527](https://github.com/Apibim-com/BeamCraft/issues/527)**.
 
 The owner requires a read-only IFC reference workflow in the MVP (decision of 2026-10-27) and
@@ -11,6 +12,31 @@ The workflow contract is
 [`docs/contracts/f12-external-reference-workflow-v0.1.md`](../contracts/f12-external-reference-workflow-v0.1.md);
 XR-SOURCE-002 pins the conversion record facts, and this slice delivers the *input* half of
 those facts — what any future converter consumes and is audited against.
+
+## The shapes reader (2026-11-12)
+
+After the inventory came the geometry: `beamcraft_ifc::shapes::read` reads the *placed triangle
+bodies* of the same bytes, and `beamcraft ifc-shapes --source FILE` reports them headlessly.
+
+| Piece | Where | What |
+|---|---|---|
+| Shapes reader | `beamcraft_ifc::shapes` | every product whose seventh attribute resolves to an `IfcProductDefinitionShape`, its `IfcLocalPlacement` chain, its `IfcTriangulatedFaceSet` bodies, the declared length unit; bodies leave the reader in millimetres, every unreadable construct is an explicit loss, and the budgets (instances, vertices, triangles, listed bodies) are module constants |
+| Shapes command | `ifc-shapes` (family `ifc`, route `Ifc`, access `read`) | one JSON object: the source digest and size, the declared schema, the length unit, product and shape counts, per-body identity, vertex/triangle counts and placed bounds, the loss list |
+
+Placement frames follow `IfcAxis2Placement3D`: Z from `Axis` (default 0,0,1), X from
+`RefDirection` orthogonalized against Z (default 1,0,0), Y = Z x X. A file without a usable SI
+length unit counts its products but reads no body (`GEOMETRY_WITHOUT_LENGTH_UNIT`): the
+millimetre contract cannot be honoured, and conversion-based factors stay uninterpreted, as in
+the study scan. The committed fixture `tests/fixtures/ifc/plate-hole.ifc` — the 120 x 80 x 10
+plate with one 18 mm hole at (60, 40) of the display issue plus a second plate — pins the exact
+facts, and the writer round trip asserts the same numbers against a fresh `export-ifc` output.
+
+What this reader deliberately is not: no schema table (products are recognised by their
+attribute shape resolving to an `IfcProductDefinitionShape`, not by a name list), no conversion
+into a stored USD reference or a display bundle (the read bodies have no consumer inside this
+slice yet), no native elements, no identity matching across deliveries, and no claim about
+which entity families a converter must admit — those remain the owner decisions the study
+records upstream.
 
 ## What is implemented
 

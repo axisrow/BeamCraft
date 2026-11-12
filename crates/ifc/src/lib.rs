@@ -14,6 +14,9 @@
 //! * [`write_ifc`]: the fixed entity templates in the order of section 11.2.
 //! * [`read`]: a bounded scanner of a received IFC file (the E04 study input contract). It
 //!   inventories and pins what the bytes declare; it builds no elements and converts nothing.
+//! * [`shapes`]: a bounded reader of the placed triangle bodies of a received file: products,
+//!   placement chains, tessellations, units — in millimetres, with explicit losses. It also
+//!   builds no elements; what a converter admits stays an owner decision.
 //! * [`verify`]: a structural reader used by tests to check a written file. It is a test
 //!   harness (E01 section 1.3), not an importer: nothing in BeamCraft builds elements from it.
 
@@ -21,6 +24,7 @@ mod emit;
 pub mod guid;
 pub mod model;
 pub mod read;
+pub mod shapes;
 pub mod step;
 pub mod verify;
 
