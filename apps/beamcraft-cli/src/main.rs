@@ -35,6 +35,7 @@ mod filters_cmd;
 mod grid_cmd;
 mod history_cmd;
 mod ifc_cmd;
+mod ifc_view;
 mod level_cmd;
 mod library_cmd;
 mod numbering_cmd;

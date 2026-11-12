@@ -1475,8 +1475,8 @@ element-edges --store ROOT --id UUID
 write.
 
 ```text
-export-view --store ROOT --out FILE [--with-definitions true|false] [--with-element UUID]
-    [--with-grids true|false]
+export-view --out FILE (--store ROOT | --source FILE) [--with-definitions true|false]
+    [--with-element UUID] [--with-grids true|false]
 ```
 
 ### screenshot-view
@@ -1484,9 +1484,9 @@ export-view --store ROOT --out FILE [--with-definitions true|false] [--with-elem
 write.
 
 ```text
-screenshot-view --store ROOT --out FILE [--width U32] [--height U32] [--samples 1|4] [--yaw RAD]
-    [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT]
-    [--background light|dark] [--grids true|false]
+screenshot-view --out FILE (--store ROOT | --source FILE) [--width U32] [--height U32]
+    [--samples 1|4] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32]
+    [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids true|false]
 ```
 
 ## bom

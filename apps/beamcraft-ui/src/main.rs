@@ -50,7 +50,7 @@ use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids true|false] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT] | --source FILE --screenshot FILE) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids true|false] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -71,6 +71,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
         let known = matches!(
             key.as_str(),
             "--store"
+                | "--source"
                 | "--workspace"
                 | "--published"
                 | "--cli"
@@ -186,14 +187,28 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     if published.is_some() && workspace.is_none() {
         return Err(usage());
     }
+    // A received IFC file is only a screenshot input: one read-only display, never a store
+    // the window would open or edit.
+    let ifc_source = map.get("--source").map(PathBuf::from);
+    if ifc_source.is_some()
+        && (map.contains_key("--store")
+            || map.contains_key("--workspace")
+            || map.contains_key("--published")
+            || !map.contains_key("--screenshot"))
+    {
+        return Err(usage());
+    }
     let cli = match map.get("--cli") {
         Some(path) => PathBuf::from(path),
         None => source::default_cli()?,
     };
     let config_dir = map.get("--config-dir").map(PathBuf::from);
     let store = match (map.get("--store"), &workspace) {
-        (Some(store), None) => PathBuf::from(store),
-        (None, Some(dir)) => dir.clone(),
+        (Some(store), None) => Some(PathBuf::from(store)),
+        (None, Some(dir)) => Some(dir.clone()),
+        // A --source run has no store: the screenshot branch below consumes it, and every
+        // other path refuses it earlier.
+        (None, None) if map.contains_key("--source") => None,
         // No model named: the window opens on the start page.
         (None, None)
             if !map.contains_key("--metrics")
@@ -226,7 +241,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             number(&map, "--width", 1280)?,
             number(&map, "--height", 800)?,
         ];
-        let snapshot = source::load(&cli, &store, &stats)?;
+        let snapshot = source::load(&cli, store.as_deref().ok_or_else(usage)?, &stats)?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
         return Ok(Some((
             metrics::measure(&scene, frames, size, samples, &stats)?.to_json(),
@@ -308,14 +323,26 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             Some(_) => return Err(usage()),
         };
         // The project grids ride the screenshot like the window's (issue 543); `--grids false`
-        // leaves them out of both the picture and the fit.
-        let (snapshot, grids) = match map.get("--grids").map(String::as_str) {
-            None | Some("true") => source::load_with_grids(&cli, &store, &stats)?,
-            Some("false") => (
-                source::load(&cli, &store, &stats)?,
+        // leaves them out of both the picture and the fit. A source IFC file carries no
+        // project grids: they belong to a store, so only the model is drawn and fitted.
+        let (snapshot, grids) = if let Some(source) = &ifc_source {
+            if map.get("--grids").map(String::as_str) == Some("true") {
+                return Err(usage());
+            }
+            (
+                source::load_source(&cli, source, &stats)?,
                 beamcraft_ui::grid::GridScene::default(),
-            ),
-            Some(_) => return Err(usage()),
+            )
+        } else {
+            let store = store.as_deref().ok_or_else(usage)?;
+            match map.get("--grids").map(String::as_str) {
+                None | Some("true") => source::load_with_grids(&cli, store, &stats)?,
+                Some("false") => (
+                    source::load(&cli, store, &stats)?,
+                    beamcraft_ui::grid::GridScene::default(),
+                ),
+                Some(_) => return Err(usage()),
+            }
         };
         // The default catalogue colours ride the screenshot (issue 535): the same tints the
         // window gives a freshly opened model, evaluated by the window's own path. A
@@ -349,12 +376,22 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         // The catalogue preset is the snapshot's own kinds: derived, not evaluated (the same
         // shift the window made for issue 562 items 20 and 34). Every other set evaluates on
         // the store head the way the window does, and a headless screenshot reads no
-        // colour-sets file on its own.
+        // colour-sets file on its own. A source file has no store to evaluate against, so
+        // only the catalogue preset rides its picture.
+        if ifc_source.is_some() && set.name != colour_sets::CATALOGUE_SET_NAME {
+            return Err(usage());
+        }
         let overlay = if set.name == colour_sets::CATALOGUE_SET_NAME {
             colour_sets::catalogue_overlay(snapshot.elements())
         } else {
-            colour_sets::evaluate(&cli, &store, &set, &AtomicBool::new(false), &stats)
-                .map_err(Error::Cli)?
+            colour_sets::evaluate(
+                &cli,
+                store.as_deref().ok_or_else(usage)?,
+                &set,
+                &AtomicBool::new(false),
+                &stats,
+            )
+            .map_err(Error::Cli)?
         };
         let scene = Scene::from_snapshot_showing(
             &snapshot,
@@ -365,20 +402,31 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         )?;
         // The resolved D06 annotations ride the screenshot like the grid guides (issue 562
         // item 37): the same `annotation-list` query the window's panel runs, painted by the
-        // same painter. A store without annotations or a failed query renders without them.
-        let annotations = beamcraft_ui::command::run(
-            &cli,
-            &[
-                "annotation-list".to_owned(),
-                "--store".to_owned(),
-                store.to_string_lossy().into_owned(),
-            ],
-            std::time::Duration::from_secs(30),
-            &stats,
-        )
-        .ok()
-        .and_then(|out| beamcraft_ui::app::annotation_panel::parse_rows(out.code, &out.stdout).ok())
-        .unwrap_or_default();
+        // same painter. A store without annotations or a failed query renders without them;
+        // a source file has no store to query, so it renders without them.
+        let annotations = if ifc_source.is_some() {
+            Vec::new()
+        } else {
+            beamcraft_ui::command::run(
+                &cli,
+                &[
+                    "annotation-list".to_owned(),
+                    "--store".to_owned(),
+                    store
+                        .as_deref()
+                        .ok_or_else(usage)?
+                        .to_string_lossy()
+                        .into_owned(),
+                ],
+                std::time::Duration::from_secs(30),
+                &stats,
+            )
+            .ok()
+            .and_then(|out| {
+                beamcraft_ui::app::annotation_panel::parse_rows(out.code, &out.stdout).ok()
+            })
+            .unwrap_or_default()
+        };
         let saved = screenshot::capture(
             &scene,
             &grids,
@@ -401,7 +449,9 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;
     let (report, reports) = std::sync::mpsc::channel();
     let source = Source {
-        store,
+        // Every path that reaches the window named a store or a workspace; a --source run
+        // returned in the screenshot branch above.
+        store: store.ok_or_else(usage)?,
         cli,
         workspace,
         published,

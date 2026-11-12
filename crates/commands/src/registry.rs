@@ -2437,7 +2437,8 @@ pub const COMMANDS: &[Command] = &[
         Access::Write,
         Ids::None,
         &[
-            req("--store", "ROOT"),
+            one(1, "--store", "ROOT"),
+            one(1, "--source", "FILE"),
             req("--out", "FILE"),
             opt("--with-definitions", "true|false"),
             opt("--with-element", "UUID"),
@@ -2451,7 +2452,8 @@ pub const COMMANDS: &[Command] = &[
         Access::Write,
         Ids::None,
         &[
-            req("--store", "ROOT"),
+            one(1, "--store", "ROOT"),
+            one(1, "--source", "FILE"),
             req("--out", "FILE"),
             opt("--width", "U32"),
             opt("--height", "U32"),
