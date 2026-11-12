@@ -821,6 +821,20 @@ impl<'a> Scan<'a> {
         };
         // IfcTriangulatedFaceSet(Coordinates, Normals, Closed, Triangles, Unit).
         let closed = matches!(strip_dots(span_text(body, &spans, 2).trim()), "T");
+        // IfcTriangulatedFaceSet(..., Unit): a per-body unit would rescale the body against
+        // the project declaration, and none is interpreted here, so a declared one refuses
+        // the body instead of leaving it mis-scaled.
+        match span_text(body, &spans, 4).trim() {
+            "$" | "" | "*" => {}
+            _ => {
+                return Err(fail(
+                    "FACE_SET_UNIT_NOT_READ",
+                    "a face set declares its own Unit, which is not interpreted here; the \
+                     body would not be in the project's millimetres"
+                        .to_owned(),
+                ));
+            }
+        }
         let Some(coordinates) = ref_of(span_text(body, &spans, 0).trim()) else {
             return Err(fail(
                 "SHAPE_COORDINATES_DANGLING",
@@ -1334,6 +1348,27 @@ mod tests {
             out.losses
                 .iter()
                 .any(|l| l.code == "TRIANGLE_INDEX_OUT_OF_RANGE"),
+            "{:?}",
+            out.losses
+        );
+    }
+
+    #[test]
+    fn a_declared_face_set_unit_refuses_the_body_with_a_loss() {
+        // A per-body Unit would rescale the body against the project declaration; the
+        // reader refuses it instead of guessing a scale.
+        let file = plate_ifc().replace(
+            "#24=IFCTRIANGULATEDFACESET(#25,$,.T.,((1,2,3),(1,3,4)),$);",
+            "#24=IFCTRIANGULATEDFACESET(#25,$,.T.,((1,2,3),(1,3,4)),#27);\
+             \n#27=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);",
+        );
+        let out = read_str(&file);
+        assert_eq!(out.product_count, 1);
+        assert_eq!(out.shape_count, 0);
+        assert!(
+            out.losses
+                .iter()
+                .any(|l| l.code == "FACE_SET_UNIT_NOT_READ"),
             "{:?}",
             out.losses
         );
