@@ -77,7 +77,11 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
   washer (each when placed) + nut + protrusion seats the nut washer exactly on the far plate.
   `auto` is the smallest listed length covering that requirement (issue 555 audit item 9; the
   earlier rule left the head out and could resolve one step short, and the earlier prototype
-  stacked the whole assembly inside the joint).
+  stacked the whole assembly inside the joint). A listed length longer than that requirement
+  does not move the nut off the joint: the drawn group seats each fastener's nut stack on the
+  far face its bearing-ring rays find (`engine::bolt::far_faces`, measured on the same world
+  faces the placement reads) and the surplus shows as protrusion past the nut; a fastener whose
+  joint cannot be measured keeps the tip-hung stack (issue 562 item 5).
 - **The digest is the definition identity.** The command carries the digest and the resolved
   spec; the adapter re-renders the canonical resource and refuses a mismatch, the engine
   re-admits the spec for its decisions, and the layer validator re-checks the stored record
