@@ -42,7 +42,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   moving the viewpoint with the pointer.
 - Live refresh: the window watches the store's committed revisions and reloads by itself when
   another process (the CLI, an agent) commits to the store it shows; `R` stays for a manual
-  reload. The view is framed once, on the first scene with something in it; after that a
+  reload. The view is framed once, on the first scene with something in it (a default view
+  saved with its own target opens on that target instead, as any view does); after that a
   reload (an inserted column, an undo, another process's commit) keeps the camera where the
   user left it, and Fit model frames the whole model on request.
 - Native interface (egui/wgpu, entirely Rust, no HTML, JavaScript or WebView): cool neutral
@@ -99,7 +100,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   tree of folders, as Revit's browser organised by folder: the default view on its own row,
   then the folders and the views by name, each view's kind (plan, elevation or section,
   inclined; 3D is a way of looking at any view, not a kind) shown by its icon; a search field, a filter menu (quick access, favourites, previews), drag to a folder or into the work area, and a context menu; a double click
-  opens a view. 3D / plane (Ctrl+P, shown in its tooltip) toggles 3D and the view plane, and
+  opens a view. A plan or an elevation makes its plane the working plane; the default view and
+  an inclined view keep the model's working plane (set an inclined one in the Work plane section). 3D / plane (Ctrl+P, shown in its tooltip) toggles 3D and the view plane, and
   Ctrl+Tab cycles the open views. Views open as tabs in tab groups that split the work area: a
   tab dragged onto a group's edge splits it, dividers resize the groups, and the active tab takes
   selection, picking, snapping and tools. Windows: Open beside, Close inactive, Tab views, Tile

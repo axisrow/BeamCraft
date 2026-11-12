@@ -68,8 +68,10 @@ fn narrow(v: [f64; 3]) -> [f32; 3] {
 /// time on such a plane is cast to the scene centre (issue 569 item 14). A view saved with
 /// its own target — an orbit plane, or any user-drawn anchor — is kept (issue 584 item 1).
 /// The stored plane decides, not the rotated camera frame: a camera rotation the user added
-/// on top of a derived anchor does not give the anchor framing meaning.
-fn derived_anchor(plane: &WorkPlane) -> bool {
+/// on top of a derived anchor does not give the anchor framing meaning. The window fits a
+/// default view on such a plane to its first scene, and opens one saved with its own target
+/// on that target.
+pub(crate) fn derived_anchor(plane: &WorkPlane) -> bool {
     let [ox, oy, oz] = plane.origin();
     let zero = |v: f64| v == 0.0;
     let axis_anchored = (zero(ox) && zero(oy)) || (zero(oy) && zero(oz)) || (zero(ox) && zero(oz));
