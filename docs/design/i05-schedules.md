@@ -92,7 +92,8 @@ cell strings, so equal labels group together without float-equality traps. Text 
 in the natural order of the report labels (digit runs compare as numbers, so `PL8` precedes
 `PL20` exactly as in the BOM table, axisrow/BeamCraft#562 item 39). Output carries no timestamps, tool name or
 version. A standard quantity column renders at the display precision shared with the BOM's
-CSV cells (two decimals for mm/mm2/kg, nine for m3); every other number renders in the
+CSV cells (two decimals for mm/mm2/kg, nine for m3; a non-zero value below that precision
+keeps four significant digits instead of printing 0); every other number renders in the
 shortest round-trip form with a `.` and no separators (axisrow/BeamCraft#490, axisrow/BeamCraft#562 item 40). Same head, same
 template file: byte-identical CSV and HTML.
 

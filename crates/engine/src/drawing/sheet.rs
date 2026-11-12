@@ -40,6 +40,10 @@ const VIEW_TITLE_GAP_MM: f64 = 5.0;
 const DETAIL_CALLOUT_GAP_MM: f64 = 1.0;
 /// Line pitch of stacked detail callouts: the 3.5 mm glyph height plus a 1.5 mm gap.
 const DETAIL_CALLOUT_LINE_MM: f64 = 5.0;
+/// Glyph height of a detail callout name, the sheet text height.
+const GLYPH_HEIGHT_MM: f64 = 3.5;
+/// Lines a detail callout may step beyond those other names can block, each way.
+const DETAIL_CALLOUT_SEARCH_LINES: usize = 6;
 /// Exact contract of the whole-sheet export, independent of the loose-paper contract.
 pub const SHEET_EXPORT_CONTRACT: &str = "beamcraft-drawing-sheet/1";
 
@@ -385,6 +389,14 @@ fn layout(
     // where the magnified content comes from (visual audit finding 8). The mark belongs
     // to the detail and draws in the parent's paper space, which the sheet shares.
     let mut callouts: Vec<[f64; 4]> = Vec::new();
+    // Everything already drawn on the sheet, the primary view's dimension groups included:
+    // a callout name must not sit on a body edge, a title or a dimension, where a line
+    // would strike through its text (the recheck of visual audit finding 8).
+    let mut drawn: Vec<[[f64; 2]; 2]> = layers
+        .iter()
+        .flat_map(|layer| layer.strokes.iter().copied())
+        .chain(groups.iter().flatten().copied())
+        .collect();
     for (detail, projection) in drawing.details().iter().zip(detail_bodies) {
         let DetailProjection::Resolved(_) = projection else {
             continue;
@@ -398,11 +410,13 @@ fn layout(
             let [cx, cy] = detail.center_paper_mm;
             let reach = detail.radius_mm * std::f64::consts::FRAC_1_SQRT_2 + DETAIL_CALLOUT_GAP_MM;
             let width = text_width(title);
-            let mut origin = [cx + reach, cy + reach];
+            let start = [cx + reach, cy + reach];
             // Two details of one region (or of overlapping regions) would write their names
-            // over each other: a later callout steps up one line until it clears every name
-            // already placed. Each placed name can block at most two consecutive lines, so
-            // twice the names placed so far plus one tries always reach a free line.
+            // over each other, and a name beside a circle can land on the parent's own
+            // lines: the callout steps up, then down, one line at a time until its box
+            // clears every name already placed and every stroke already drawn. The search
+            // is bounded; when no line within reach is clear of the strokes, the nearest
+            // line clear of the other names wins, so names never overwrite each other.
             let overlaps = |origin: [f64; 2], placed: &[[f64; 4]]| {
                 placed.iter().any(|[lx, ly, hx, hy]| {
                     origin[0] < *hx
@@ -411,12 +425,35 @@ fn layout(
                         && origin[1] + DETAIL_CALLOUT_LINE_MM > *ly
                 })
             };
-            for _ in 0..=2 * callouts.len() {
-                if !overlaps(origin, &callouts) {
-                    break;
-                }
-                origin[1] += DETAIL_CALLOUT_LINE_MM;
-            }
+            let struck = |origin: [f64; 2]| {
+                let area = [
+                    [
+                        origin[0] - DETAIL_CALLOUT_GAP_MM / 2.0,
+                        origin[1] - DETAIL_CALLOUT_GAP_MM / 2.0,
+                    ],
+                    [
+                        origin[0] + width + DETAIL_CALLOUT_GAP_MM / 2.0,
+                        origin[1] + GLYPH_HEIGHT_MM + DETAIL_CALLOUT_GAP_MM / 2.0,
+                    ],
+                ];
+                drawn
+                    .iter()
+                    .chain(mark.iter())
+                    .any(|stroke| crosses_interior(*stroke, area))
+            };
+            let reach_lines = 2 * callouts.len() + DETAIL_CALLOUT_SEARCH_LINES;
+            let candidates = || {
+                (0..=reach_lines).flat_map(|step| {
+                    let offset = step as f64 * DETAIL_CALLOUT_LINE_MM;
+                    let up = [start[0], start[1] + offset];
+                    let down = [start[0], start[1] - offset];
+                    if step == 0 { vec![up] } else { vec![up, down] }
+                })
+            };
+            let origin = candidates()
+                .find(|at| !overlaps(*at, &callouts) && !struck(*at))
+                .or_else(|| candidates().find(|at| !overlaps(*at, &callouts)))
+                .unwrap_or(start);
             callouts.push([
                 origin[0],
                 origin[1],
@@ -425,6 +462,7 @@ fn layout(
             ]);
             mark.extend(text_strokes(title, origin));
         }
+        drawn.extend(mark.iter().copied());
         layers.push(SheetLayer {
             class: "detailmark",
             data_view: Some(detail.id.to_string()),
@@ -1321,6 +1359,51 @@ mod tests {
             "the two callouts sit on different lines: {} vs {}",
             extent(FIRST),
             extent(SECOND)
+        );
+    }
+
+    #[test]
+    fn a_detail_callout_steps_off_a_line_that_would_strike_through_it() {
+        // The name beside a detail's circle landed on the parent's body edge, which struck
+        // through the text: the callout moves to a line clear of every drawn stroke.
+        let version = DocumentVersionId::parse(C).unwrap();
+        const DETAIL: &str = "01900000-0000-7000-8000-000000000345";
+        let base = sheet_drawing(Sheet::A4, &[D]);
+        let mut s = base.spec().clone();
+        s.details = vec![detail_spec(DETAIL, B, Some("DET B"))];
+        let drawing = Drawing::admit(s).unwrap();
+        // The placed view's edge runs right through where the callout starts: the circle
+        // is centred at (15, 20) with radius 5, so the name starts near (19.5, 24.5).
+        let edge = [[12.0, 26.0], [40.0, 26.0]];
+        let bodies = vec![BodyProjection::Resolved(vec![ProjectedEdge {
+            feature: FeatureId::parse(&format!("fid1:{MEMBER}:member:e.x0.z0")).unwrap(),
+            paper_mm: edge,
+        }])];
+        let details = vec![detail_body(vec![section_edge(125.0, 145.0)])];
+        let layout = layout(&drawing, version, &projection(), &bodies, &[], &details).unwrap();
+        let mark = layout
+            .layers
+            .iter()
+            .find(|layer| layer.class == "detailmark")
+            .unwrap();
+        // The name's strokes are those off the circle.
+        let off_circle = |[x, y]: [f64; 2]| ((x - 15.0).powi(2) + (y - 20.0).powi(2)).sqrt() > 5.5;
+        let text: Vec<[[f64; 2]; 2]> = mark
+            .strokes
+            .iter()
+            .copied()
+            .filter(|[a, b]| off_circle(*a) || off_circle(*b))
+            .collect();
+        assert!(!text.is_empty(), "the callout carries its name");
+        let mut low = [f64::INFINITY; 2];
+        let mut high = [f64::NEG_INFINITY; 2];
+        for point in text.iter().flatten() {
+            low = [low[0].min(point[0]), low[1].min(point[1])];
+            high = [high[0].max(point[0]), high[1].max(point[1])];
+        }
+        assert!(
+            !crosses_interior(edge, [low, high]),
+            "the body edge strikes through the callout {low:?}..{high:?}"
         );
     }
 

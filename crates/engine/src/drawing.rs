@@ -728,6 +728,15 @@ impl Drawing {
         layers: Vec<LayerSpec>,
         entities: Vec<DraftingSpec>,
     ) -> Result<Self, CommandError> {
+        // A new or changed drawn object is authored now, so its text obeys the
+        // every-mark-draws rule here: admitted, a text the stroke glyphs cannot draw left a
+        // published version whose every drawn export refused. A standing object carried over
+        // unchanged keeps the decode-time rule, so an older document still opens and edits.
+        for entity in &entities {
+            if !self.0.drafting.contains(entity) {
+                drafting::validate_geometry(&entity.geometry)?;
+            }
+        }
         Self::validate_paper_objects(
             &self.0.id,
             &self.0.view.id,

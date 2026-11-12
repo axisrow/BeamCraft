@@ -630,6 +630,12 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
+/// The colour panel's note while a set picked in the list differs from the set shown: the
+/// legend below still describes the shown one.
+fn colour_pick_pending_text(shown: &str, pick: &str) -> String {
+    format!("Showing {shown}. Show colours applies {pick}; the legend below is {shown}'s.")
+}
+
 /// The neutral properties note for a selected kind the editor has no editable properties for,
 /// e.g. "Bolt group BG1: this kind has no editable properties here yet." An unnamed element
 /// keeps the kind alone.
@@ -1585,8 +1591,15 @@ impl App {
                         // A kind the editor reads nothing from is not a failure: the selection
                         // names it and the panel says so plainly (issue 562 item 15).
                         Some((kind, name)) => {
+                            // The bolt listing names the group; when it was never loaded
+                            // (the Bolts bench not opened yet) it is read now, and its
+                            // arrival names the selection (the recheck of item 15).
+                            let unnamed = name.is_empty();
                             self.editor.select_kind(id.clone(), kind, name);
                             self.edit_note = None;
+                            if unnamed {
+                                self.bolt_load();
+                            }
                         }
                         None => {
                             self.editor.select_id(id.clone());
@@ -1712,11 +1725,11 @@ impl App {
             Ok(done) => {
                 // A lookup that started before this edit describes the element as it was.
                 self.invalidate_select();
-                // Undo and redo reshape the scene but move no model point the user chose: the
-                // refreshed view keeps the camera and only tracks the framing (issue 562 item 50).
-                if matches!(done.kind, EditKind::Undo | EditKind::Redo) {
-                    self.keep_camera = true;
-                }
+                // Undo and redo reshape the scene but move no model point the user chose, and
+                // a move, copy or delete acts on what the user is looking at: the refreshed
+                // view keeps the camera and only tracks the framing (issue 562 item 50 and its
+                // recheck).
+                self.keep_camera = true;
                 self.reload();
                 self.edit_note = Some(Ok(format!("{}.", done.kind.done())));
                 self.editor.clear_axis_point();
@@ -2425,6 +2438,16 @@ impl App {
                 format!("Evaluating {pick}… the colours and legend shown are the previous set")
             });
             ui.label(pending.as_deref().unwrap_or("Evaluating the set…"));
+        } else if let Some((name, _)) = applied
+            .as_ref()
+            .filter(|(name, _)| !pick.is_empty() && name != &pick)
+        {
+            // A set picked in the list but not shown yet: the legend below still belongs to
+            // the shown set, which the note names, so it never reads as the picked set's
+            // (the recheck of issue 562 item 52).
+            ui.label(
+                egui::RichText::new(colour_pick_pending_text(name, &pick)).color(palette.muted),
+            );
         }
         // The legend of the applied set: one swatch per rule, in rule order.
         if let Some((name, coloured)) = &applied {
@@ -2817,6 +2840,10 @@ impl App {
         self.last_commit_ok = result.is_ok();
         match result {
             Ok(created) => {
+                // A part created in the window sits where the user picked it, so it is already
+                // in view: the refreshed scene keeps the camera instead of refitting a zoomed
+                // view to the whole model (the recheck of issue 562 item 50).
+                self.keep_camera = true;
                 self.reload();
                 let what = match created.kind {
                     ToolKind::Plate => "plate",
@@ -3399,6 +3426,9 @@ impl eframe::App for App {
             }
             self.ribbon(ui);
             self.status_bar(ui);
+            // Floating windows open and stay between the ribbon and the status bar (issue 562
+            // item 46 and its recheck): the area left after them is where a dialog may sit.
+            crate::kit::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
             // Registered after the status bar, so the snap strip sits directly above it.
             self.inspector(ui);
             self.project_browser(ui);
@@ -3443,6 +3473,15 @@ pub(crate) mod tests {
             super::unsupported_kind_text("bolt group", ""),
             "Bolt group: this kind has no editable properties here yet."
         );
+    }
+
+    #[test]
+    fn a_picked_colour_set_not_shown_yet_says_whose_legend_is_shown() {
+        // The recheck of issue 562 item 52: picking a set in the list left the shown set's
+        // legend under the picked name. The note names both.
+        let note = super::colour_pick_pending_text("Catalogue", "Part classes");
+        assert!(note.starts_with("Showing Catalogue."), "{note}");
+        assert!(note.contains("applies Part classes"), "{note}");
     }
 
     #[test]

@@ -1399,7 +1399,20 @@ impl App {
                 self.bolt.groups_job = None;
             }
             match outcome {
-                Some(Ok(groups)) => self.bolt.groups = groups,
+                Some(Ok(groups)) => {
+                    // A bolt group selected before its listing arrived takes its name now,
+                    // so the panel and the status line say which group is selected.
+                    if let Some(group) = self
+                        .editor
+                        .selected()
+                        .filter(|info| info.kind == "bolt group" && info.name.is_empty())
+                        .and_then(|info| groups.iter().find(|group| group.id == info.id))
+                    {
+                        let (id, name) = (group.id.clone(), group.name.clone());
+                        self.editor.rename_selected(&id, name);
+                    }
+                    self.bolt.groups = groups;
+                }
                 Some(Err(error)) => self.bolt.note = Some(Err(error.to_string())),
                 None => {}
             }

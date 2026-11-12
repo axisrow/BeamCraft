@@ -323,18 +323,33 @@ pub(crate) fn natural(a: &str, b: &str) -> Ordering {
 /// One quantity cell at its unit's display precision, trailing zeros trimmed. Shared with
 /// the schedule renderer, so a quantity prints the same text in every human-facing report
 /// (axisrow/BeamCraft#490 finding 3, visual audit axisrow/BeamCraft#562 item 40). A non-zero value never prints as zero
-/// (visual audit axisrow/BeamCraft#562 item 39): the cell keeps the noise-stripped full value instead.
+/// (visual audit axisrow/BeamCraft#562 item 39): the cell keeps four significant digits instead.
 pub(crate) fn quantity(value: f64, decimals: usize) -> String {
     let text = format!("{value:.decimals$}");
     let trimmed = text.trim_end_matches('0').trim_end_matches('.');
     if trimmed == "0" || trimmed == "-0" {
         if value != 0.0 && value.is_finite() {
+            // A small non-zero value keeps four significant digits instead of every float
+            // digit, so one column never mixes `0.01` with `0.00260584073464`.
+            let places = (-value.abs().log10()).ceil().max(0.0) as usize + 3;
+            let text = format!(
+                "{value:.places$}",
+                places = places.min(SMALL_QUANTITY_PLACES)
+            );
+            let trimmed = text.trim_end_matches('0').trim_end_matches('.');
+            if trimmed != "0" && trimmed != "-0" {
+                return trimmed.to_owned();
+            }
             return num(value);
         }
         return "0".to_owned();
     }
     trimmed.to_owned()
 }
+
+/// The most decimal places a small non-zero report quantity prints with before falling back
+/// to the exact number.
+const SMALL_QUANTITY_PLACES: usize = 12;
 
 #[cfg(test)]
 mod tests {
@@ -430,9 +445,11 @@ mod tests {
     fn a_non_zero_quantity_never_prints_as_zero() {
         // axisrow/BeamCraft#562 item 39: a known non-zero value that rounds below the unit's display
         // precision printed "0" — the 0.00314 kg of a 20x20x1 plate and a 2485 mm2 group's
-        // 0.002485 m2 total. The cell keeps the noise-stripped full value; a real zero
+        // 0.002485 m2 total. The cell keeps four significant digits; a real zero
         // still prints "0" and an unknown mass still prints an empty cell.
         assert_eq!(quantity(0.00314, 2), "0.00314");
+        // Four significant digits, never the whole float (the recheck of finding 39).
+        assert_eq!(quantity(0.002_605_840_734_64, 2), "0.002606");
         assert_eq!(quantity(0.002485, 2), "0.002485");
         assert_eq!(quantity(-0.0001, 2), "-0.0001");
         assert_eq!(quantity(0.0, 2), "0");
