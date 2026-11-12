@@ -1076,6 +1076,105 @@ fn a_reference_wrapper_is_a_proxy_with_its_pose_and_no_representation() {
 }
 
 #[test]
+fn a_bolt_group_is_a_proxy_exporting_its_fastener_mesh() {
+    let f = Fixture::new();
+    f.scene();
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/synthetic-fasteners.usda"
+    );
+    let low = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &["--width", "1000", "--length", "500", "--thickness", "10"],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    let high = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &[
+                    "--width",
+                    "1000",
+                    "--length",
+                    "500",
+                    "--thickness",
+                    "10",
+                    "--translation",
+                    "0,0,10",
+                ],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    let group = "019a7bf0-0000-7000-8000-00000071000a";
+    f.ok(
+        "create-bolt-group",
+        &[
+            "--name",
+            "BG1",
+            "--new-id",
+            group,
+            "--parts",
+            &format!("{low},{high}"),
+            "--fastener-library",
+            library,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    // The group is a proxy like the weld, but it carries its fasteners: the merged mesh a view
+    // draws is exported as the proxy representation, so the file shows the bolts and the
+    // washers instead of an empty element (issue 558).
+    let report = f.export(&f.path("bolts.ifc"), &[]);
+    assert_eq!(
+        text(row(&report, group), "entity"),
+        "IfcBuildingElementProxy"
+    );
+    assert_eq!(text(row(&report, group), "representation"), "Tessellation");
+    let file = f.parsed("bolts.ifc");
+    file.check().unwrap();
+    let proxy = file
+        .all("IFCBUILDINGELEMENTPROXY")
+        .into_iter()
+        .find(|p| str_arg(&file, p.args.get(2)) == "BG1")
+        .unwrap();
+    let Value::List(reps) = &file.target(&proxy.args[6]).unwrap().args[2] else {
+        panic!("a product definition shape carries representations");
+    };
+    let Value::List(items) = &file.target(&reps[0]).unwrap().args[3] else {
+        panic!("a shape representation carries items");
+    };
+    let set = file.target(&items[0]).unwrap();
+    assert_eq!(set.name, "IFCTRIANGULATEDFACESET");
+    let Value::List(vertices) = &file.target(&set.args[0]).unwrap().args[0] else {
+        panic!("a point list carries its points");
+    };
+    // Two placed SYN-BOLT-12x50 stacks (washer, head, shank, nut, washer nut each), far more
+    // vertices than a bare box; the mesh digest is the view bundle's.
+    assert!(
+        vertices.len() > 100,
+        "the fastener mesh, got {}",
+        vertices.len()
+    );
+}
+
+#[test]
 fn strict_mode_does_not_refuse_proxies_omitted_quantities_or_truncated_names() {
     let f = Fixture::new();
     // No density: a mass is omitted for every member; the long label is cut; the weld is a

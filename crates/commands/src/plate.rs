@@ -1319,22 +1319,27 @@ pub(crate) fn decode(
         }
     }
     let definitions = decode_definitions(&prims)?;
-    let bolt_scene = bolt_views
-        .into_iter()
-        .map(|view| {
-            let spec = match definitions.get(&view.spec.fastener) {
-                Some(DefinitionRecord::Fastener { spec }) => spec,
-                _ => {
-                    return Err(integrity(
-                        "a committed bolt group's fastener definition is missing",
-                    ));
-                }
-            };
-            let placed =
-                steel::engine::bolt::BoltGroupPlaced::from_stored(&bolt_placement(view.spec))?;
-            steel::engine::bolt_scene::scene_element(view.id, &placed, spec).map_err(Refusal::from)
-        })
-        .collect::<Result<Vec<_>, Refusal>>()?;
+    let mut bolt_scene = Vec::new();
+    for view in bolt_views {
+        let spec = match definitions.get(&view.spec.fastener) {
+            Some(DefinitionRecord::Fastener { spec }) => spec,
+            _ => {
+                return Err(integrity(
+                    "a committed bolt group's fastener definition is missing",
+                ));
+            }
+        };
+        let placed = steel::engine::bolt::BoltGroupPlaced::from_stored(&bolt_placement(view.spec))?;
+        let (element, solid) = steel::engine::bolt_scene::scene_element(view.id, &placed, spec)
+            .map_err(Refusal::from)?;
+        // The merged fastener mesh a view draws is also the group's proxy representation
+        // (issue 558): an export reads the proxy mesh, so without it the file carries an
+        // empty element and the bolts and washers are gone from the picture.
+        if let Some(meta) = elements.get_mut(&view.id) {
+            meta.mesh = published_mesh(&kernel_mesh(&solid)?);
+        }
+        bolt_scene.push(element);
+    }
     let levels = levels_of(&prims)?;
     let derived_elements = plates
         .iter()
