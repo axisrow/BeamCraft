@@ -502,6 +502,30 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of `UpdateLevel`: it reads the level's lifecycle and the groups it replaces,
+    /// and writes only those. A level has no derived result, so no derived group is written.
+    pub fn for_level_update(
+        level: ElementId,
+        name: bool,
+        elevation: bool,
+    ) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(level),
+            group,
+        };
+        let mut reads = BTreeSet::from([entry(Group::Lifecycle)]);
+        let mut writes = BTreeSet::new();
+        for (changed, group) in [(name, Group::Label), (elevation, Group::ShapeInputs)] {
+            if changed {
+                reads.insert(entry(group));
+                writes.insert(entry(group));
+            }
+        }
+        let footprint = Self { reads, writes };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of a mark change (A08: assign, replace, revoke or approve): the record
     /// lives with its source, so only the element's mark group is written. It reads the element's
     /// lifecycle (its existence decides acceptance) and its mark group (the current value and

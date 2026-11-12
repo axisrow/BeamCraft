@@ -168,12 +168,13 @@ fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
             egui::StrokeKind::Inside,
         );
     }
-    // An open view carries an accent bar at its left edge, the way an open tab is marked.
+    // An open view carries an accent bar at its left edge, the way an open tab is marked, and a
+    // bold accent name, so it stands apart from a selection, which is only a fill.
     if row.open {
         painter.rect_filled(
             egui::Rect::from_min_size(
-                rect.left_top() + egui::vec2(0.0, 4.0),
-                egui::vec2(2.0, rect.height() - 8.0),
+                rect.left_top() + egui::vec2(0.0, 3.0),
+                egui::vec2(3.0, rect.height() - 6.0),
             ),
             1,
             palette.link,
@@ -209,10 +210,17 @@ fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
     if row.temporary {
         mark(theme::Icon::Recent, palette.muted);
     }
-    let colour = if row.temporary && !row.selected {
+    let colour = if row.open {
+        palette.link
+    } else if row.temporary && !row.selected {
         palette.muted
     } else {
         palette.text
+    };
+    let family = if row.open {
+        theme::bold_family()
+    } else {
+        egui::FontFamily::Proportional
     };
     painter
         .with_clip_rect(egui::Rect::from_min_max(
@@ -223,7 +231,7 @@ fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
             egui::pos2(rect.left() + 28.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             row.name,
-            egui::FontId::proportional(12.0),
+            egui::FontId::new(12.0, family),
             colour,
         );
     let mut hint = row.name.to_owned();
@@ -847,15 +855,74 @@ impl App {
         }
     }
 
+    /// Applies the form to its view and, when that view is one of several selected in the
+    /// browser, the same changes to every other selected view. Every view is checked before
+    /// any is written, so a change one of them refuses changes none.
     fn update_view_from_form(&mut self, id: Uuid7) -> Result<Option<String>, String> {
+        let form = self.views.form.clone();
+        let baseline = self
+            .views
+            .book
+            .get(&id)
+            .map(Form::from_view)
+            .ok_or_else(|| "the view is gone".to_owned())?;
+        let others: Vec<Uuid7> = if self.views.selected.contains(&id) {
+            self.views
+                .selected
+                .iter()
+                .filter(|other| **other != id)
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut writes = vec![(id, form.clone())];
+        for other in others {
+            let Some(view) = self.views.book.get(&other) else {
+                continue;
+            };
+            let mut target = Form::from_view(view);
+            form.carry_changes(&baseline, &mut target);
+            writes.push((other, target));
+        }
+        // A trial on a copy of the book: a change one view refuses writes none of them.
+        let mut trial = self.views.book.clone();
+        for (other, target) in &writes {
+            let mut view = trial
+                .get(other)
+                .cloned()
+                .ok_or_else(|| "the view is gone".to_owned())?;
+            let name = view.name.clone();
+            view.plane = target.plane;
+            target
+                .apply(&mut view)
+                .and_then(|()| trial.update(view).map_err(|e| e.to_string()))
+                .map_err(|e| format!("{name}: {e}"))?;
+        }
+        let count = writes.len();
+        for (other, target) in writes {
+            self.write_view(other, &target)?;
+        }
+        // The form reloads from the saved view, so Apply leaves it clean (issue 569 item 20):
+        // the dirty flag and the row dots compare the form's text with the view's.
+        self.edit_view(id);
+        Ok(Some(if count > 1 {
+            format!("{count} views were updated; the model is unchanged.")
+        } else {
+            "The view was updated; the model is unchanged.".into()
+        }))
+    }
+
+    /// Writes `form` into the view `id` and brings every pane on it up to date.
+    fn write_view(&mut self, id: Uuid7, form: &Form) -> Result<(), String> {
         let mut view = self
             .views
             .book
             .get(&id)
             .cloned()
             .ok_or_else(|| "the view is gone".to_owned())?;
-        view.plane = self.views.form.plane;
-        self.views.form.apply(&mut view)?;
+        view.plane = form.plane;
+        form.apply(&mut view)?;
         self.views.book.update(view).map_err(|e| e.to_string())?;
         // The camera follows the new definition; a session camera would hide the change.
         self.views.cameras.remove(&id);
@@ -886,10 +953,7 @@ impl App {
                 self.recolour();
             }
         }
-        // The form reloads from the saved view, so Apply leaves it clean (issue 569 item 20):
-        // the dirty flag and the row dots compare the form's text with the view's.
-        self.edit_view(id);
-        Ok(Some("The view was updated; the model is unchanged.".into()))
+        Ok(())
     }
 
     fn create_views_from_form(&mut self) -> Result<Option<String>, String> {
@@ -2788,7 +2852,28 @@ impl App {
                                 match (batch, form.levels) {
                                     (false, _) => {
                                         form.levels = None;
-                                        text(ui, "Level name", &mut form.level);
+                                        let known = &self.tools.definitions.levels;
+                                        if known.is_empty() {
+                                            ui.small(
+                                                "No levels yet. Create them under Manage > Levels.",
+                                            );
+                                        }
+                                        crate::kit::prop_row(ui, "Level", |ui| {
+                                            egui::ComboBox::from_id_salt("view-level")
+                                                .selected_text(form.level.clone())
+                                                .show_ui(ui, |ui| {
+                                                    for level in crate::levels::sorted(known) {
+                                                        ui.selectable_value(
+                                                            &mut form.level,
+                                                            level.name.clone(),
+                                                            format!(
+                                                                "{}   {:+} mm",
+                                                                level.name, level.elevation_mm
+                                                            ),
+                                                        );
+                                                    }
+                                                });
+                                        });
                                     }
                                     (true, current) => {
                                         let mut pick = current.unwrap_or(AxisPick::All);
@@ -3268,6 +3353,18 @@ impl App {
             .id
             .and_then(|id| self.views.book.get(&id))
             .is_none_or(|v| self.views.form != crate::views::Form::from_view(v));
+        // The views an Apply changes: the edited one and, when it is selected, every other
+        // selected view.
+        let together = match self.views.form.id {
+            Some(id) if self.views.selected.contains(&id) => self.views.selected.len(),
+            Some(_) => 1,
+            None => 0,
+        };
+        if together > 1 {
+            ui.small(format!(
+                "Apply changes the edited properties on all {together} selected views."
+            ));
+        }
         ui.horizontal(|ui| {
             let waiting = self
                 .views
@@ -3286,6 +3383,10 @@ impl App {
                 } else {
                     "Create the view"
                 })
+            } else if together > 1 {
+                apply.on_hover_text(format!(
+                    "Apply the changed properties to all {together} selected views"
+                ))
             } else {
                 apply
             }

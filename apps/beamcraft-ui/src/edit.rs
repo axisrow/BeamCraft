@@ -522,6 +522,8 @@ pub struct Editor {
     pub actor: Option<String>,
     staged: Option<Edit>,
     busy: bool,
+    /// The member end the Move command places instead of the whole element.
+    axis_point: Option<(MemberAxis, AxisEnd)>,
 }
 
 impl Default for Editor {
@@ -535,7 +537,86 @@ impl Default for Editor {
             actor: None,
             staged: None,
             busy: false,
+            axis_point: None,
         }
+    }
+}
+
+/// One end of a straight member's axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AxisEnd {
+    /// The first axis point.
+    Start,
+    /// The last axis point.
+    End,
+}
+
+impl AxisEnd {
+    /// The opposite end.
+    pub fn other(self) -> Self {
+        match self {
+            Self::Start => Self::End,
+            Self::End => Self::Start,
+        }
+    }
+
+    /// The end's name in the status line and the Move form.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Start => "Start",
+            Self::End => "End",
+        }
+    }
+}
+
+/// A straight member's axis as `inspect-elements` reports it: `--axis-point` takes these local
+/// points, and the placement carries them into the model.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MemberAxis {
+    /// The start and end points, element-local millimetres.
+    pub points: [[f64; 3]; 2],
+    /// The placement translation, millimetres.
+    pub translation_mm: [f64; 3],
+    /// The placement rotation as a unit quaternion.
+    pub orientation_xyzw: [f64; 4],
+}
+
+impl MemberAxis {
+    fn index(end: AxisEnd) -> usize {
+        match end {
+            AxisEnd::Start => 0,
+            AxisEnd::End => 1,
+        }
+    }
+
+    /// The world position of `end`.
+    pub fn world(&self, end: AxisEnd) -> [f64; 3] {
+        let local = self
+            .points
+            .get(Self::index(end))
+            .copied()
+            .unwrap_or([0.0; 3]);
+        let [x, y, z] = beamcraft_engine::solid::rotate_vector(local, self.orientation_xyzw);
+        let [tx, ty, tz] = self.translation_mm;
+        [x + tx, y + ty, z + tz]
+    }
+
+    /// The `--axis-point` value with `end` moved to the world point `to`.
+    fn moved(&self, end: AxisEnd, to: [f64; 3]) -> String {
+        let [x, y, z, w] = self.orientation_xyzw;
+        let [tx, ty, tz] = self.translation_mm;
+        let [px, py, pz] = to;
+        let local =
+            beamcraft_engine::solid::rotate_vector([px - tx, py - ty, pz - tz], [-x, -y, -z, w]);
+        let mut points = self.points;
+        if let Some(point) = points.get_mut(Self::index(end)) {
+            *point = local;
+        }
+        points
+            .iter()
+            .map(|[x, y, z]| format!("{x:?},{y:?},{z:?}"))
+            .collect::<Vec<_>>()
+            .join(";")
     }
 }
 
@@ -581,6 +662,7 @@ impl Editor {
             // long keeps the debug exponent form, which stays short and round-trips for
             // every finite value.
             self.move_to = info.translation_mm.map(coordinate_text);
+            self.axis_point = None;
         }
         if self.copy_offset.iter().all(String::is_empty) {
             self.copy_offset = ["0".into(), "0".into(), "0".into()];
@@ -600,6 +682,7 @@ impl Editor {
     /// "details unavailable" (issue 562 item 15). The move form stays empty, as for any element
     /// without readable details.
     pub fn select_kind(&mut self, id: String, kind: &str, name: String) {
+        self.axis_point = None;
         self.move_to = Default::default();
         if self.copy_offset.iter().all(String::is_empty) {
             self.copy_offset = ["0".into(), "0".into(), "0".into()];
@@ -616,12 +699,102 @@ impl Editor {
 
     /// Clears the selection and any staged edit.
     pub fn deselect(&mut self) {
+        self.axis_point = None;
         self.selected = None;
         self.staged = None;
     }
 
+    /// The member end the Move command places, when one is selected.
+    pub fn axis_point(&self) -> Option<(MemberAxis, AxisEnd)> {
+        self.axis_point
+    }
+
+    /// Selects one end of the selected member: the Move form now names that point.
+    pub fn select_axis_point(&mut self, axis: MemberAxis, end: AxisEnd) {
+        self.move_to = axis.world(end).map(|v| format!("{v:?}"));
+        self.staged = None;
+        self.axis_point = Some((axis, end));
+    }
+
+    /// Lets go of the selected end: the Move form names the whole element again.
+    pub fn clear_axis_point(&mut self) {
+        if self.axis_point.take().is_some() {
+            self.staged = None;
+            if let Some(selected) = &self.selected {
+                self.move_to = selected.translation_mm.map(|v| format!("{v:?}"));
+            }
+        }
+    }
+
+    fn axis_args(
+        &self,
+        id: String,
+        target: Target<'_>,
+        axis: &MemberAxis,
+        end: AxisEnd,
+        to: [f64; 3],
+    ) -> Vec<String> {
+        let mut args = vec![
+            "update-element".to_owned(),
+            "--store".into(),
+            target.store.to_string_lossy().into_owned(),
+            "--id".into(),
+            id,
+            "--axis-point".into(),
+            axis.moved(end, to),
+        ];
+        crate::tools::push_actor(&mut args, self.actor.as_deref());
+        args
+    }
+
+    /// Takes a released handle drag to run at once and marks the panel busy.
+    pub fn begin_axis_move(
+        &mut self,
+        axis: &MemberAxis,
+        end: AxisEnd,
+        to: [f64; 3],
+        target: Target<'_>,
+    ) -> Result<Option<Edit>, FormError> {
+        if self.busy {
+            return Ok(None);
+        }
+        let id = self
+            .selected
+            .as_ref()
+            .map(|s| s.id.clone())
+            .ok_or_else(|| FormError {
+                field: "Selection",
+                message: "click an element first".into(),
+            })?;
+        let args = self.axis_args(id, target, axis, end, to);
+        self.busy = true;
+        self.staged = None;
+        Ok(Some(Edit {
+            kind: EditKind::Move,
+            args,
+        }))
+    }
+
     /// The command of `kind` for the present selection and forms. Undo and redo need a workspace.
     pub fn prepare(&self, kind: EditKind, target: Target<'_>) -> Result<Edit, FormError> {
+        if kind == EditKind::Move
+            && let Some((axis, end)) = self.axis_point
+            && let Some(selected) = &self.selected
+        {
+            point("Position", &self.move_to)?;
+            let [x, y, z] = &self.move_to;
+            let [x, y, z] = [x, y, z].map(|part| part.trim().parse::<f64>());
+            let (Ok(x), Ok(y), Ok(z)) = (x, y, z) else {
+                return Err(FormError {
+                    field: "Position",
+                    message: "enter finite numbers".into(),
+                });
+            };
+            return Ok(Edit {
+                kind,
+                args: self.axis_args(selected.id.clone(), target, &axis, end, [x, y, z]),
+            });
+        }
         let store = target.store.to_string_lossy().into_owned();
         let id = || {
             self.selected
@@ -1170,6 +1343,85 @@ mod tests {
         );
         assert_eq!(contour.translation_mm, [5.0, 6.0, 7.0]);
         assert_eq!(contour.orientation_xyzw, [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    fn placed_axis() -> MemberAxis {
+        // A quarter turn about Z, so local +X runs along world +Y.
+        let half = std::f64::consts::FRAC_PI_4;
+        MemberAxis {
+            points: [[0.0, 0.0, 0.0], [4000.0, 0.0, 0.0]],
+            translation_mm: [100.0, 200.0, 300.0],
+            orientation_xyzw: [0.0, 0.0, half.sin(), half.cos()],
+        }
+    }
+
+    fn axis_value(edit: &Edit) -> Vec<f64> {
+        let at = edit.args.iter().position(|a| a == "--axis-point").unwrap();
+        edit.args[at + 1]
+            .split([';', ','])
+            .map(|v| v.parse().unwrap())
+            .collect()
+    }
+
+    fn near(a: &[f64], b: &[f64]) {
+        assert_eq!(a.len(), b.len());
+        for (a, b) in a.iter().zip(b) {
+            assert!((a - b).abs() < 1e-6, "{a} vs {b}");
+        }
+    }
+
+    fn axis_info(id: &str) -> ElementInfo {
+        ElementInfo {
+            id: id.into(),
+            kind: "beam".into(),
+            name: "B".into(),
+            translation_mm: [100.0, 200.0, 300.0],
+            contour: None,
+        }
+    }
+
+    #[test]
+    fn a_selected_end_is_what_the_move_command_places() {
+        let mut editor = Editor::default();
+        editor.select(axis_info("E"));
+        let axis = placed_axis();
+        assert!((axis.world(AxisEnd::End)[1] - 4200.0).abs() < 1e-6);
+
+        editor.select_axis_point(axis, AxisEnd::End);
+        editor.move_to = ["100".into(), "5200".into(), "300".into()];
+        let edit = editor.prepare(EditKind::Move, target()).unwrap();
+        assert!(!edit.args.iter().any(|a| a == "--translation"));
+        near(&axis_value(&edit), &[0.0, 0.0, 0.0, 5000.0, 0.0, 0.0]);
+
+        // Letting go gives the form back to the whole element.
+        editor.clear_axis_point();
+        let edit = editor.prepare(EditKind::Move, target()).unwrap();
+        assert!(edit.args.iter().any(|a| a == "--translation"));
+    }
+
+    #[test]
+    fn a_handle_drag_keeps_the_other_end_and_is_one_edit() {
+        let mut editor = Editor::default();
+        editor.select(axis_info("E"));
+        let to = [100.0, 700.0, 300.0];
+        let edit = editor
+            .begin_axis_move(&placed_axis(), AxisEnd::Start, to, target())
+            .unwrap()
+            .unwrap();
+        assert_eq!(edit.kind, EditKind::Move);
+        near(&axis_value(&edit), &[500.0, 0.0, 0.0, 4000.0, 0.0, 0.0]);
+        assert!(editor.busy());
+        let second = editor.begin_axis_move(&placed_axis(), AxisEnd::Start, to, target());
+        assert_eq!(second.unwrap(), None);
+    }
+
+    #[test]
+    fn another_selection_lets_go_of_the_point() {
+        let mut editor = Editor::default();
+        editor.select(axis_info("E"));
+        editor.select_axis_point(placed_axis(), AxisEnd::Start);
+        editor.select(axis_info("F"));
+        assert_eq!(editor.axis_point(), None);
     }
 
     #[test]

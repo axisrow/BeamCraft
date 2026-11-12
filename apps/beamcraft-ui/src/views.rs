@@ -638,6 +638,53 @@ impl Form {
     pub fn plane_offset(&self) -> Result<f64, String> {
         number(&self.offset, "the plane offset")
     }
+
+    /// Writes into `target` every display and browser property this form changed from
+    /// `baseline` (the form of the view as it was loaded), and nothing else: a multi-selection
+    /// edit changes on every selected view what the user changed on one. The name, the plane and
+    /// the default mark belong to one view and are never carried; each depth and rotation value
+    /// is carried on its own, so a changed depth towards the viewer keeps each view's own depth
+    /// behind its plane.
+    pub fn carry_changes(&self, baseline: &Self, target: &mut Self) {
+        fn carry<T: PartialEq + Clone>(edited: &T, baseline: &T, target: &mut T) {
+            if edited != baseline {
+                target.clone_from(edited);
+            }
+        }
+        carry(&self.folder, &baseline.folder, &mut target.folder);
+        carry(&self.favorite, &baseline.favorite, &mut target.favorite);
+        carry(
+            &self.projection,
+            &baseline.projection,
+            &mut target.projection,
+        );
+        carry(&self.span, &baseline.span, &mut target.span);
+        carry(&self.depth_on, &baseline.depth_on, &mut target.depth_on);
+        for ((edited, baseline), target) in self
+            .depth
+            .iter()
+            .zip(&baseline.depth)
+            .zip(&mut target.depth)
+        {
+            carry(edited, baseline, target);
+        }
+        for ((edited, baseline), target) in self
+            .rotation
+            .iter()
+            .zip(&baseline.rotation)
+            .zip(&mut target.rotation)
+        {
+            carry(edited, baseline, target);
+        }
+        carry(&self.mode, &baseline.mode, &mut target.mode);
+        carry(&self.grids, &baseline.grids, &mut target.grids);
+        carry(&self.hidden, &baseline.hidden, &mut target.hidden);
+        carry(&self.area, &baseline.area, &mut target.area);
+        carry(&self.color_on, &baseline.color_on, &mut target.color_on);
+        carry(&self.color, &baseline.color, &mut target.color);
+        carry(&self.opacity, &baseline.opacity, &mut target.opacity);
+        carry(&self.overrides, &baseline.overrides, &mut target.overrides);
+    }
 }
 
 /// The degree text of a rotation held in radians: the coarsest rounded degree value that

@@ -19,9 +19,10 @@
 //! has at most one level, and assigning another replaces it (a record, not a collection).
 
 use crate::footprint::Footprint;
-use beamcraft_model::command::{CommandError, CreateLevel};
+use beamcraft_model::command::{CommandError, CreateLevel, UpdateLevel};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use beamcraft_model::level::CreateLevels;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The kind of an element that can be assigned to a level.
@@ -56,6 +57,17 @@ pub struct Levels {
 /// An accepted level creation: the declared footprint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Creation {
+    /// The declared footprint.
+    pub footprint: Footprint,
+}
+
+/// An accepted level update: only the fields that differ from the head.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelUpdate {
+    /// The new label, when it differs.
+    pub name: Option<String>,
+    /// The new elevation in millimetres, when it differs.
+    pub elevation_mm: Option<f64>,
     /// The declared footprint.
     pub footprint: Footprint,
 }
@@ -144,6 +156,64 @@ impl Levels {
         })
     }
 
+    /// Decides the creation of several levels in one operation: the request is expanded against
+    /// the names the levels of this model use, and each level is decided as [`Levels::create`]
+    /// would. Returns the footprint, their union, and the levels to create. Errors leave nothing
+    /// applied.
+    pub fn create_all(
+        &self,
+        command: &CreateLevels,
+    ) -> Result<(Creation, Vec<CreateLevel>), CommandError> {
+        let used = self.levels.values().map(|r| r.name.clone()).collect();
+        let levels = command.levels(&used)?;
+        let mut footprint = Footprint::default();
+        for level in &levels {
+            footprint = footprint.union(self.create(level)?.footprint)?;
+        }
+        Ok((Creation { footprint }, levels))
+    }
+
+    /// Decides a level update: the arguments are admitted, the target must be a level
+    /// (`NOT_FOUND` for an unknown identity, `UNSUPPORTED_PROPERTY` for another kind) and at least
+    /// one value must differ (`INVALID_ARGUMENT`), so an update never publishes an empty revision.
+    /// Errors leave nothing applied.
+    pub fn update(&self, command: &UpdateLevel) -> Result<LevelUpdate, CommandError> {
+        command.validate_arguments()?;
+        let Some(record) = self.levels.get(&command.target_id) else {
+            return Err(if self.contains(&command.target_id) {
+                error(
+                    ErrorCode::UnsupportedProperty,
+                    "target_id",
+                    "the target is not a level",
+                )
+            } else {
+                error(
+                    ErrorCode::NotFound,
+                    "target_id",
+                    "the level is not in the head revision",
+                )
+            });
+        };
+        let name = command.name.clone().filter(|name| *name != record.name);
+        let elevation_mm = command.elevation_mm.filter(|e| *e != record.elevation_mm);
+        if name.is_none() && elevation_mm.is_none() {
+            return Err(error(
+                ErrorCode::InvalidArgument,
+                "patch",
+                "the level already has these values",
+            ));
+        }
+        Ok(LevelUpdate {
+            footprint: Footprint::for_level_update(
+                command.target_id,
+                name.is_some(),
+                elevation_mm.is_some(),
+            )?,
+            name,
+            elevation_mm,
+        })
+    }
+
     /// Decides the level assignment of `target`: `Some(level)` assigns, `None` removes the record.
     /// Errors leave nothing applied.
     pub fn assign(
@@ -229,6 +299,35 @@ mod tests {
         m
     }
 
+    #[test]
+    fn an_update_writes_only_the_fields_that_differ() {
+        let m = model();
+        let update = |target_id, name: Option<&str>, elevation_mm| UpdateLevel {
+            target_id,
+            name: name.map(str::to_owned),
+            elevation_mm,
+            move_elements: false,
+        };
+        let moved = m.update(&update(id(1), Some("L1"), Some(500.0))).unwrap();
+        assert_eq!(moved.name, None);
+        assert_eq!(moved.elevation_mm, Some(500.0));
+        assert_eq!(
+            moved.footprint,
+            Footprint::for_level_update(id(1), false, true).unwrap()
+        );
+        let code = |c: UpdateLevel| m.update(&c).unwrap_err().code;
+        assert_eq!(
+            code(update(id(1), Some("L1"), Some(0.0))),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(code(update(id(1), None, None)), ErrorCode::InvalidArgument);
+        assert_eq!(
+            code(update(id(10), Some("x"), None)),
+            ErrorCode::UnsupportedProperty
+        );
+        assert_eq!(code(update(id(99), Some("x"), None)), ErrorCode::NotFound);
+    }
+
     fn create(n: u8, elevation_mm: f64) -> CreateLevel {
         CreateLevel {
             new_id: id(n),
@@ -261,6 +360,35 @@ mod tests {
         assert_eq!(
             m.create(&create(3, 2e9)).unwrap_err().code,
             ErrorCode::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn several_levels_are_decided_together_and_one_taken_identity_refuses_all() {
+        let m = model();
+        let all = CreateLevels {
+            new_ids: vec![id(3), id(4)],
+            elevations: "0 3000".into(),
+            names: String::new(),
+        };
+        let (created, levels) = m.create_all(&all).unwrap();
+        let union = Footprint::for_create(id(3), None)
+            .unwrap()
+            .union(Footprint::for_create(id(4), None).unwrap())
+            .unwrap();
+        assert_eq!(created.footprint, union);
+        // The model's levels are "L1" and "L2"; generated names start from "Level 1".
+        assert_eq!(
+            levels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+            ["Level 1", "Level 2"]
+        );
+        let taken = CreateLevels {
+            new_ids: vec![id(3), id(1)],
+            ..all
+        };
+        assert_eq!(
+            m.create_all(&taken).unwrap_err().code,
+            ErrorCode::DuplicateId
         );
     }
 

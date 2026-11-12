@@ -1360,6 +1360,7 @@ pub(super) fn changes(
                 let valid = match change {
                     Change::PartClass { .. } => is_part_kind(kind),
                     Change::Grid { .. } => kind == "grid",
+                    Change::LevelElevation { .. } => kind == "level",
                     Change::Discipline(hook) => hook.0.targets_kind(kind),
                     Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
@@ -1442,6 +1443,10 @@ pub(super) fn changes(
             }
             Change::Grid { .. } => (
                 &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
+                &[Group::ShapeInputs],
+            ),
+            Change::LevelElevation { .. } => (
+                &[Group::Lifecycle, Group::ShapeInputs],
                 &[Group::ShapeInputs],
             ),
             // The complete authored inputs and the `connects` record are replaced as a whole
@@ -1780,6 +1785,7 @@ pub(super) fn changes(
                 reads: &mut reads,
             })?,
             Change::Label { name, .. } => label(name)?,
+            Change::LevelElevation { elevation_mm, .. } => elevation(*elevation_mm)?,
             Change::AttachReference(r) => reference::check_new(r)?,
             Change::ReferenceUnits { interpretation, .. } => {
                 reference::check_units(interpretation)?

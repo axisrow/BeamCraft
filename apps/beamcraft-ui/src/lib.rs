@@ -39,6 +39,7 @@ pub mod drawing;
 pub mod edit;
 pub mod grid;
 pub mod kit;
+pub mod levels;
 pub mod library;
 pub mod metrics;
 pub mod panes;

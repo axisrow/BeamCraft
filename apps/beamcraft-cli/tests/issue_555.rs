@@ -8,7 +8,7 @@
 //! follows a rotated plate (finding 2), the plate box honours `thickness_side` (finding 3), a
 //! verbatim retry of a `create-*` without `--new-id` replays (finding 4) and a store pinned to
 //! another layer mapping is reported honestly by `open-revision` (finding 5), as is a project
-//! store whose layers cannot be read (the #557 review follow-up).
+//! store whose layers cannot be read (the axisrow/BeamCraft#557 review follow-up).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -441,7 +441,7 @@ fn a_store_of_another_layer_mapping_is_not_reported_verified() {
 
 #[test]
 fn open_revision_refuses_a_project_head_whose_layers_cannot_be_read() {
-    // #557 review: a byte-verified project head with a damaged layer is not
+    // axisrow/BeamCraft#557 review: a byte-verified project head with a damaged layer is not
     // `revision_verified`; open-revision refuses it with the code the content commands give,
     // while a head that is no project base still verifies with `schema: null`.
     let f = Fixture::new();

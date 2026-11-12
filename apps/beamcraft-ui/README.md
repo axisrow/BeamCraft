@@ -42,7 +42,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   moving the viewpoint with the pointer.
 - Live refresh: the window watches the store's committed revisions and reloads by itself when
   another process (the CLI, an agent) commits to the store it shows; `R` stays for a manual
-  reload. A reload whose framing changed fits the camera, so new content comes into view.
+  reload. The view is framed once, on the first scene with something in it; after that a
+  reload (an inserted column, an undo, another process's commit) keeps the camera where the
+  user left it, and Fit model frames the whole model on request.
 - Native interface (egui/wgpu, entirely Rust, no HTML, JavaScript or WebView): cool neutral
   surfaces, one-point separators, compact Inter controls and cyan actions/selection replace the
   old cream panels, heavy outlines, decorative grids and hard shadows. The model library has a
@@ -64,8 +66,22 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   snapshot, not invented drawings or views. Menu → New and Open create or open another model in
   the same window; Model library (Ctrl+K) returns to the library when launched from the start
   page. Ctrl+K searches supported commands in a native dialog.
-  Existing create/edit/property/publish commands still use the same CLI paths. Unimplemented
-  tools (Bolts, Weld and floor-plan views) remain explicitly disabled.
+  Existing create/edit/property/publish commands still use the same CLI paths. Ribbon tools that
+  do not exist yet stay disabled, with a "Not available yet" tooltip.
+- An orthographic elevation or section shows every level as a dashed line over the model and the
+  grids, running a little past them on both sides, with its name and elevation at the right end;
+  the view's grid switch shows and hides them with the grids.
+- Manage > Levels lists the model's levels from the highest down, with their elevations. With no
+  level selected, the form creates levels from a spacing expression read like a grid family's
+  (`-1000 1000 6*3500`: the first elevation, then spacings) and optional comma-separated names;
+  the rest of the names continue from the last one, or from `Level 1`, skipping names in use. A
+  preview lists what Create makes, and the whole batch is one `create-levels`. A selected level is
+  renamed, re-elevated or deleted through `update-level` and `delete-element`. With "Beams and
+  columns on the level follow it" ticked (the default), a new elevation also moves the axis ends
+  of straight beams and columns that lie at the old elevation (`--move-elements true`): a column
+  placed up to the level stretches, a beam on it moves. They are matched by position, not by a
+  stored binding (H01.2, #820). Every gesture is one revision and one undo unit. A level that
+  elements use cannot be deleted. Level plans pick their level from the same list.
 - Manage > Rectangular grid restores regular-grid creation in the inspector: U/V coordinate
   expressions, labels, optional line limits, XY origin and rotation. Create invokes the existing
   CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.

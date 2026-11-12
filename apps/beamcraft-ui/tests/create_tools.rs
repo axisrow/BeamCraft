@@ -178,6 +178,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
         width: "1000".into(),
         length: "500".into(),
         thickness: "10".into(),
+        thickness_side: String::new(),
         name: "Plate A".into(),
         material: None,
     };

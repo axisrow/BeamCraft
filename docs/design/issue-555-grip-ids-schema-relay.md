@@ -6,7 +6,7 @@ Findings of a CLI-modelled joint (SHS column, sloped SHS brace, through gusset, 
 decisions themselves are recorded where they live: the grip and the length rule in
 [`a14-3-bolt-group-placement.md`](a14-3-bolt-group-placement.md), the generated holes in
 [`a14-4-generated-holes.md`](a14-4-generated-holes.md). The member cut and slot gap (finding 7)
-is a feature, tracked in the epic #556.
+is a feature, tracked in the epic axisrow/BeamCraft#556.
 
 ## What changed
 
@@ -43,7 +43,7 @@ is a feature, tracked in the epic #556.
   `root.usda` (a raw revision of arbitrary blobs) is read by no content command and has no
   layer schema, so `open-revision` verifies it with `schema: null`. A project head whose
   layers cannot be parsed (a damaged layer committed through `commit-revision`) is refused
-  with the reader's code, the same refusal the content commands give (#557 review).
+  with the reader's code, the same refusal the content commands give (axisrow/BeamCraft#557 review).
 - **Each blob is verified once.** `open-revision` reads the head with
   `RevisionStore::open_with_layers`, which returns the bytes of the single verification pass,
   and the schema check (`store_schema::schema_status`) opens the stage from those bytes

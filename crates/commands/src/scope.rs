@@ -95,6 +95,15 @@ const fn integrity(message: &'static str) -> Refusal {
     }
 }
 
+/// Whether the store keeps the classic authored/derived pair (or has no revision yet), so one
+/// command may author a level and the elements together.
+pub(crate) fn is_classic(store: &RevisionStore) -> Result<bool, Refusal> {
+    Ok(match store.head().map_err(Refusal::from)? {
+        Some(head) => matches!(routing_of(store, &head), EditRouting::Classic),
+        None => true,
+    })
+}
+
 /// Derives the routing of one store from its verified head: the classic layout keeps the 0.1
 /// behaviour, a sectioned one requires the workspace's authorized scope beside it.
 pub(crate) fn routing_of(store: &RevisionStore, head: &RevisionInfo) -> EditRouting {

@@ -335,6 +335,109 @@ impl DetachFromAssembly {
     }
 }
 
+/// The F04 label rule of a level.
+fn check_level_name(name: &str) -> Result<(), CommandError> {
+    if label_is_valid(name) {
+        return Ok(());
+    }
+    Err(CommandError::new(
+        ErrorCode::InvalidArgument,
+        "name",
+        "label must be 1 to 256 bytes without control characters",
+    )
+    .with_rule("DV-BASE-003"))
+}
+
+/// The bounds of a level's elevation: finite and within the coordinate cap.
+fn check_level_elevation(elevation_mm: f64) -> Result<(), CommandError> {
+    if !elevation_mm.is_finite() {
+        return Err(CommandError::new(
+            ErrorCode::NonFiniteNumber,
+            "elevation_mm",
+            "value is not finite",
+        )
+        .with_rule("DV-ATTR-003"));
+    }
+    if elevation_mm.abs() > COORDINATE_CAP_MM {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "elevation_mm",
+            "elevation exceeds the coordinate cap",
+        )
+        .with_rule("DV-LIM-001"));
+    }
+    Ok(())
+}
+
+/// D2 `UpdateLevel`: a new name, a new elevation or both for an existing level. The elevation
+/// moves no element unless `move_elements` asks for it: a level itself has no geometric effect.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateLevel {
+    /// The level to change.
+    pub target_id: ElementId,
+    /// The new label, when it changes; the F04 label rule applies.
+    pub name: Option<String>,
+    /// The new elevation in millimetres, when it changes; the bounds of `CreateLevel` apply.
+    pub elevation_mm: Option<f64>,
+    /// With a new elevation, the axis ends of straight beams and columns that lie at the old
+    /// elevation move to the new one in the same revision. The elements are matched by where
+    /// they are, not by a stored binding.
+    pub move_elements: bool,
+}
+
+impl UpdateLevel {
+    /// Admits the request: at least one field (`INVALID_ARGUMENT`), a valid label and a bounded
+    /// finite elevation. Whether the target is a level and whether a value differs from the head
+    /// is the engine's decision.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if self.name.is_none() && self.elevation_mm.is_none() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "patch",
+                "name or elevation is required",
+            ));
+        }
+        if let Some(name) = &self.name {
+            check_level_name(name)?;
+        }
+        if let Some(elevation_mm) = self.elevation_mm {
+            check_level_elevation(elevation_mm)?;
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let name = self.name.as_deref().unwrap_or_default();
+        let mut bytes = Vec::with_capacity(80 + name.len());
+        bytes.extend_from_slice(b"BeamCraft/D2/UpdateLevel/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.push(u8::from(self.name.is_some()));
+        bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(u8::from(self.elevation_mm.is_some()));
+        if let Some(elevation_mm) = self.elevation_mm {
+            bytes.extend_from_slice(&canonical_f64_bytes(elevation_mm).map_err(|_| {
+                CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "elevation_mm",
+                    "value cannot be encoded",
+                )
+                .with_rule("DV-ATTR-003")
+            })?);
+        }
+        // Appended only when set: a request without it keeps the fingerprint it always had.
+        if self.move_elements {
+            bytes.extend_from_slice(b"\0move-elements");
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// D2 `CreateLevel`: a new `level` element (a storey): a name and an elevation in millimetres.
 /// A level has no geometry and no placement of its own; plates and members are assigned to it
 /// through `UpdateElement` (`ElementPatch::level`), and the elevation moves no element.
@@ -354,31 +457,8 @@ impl CreateLevel {
     /// finite (`NON_FINITE_NUMBER`) and within the coordinate cap (`LIMIT_EXCEEDED`). Whether the
     /// identity is free (`DUPLICATE_ID`) is the engine's decision.
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
-        if !label_is_valid(&self.name) {
-            return Err(CommandError::new(
-                ErrorCode::InvalidArgument,
-                "name",
-                "label must be 1 to 256 bytes without control characters",
-            )
-            .with_rule("DV-BASE-003"));
-        }
-        if !self.elevation_mm.is_finite() {
-            return Err(CommandError::new(
-                ErrorCode::NonFiniteNumber,
-                "elevation_mm",
-                "value is not finite",
-            )
-            .with_rule("DV-ATTR-003"));
-        }
-        if self.elevation_mm.abs() > COORDINATE_CAP_MM {
-            return Err(CommandError::new(
-                ErrorCode::LimitExceeded,
-                "elevation_mm",
-                "elevation exceeds the coordinate cap",
-            )
-            .with_rule("DV-LIM-001"));
-        }
-        Ok(())
+        check_level_name(&self.name)?;
+        check_level_elevation(self.elevation_mm)
     }
 
     /// SHA-256 of a versioned, length-prefixed encoding of the validated request.

@@ -566,12 +566,13 @@ fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
     };
 
     let rolled_store = store_of("rolled");
-    let (mut tools, staged) = member_of(&rolled_store, "0.6");
+    // The form is in degrees and the command in radians.
+    let (mut tools, staged) = member_of(&rolled_store, "30");
     assert!(
-        staged
-            .args
-            .windows(2)
-            .any(|w| w[0] == "--roll" && w[1] == "0.6"),
+        staged.args.windows(2).any(|w| w[0] == "--roll"
+            && w[1]
+                .parse::<f64>()
+                .is_ok_and(|rad| (rad - 30f64.to_radians()).abs() < 1e-12)),
         "{staged:?}"
     );
     let created =

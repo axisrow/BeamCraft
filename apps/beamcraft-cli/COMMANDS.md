@@ -769,6 +769,25 @@ create-level --store ROOT --name TEXT --elevation MM [--new-id UUID] [--op-id UU
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
+### create-levels
+
+write.
+
+```text
+create-levels --store ROOT --elevations EXPR [--names TEXT] [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### update-level
+
+write.
+
+```text
+update-level --store ROOT --id UUID [--name TEXT] [--elevation MM] [--move-elements true|false]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
 ### levels
 
 read.

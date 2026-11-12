@@ -255,7 +255,7 @@ fn grips_screen(
 
 /// The screen point of a world-millimetre point in the pane, or `None` when it is behind the
 /// camera or not finite. The same projection the selection outline uses.
-fn project(
+pub(super) fn project(
     point: &[f64; 3],
     origin: [f64; 3],
     view: &crate::camera::View,

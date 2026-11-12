@@ -1371,6 +1371,13 @@ pub(super) fn apply(
         let p = change_path(id, input, prims)?;
         match c {
             Change::Grid { grid: g, .. } => grid::author(&mut authored, &p, g)?,
+            Change::LevelElevation { elevation_mm, .. } => attr(
+                &mut authored,
+                &p,
+                "bim:elevationMm",
+                "double",
+                sdf::Value::Double(*elevation_mm),
+            )?,
             Change::PartClass { class, .. } => {
                 attr(
                     &mut authored,
@@ -1924,6 +1931,7 @@ fn capture(
                 add("material:binding", "rel", 0);
             }
             Change::Label { .. } => add("bim:name", "string", 0),
+            Change::LevelElevation { .. } => add("bim:elevationMm", "double", 0),
             Change::Discipline(hook) => {
                 for (name, ty) in hook.0.attributes() {
                     add(name, ty, 0);

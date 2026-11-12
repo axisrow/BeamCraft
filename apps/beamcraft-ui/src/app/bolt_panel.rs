@@ -2260,7 +2260,7 @@ mod tests {
 
     #[test]
     fn a_bent_plate_gets_no_preview_holes_from_its_shown_mesh_box() {
-        // #557 review: the commit decides a plate's holes over the authored contour's box,
+        // axisrow/BeamCraft#557 review: the commit decides a plate's holes over the authored contour's box,
         // which for a bent plate is the developed (unfolded) outline, while its shown mesh is
         // folded out of plane; the preview leaves a bent plate's holes undecided instead of
         // drawing holes over a box the commit never uses. A flat plate keeps the mesh box,

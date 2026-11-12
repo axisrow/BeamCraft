@@ -116,12 +116,16 @@ pub struct Details {
     pub contour: Option<crate::edit::PlateContour>,
     /// A plate's thickness in millimetres (`None` for a member).
     pub thickness_mm: Option<f64>,
+    /// The side a plate's thickness is laid off from (`top`, `middle`, `bottom`).
+    pub thickness_side: Option<String>,
     /// A plate's width and length in millimetres.
     pub plate_size_mm: Option<[f64; 2]>,
     /// A member's section width and height in millimetres.
     pub section_mm: Option<[f64; 2]>,
     /// A member's axis start and end in millimetres.
     pub axis_points_mm: Option<[[f64; 3]; 2]>,
+    /// The placement rotation (`x, y, z, w`), `None` when the element is not rotated.
+    pub orientation_xyzw: Option<[f64; 4]>,
     /// A member's pinned profile definition (its digest), `None` for a plate.
     pub profile: Option<String>,
     /// A member's profile name, when the definition has one.
@@ -302,9 +306,15 @@ pub fn parse_details(
             translation_mm,
             contour: crate::edit::plate_contour(element, translation_mm)?,
             thickness_mm,
+            thickness_side: text(element, "thickness_side"),
             plate_size_mm,
             section_mm,
             axis_points_mm,
+            orientation_xyzw: element
+                .get("placement")
+                .ok()
+                .and_then(|p| p.get("orientation_xyzw").ok())
+                .and_then(floats::<4>),
             profile: text(element, "profile_digest"),
             profile_name: text(element, "profile_name"),
             roll_rad: element.get("roll_rad").and_then(Json::float).ok(),
@@ -341,6 +351,15 @@ fn unknown() -> String {
 }
 
 impl Details {
+    /// The axis the member handles work on; `None` for a plate or a non-straight member.
+    pub fn member_axis(&self) -> Option<crate::edit::MemberAxis> {
+        Some(crate::edit::MemberAxis {
+            points: self.axis_points_mm?,
+            translation_mm: self.translation_mm,
+            orientation_xyzw: self.orientation_xyzw.unwrap_or([0.0, 0.0, 0.0, 1.0]),
+        })
+    }
+
     /// A plate takes a thickness edit.
     pub fn is_plate(&self) -> bool {
         self.kind == "plate"
@@ -501,6 +520,8 @@ pub struct Form {
     pub profile: Option<String>,
     /// `--thickness` (plates only), mm.
     pub thickness: String,
+    /// `--thickness-side` (plates only): `top`, `middle` or `bottom`.
+    pub thickness_side: String,
     /// `--translation`, mm, absolute.
     pub translation: [String; 3],
     /// A member's roll in degrees (`--roll` takes radians).
@@ -529,6 +550,10 @@ impl Form {
             material: details.material.clone(),
             profile: details.profile.clone(),
             thickness: details.thickness_mm.map(show).unwrap_or_default(),
+            thickness_side: details
+                .thickness_side
+                .clone()
+                .unwrap_or_else(|| "top".to_owned()),
             translation: details.translation_mm.map(show),
             roll_deg: show(details.roll_rad.unwrap_or(0.0).to_degrees()),
             plane: details
@@ -825,6 +850,10 @@ impl Properties {
             }
             args.extend(["--thickness".into(), typed]);
             changed.push("thickness");
+        }
+        if details.is_plate() && self.form.thickness_side != self.baseline.thickness_side {
+            args.extend(["--thickness-side".into(), self.form.thickness_side.clone()]);
+            changed.push("thickness side");
         }
         if self.form.translation != self.baseline.translation {
             let [x, y, z] = &self.form.translation;
@@ -1203,6 +1232,15 @@ mod tests {
         assert!(label.contains("nothing to show here"));
         q.clear();
         assert_eq!(q.state(), None);
+    }
+
+    #[test]
+    fn a_changed_thickness_side_is_one_flag() {
+        let mut p = loaded();
+        p.form.thickness_side = "bottom".into();
+        let edit = p.prepare(store()).unwrap();
+        assert_eq!(edit.args.get(5..).unwrap(), ["--thickness-side", "bottom"]);
+        assert_eq!(edit.changed, ["thickness side"]);
     }
 
     #[test]

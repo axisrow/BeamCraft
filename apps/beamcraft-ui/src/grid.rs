@@ -894,11 +894,9 @@ impl GridScene {
         hit
     }
 
-    /// Fits the camera to the union of engineering bounds and grid guides, in scene coordinates.
-    pub fn framing(&self, scene: &SceneSummary) -> ([f32; 3], f32) {
-        if self.lines.is_empty() {
-            return scene.framing();
-        }
+    /// The union of the engineering bounds and the grid guides, in scene coordinates; `None` for
+    /// an empty scene without grids.
+    pub fn bounds(&self, scene: &SceneSummary) -> Option<([f32; 3], [f32; 3])> {
         let mut low = if scene.elements == 0 {
             [f32::INFINITY; 3]
         } else {
@@ -923,6 +921,20 @@ impl GridScene {
                 }
             }
         }
+        low.iter()
+            .zip(high)
+            .all(|(a, b)| a.is_finite() && b.is_finite() && *a <= b)
+            .then_some((low, high))
+    }
+
+    /// Fits the camera to the union of engineering bounds and grid guides, in scene coordinates.
+    pub fn framing(&self, scene: &SceneSummary) -> ([f32; 3], f32) {
+        if self.lines.is_empty() {
+            return scene.framing();
+        }
+        let Some((low, high)) = self.bounds(scene) else {
+            return scene.framing();
+        };
         let centre = std::array::from_fn(|i| {
             (low.get(i).copied().unwrap_or(0.0) + high.get(i).copied().unwrap_or(0.0)) / 2.0
         });

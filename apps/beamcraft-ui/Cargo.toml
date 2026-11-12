@@ -62,7 +62,7 @@ skrifa = "=0.44.0"
 # Linux has no dependency-free system dialog: the window asks the desktop's own dialog program
 # instead (zenity or kdialog), see `crate::dialog`.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-rfd = { version = "=0.17.2", default-features = false }
+rfd = { version = "=0.18.0", default-features = false }
 
 [lints]
 workspace = true

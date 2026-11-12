@@ -15,6 +15,7 @@ mod contour_grips;
 mod create_tools;
 mod edit_tools;
 mod grids;
+mod levels;
 mod properties;
 mod screenshot;
 mod selection;

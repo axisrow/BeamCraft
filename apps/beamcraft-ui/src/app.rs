@@ -14,6 +14,8 @@ mod contour_grips;
 mod creation_panel;
 mod export_panel;
 mod grid_panel;
+mod level_panel;
+mod member_grips;
 mod switches;
 mod view_panel;
 mod weld_panel;
@@ -138,6 +140,9 @@ pub struct App {
     /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
     /// only when the preview actually moves.
     ghost_end: Option<[i64; 3]>,
+    /// The member form the current ghost was built from: a new position, roll or profile
+    /// rebuilds it although the end did not move.
+    ghost_form: Option<crate::tools::MemberForm>,
     beam_hover: Option<[f64; 3]>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
@@ -187,6 +192,7 @@ pub struct App {
     grid_drawn: bool,
     grid_scene: crate::grid::GridScene,
     grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
+    level_panel: level_panel::LevelPanel,
     grid_note: Option<Result<String, String>>,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
@@ -200,6 +206,7 @@ pub struct App {
     selection: crate::selection::Selection,
     /// The selected plate's contour grips (V18): the drag in progress and the commit in flight.
     contour: contour_grips::Grips,
+    member_grips: member_grips::Grips,
     /// The page the application menu shows.
     menu_section: workbench::MenuSection,
     /// What the last menu action reported, shown under the page heading.
@@ -677,23 +684,6 @@ fn target_size(size: [f32; 2], scale: f32) -> [u32; 2] {
     ]
 }
 
-/// True when the camera should follow the framing of a reloaded scene: nothing was framed yet,
-/// or the bounds or the viewport changed. An unchanged scene keeps the user's view, so a Commit
-/// or `R` that altered no bounds does not jump back to the whole model.
-fn needs_refit(
-    framed: Option<([f32; 3], f32, f32)>,
-    target: [f32; 3],
-    extent: f32,
-    aspect: f32,
-) -> bool {
-    match framed {
-        Some((old_target, old_extent, old_aspect)) => {
-            old_target != target || old_extent != extent || old_aspect != aspect
-        }
-        None => true,
-    }
-}
-
 /// How often the window checks the store for revisions another process has committed.
 const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -1000,6 +990,7 @@ impl App {
             grid_form: crate::grid::GridForm::default(),
             grid_scene: crate::grid::GridScene::default(),
             grid_job: None,
+            level_panel: level_panel::LevelPanel::default(),
             grid_note: None,
             annotation: annotation_panel::Panel::empty(),
             weld: weld_panel::Panel::empty(),
@@ -1038,6 +1029,7 @@ impl App {
             plane_form: crate::work_plane::Form::default(),
             plane_pick: false,
             ghost_end: None,
+            ghost_form: None,
             beam_hover: None,
             job: None,
             reload_job: None,
@@ -1075,6 +1067,7 @@ impl App {
             grid_refresh_edit: false,
             selection: crate::selection::Selection::default(),
             contour: contour_grips::Grips::default(),
+            member_grips: member_grips::Grips::default(),
             details: false,
             pending_fit: false,
             keep_camera: false,
@@ -1251,40 +1244,50 @@ impl App {
         });
         match result {
             // The snapshot on screen again: nothing to build, upload or draw, unless the
-            // viewport changed since it was framed.
+            // default view still waits for its first framing.
             Ok(None) => {
                 // An unchanged store delivers no scene, so R and Reload would keep the stale
                 // book: the file's own views-only edits are adopted here too (issue 584
                 // item 5), as the changed-scene delivery already does below.
                 self.adopt_views_file();
                 self.apply_grids(grids);
+                let content = self.loaded.as_ref().is_some_and(|l| l.summary.elements > 0)
+                    || !self.grid_scene.lines.is_empty();
                 if let Some((target, extent)) =
                     self.loaded.as_ref().map(|l| self.grid_framing(&l.full))
                 {
                     let aspect = self.aspect();
-                    // An active model view keeps its own camera (V12); the default view fits
-                    // the model like a free camera.
+                    // An active model view keeps its own camera (V12); the default view is
+                    // framed once, then stays where the user left it.
                     let default = self.default_view_id();
                     match self
                         .views
                         .active_pane_mut()
                         .filter(|p| p.view.is_none() || p.view == default)
                     {
-                        Some(pane) if needs_refit(pane.framed, target, extent, aspect) => {
+                        Some(pane) if pane.framed.is_none() => {
                             if std::mem::take(&mut self.keep_camera) {
-                                // The undo's new framing is tracked, not fitted (item 50).
-                                pane.framed = Some((target, extent, aspect));
+                                // An undo or redo tracks the framing without fitting (issue 562
+                                // item 50).
+                                pane.framed = content.then_some((target, extent, aspect));
+                                self.error = None;
                             } else {
                                 match pane.camera.fit(target, extent, aspect) {
                                     Ok(()) => {
-                                        pane.framed = Some((target, extent, aspect));
+                                        pane.framed = content.then_some((target, extent, aspect));
                                         self.error = None;
                                     }
                                     Err(e) => self.error = Some(e.to_string()),
                                 }
                             }
                         }
-                        _ => {
+                        // Framed already: the framing is tracked, the camera stays.
+                        Some(pane) => {
+                            std::mem::take(&mut self.keep_camera);
+                            pane.framed = Some((target, extent, aspect));
+                            self.error = None;
+                        }
+                        None => {
                             std::mem::take(&mut self.keep_camera);
                             self.error = None;
                         }
@@ -1309,27 +1312,36 @@ impl App {
                 };
                 let aspect = self.aspect();
                 let default = self.default_view_id();
-                // A scene the camera cannot frame keeps the previous scene and shows why. An
-                // unchanged framing keeps the user's camera.
+                // The default view is framed when it shows its first scene with something in
+                // it; after that a new revision (an inserted column, an undo) keeps the user's
+                // camera, carried to the new display origin in `show`. A scene the camera cannot
+                // frame keeps the previous scene and shows why.
+                let content = loaded.summary.elements > 0 || !next_grids.lines.is_empty();
                 let fitted = match self
                     .views
                     .active_pane_mut()
                     .filter(|p| p.view.is_none() || p.view == default)
                 {
-                    Some(pane) if needs_refit(pane.framed, target, extent, aspect) => {
+                    Some(pane) if pane.framed.is_none() => {
                         if std::mem::take(&mut self.keep_camera) {
-                            // The undo's new framing is tracked, not fitted (item 50).
-                            pane.framed = Some((target, extent, aspect));
-                            Some(Ok(()))
+                            // An undo or redo tracks the framing without fitting (issue 562
+                            // item 50); the camera follows the new origin in `show`.
+                            pane.framed = content.then_some((target, extent, aspect));
+                            None
                         } else {
-                            Some(
-                                pane.camera
-                                    .fit(target, extent, aspect)
-                                    .map(|()| pane.framed = Some((target, extent, aspect))),
-                            )
+                            Some(pane.camera.fit(target, extent, aspect).map(|()| {
+                                pane.framed = content.then_some((target, extent, aspect));
+                            }))
                         }
                     }
-                    _ => {
+                    // Framed already: the framing is tracked and the camera stays, carried to
+                    // the new origin in `show`.
+                    Some(pane) => {
+                        std::mem::take(&mut self.keep_camera);
+                        pane.framed = Some((target, extent, aspect));
+                        None
+                    }
+                    None => {
                         std::mem::take(&mut self.keep_camera);
                         None
                     }
@@ -1338,7 +1350,7 @@ impl App {
                     Some(Err(e)) => self.error = Some(e.to_string()),
                     Some(Ok(())) | None => {
                         self.grid_scene = next_grids;
-                        self.show(loaded);
+                        self.show(loaded, fitted.is_some());
                     }
                 }
             }
@@ -1413,12 +1425,13 @@ impl App {
     }
     /// Puts a refreshed scene on screen. Its image is drawn again either way (the window draws
     /// every frame): a scene whose bounds did not change (an edit inside them, a rename, an undo)
-    /// can still differ from the last image.
-    fn show(&mut self, loaded: Loaded) {
+    /// can still differ from the last image. `fitted` says the active default view was framed
+    /// on this scene just now.
+    fn show(&mut self, loaded: Loaded, fitted: bool) {
         note_loaded(&self.stats, &loaded);
-        // A new scene may centre on another origin: the cameras of the views keep their framing
-        // in model space (V12). Only the active free pane does not follow: the reload refits it
-        // against its own aspect.
+        // A new scene may centre on another origin: every camera keeps its framing in model
+        // space (V12), so the model does not move on screen. Only an active default view framed
+        // on this scene already stands in its coordinates.
         let previous = self.loaded.as_ref().map(|l| l.summary.origin_mm);
         let next = loaded.summary.origin_mm;
         let default = self.default_view_id();
@@ -1426,7 +1439,7 @@ impl App {
             let active = self.views.active_pane().map(|p| p.key);
             for pane in &mut self.views.panes {
                 let free = pane.view.is_none() || pane.view == default;
-                if !free || Some(pane.key) != active {
+                if !(fitted && free && Some(pane.key) == active) {
                     pane.camera.rebase(previous, next);
                 }
                 if let Some((camera, _, _)) = &mut pane.spatial {
@@ -1555,9 +1568,11 @@ impl App {
             }
             Ok(Some(Selected { id, info, details })) => {
                 // A picked part shows its own properties. Only a new view's form stays open:
-                // its picks and name are not recoverable.
-                if self.bench == workbench::Bench::View
-                    && self.views.subject != crate::views::Subject::NewView
+                // its picks and name are not recoverable. The levels list is closed like the
+                // view panel: nothing on it is lost.
+                if self.bench == workbench::Bench::Levels
+                    || self.bench == workbench::Bench::View
+                        && self.views.subject != crate::views::Subject::NewView
                 {
                     self.set_bench(workbench::Bench::Select);
                 }
@@ -1591,9 +1606,10 @@ impl App {
     /// A click that selected nothing shows the active pane's view in the panel, unless a new
     /// view's form is open there.
     fn empty_click(&mut self) {
+        // The levels list closes like the view panel: nothing on it is lost.
         if matches!(
             self.bench,
-            workbench::Bench::Select | workbench::Bench::View
+            workbench::Bench::Select | workbench::Bench::View | workbench::Bench::Levels
         ) && self.views.subject != crate::views::Subject::NewView
         {
             self.show_view_properties();
@@ -1622,6 +1638,11 @@ impl App {
             None => self.editor.begin_commit(target),
         };
         let Some(edit) = edit else { return };
+        self.spawn_edit(edit);
+    }
+
+    /// Runs one edit command on a worker thread; the editor is already marked busy.
+    fn spawn_edit(&mut self, edit: crate::edit::Edit) {
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.edit_job = Some(rx);
@@ -1698,6 +1719,7 @@ impl App {
                 }
                 self.reload();
                 self.edit_note = Some(Ok(format!("{}.", done.kind.done())));
+                self.editor.clear_axis_point();
                 match done.kind {
                     EditKind::Delete => {
                         self.editor.deselect();
@@ -2066,6 +2088,14 @@ impl App {
                     if details.is_plate() {
                         mark(ui, self.props.form.thickness != base.thickness);
                         field(ui, "Thickness, mm", &mut self.props.form.thickness, 80.0);
+                        mark(ui, self.props.form.thickness_side != base.thickness_side);
+                        creation_panel::token_combo(
+                            ui,
+                            "props-thickness-side",
+                            "Thickness from",
+                            &mut self.props.form.thickness_side,
+                            creation_panel::THICKNESS_SIDES,
+                        );
                     }
                 });
                 if !details.is_plate() {
@@ -2550,6 +2580,7 @@ impl App {
             || self.edit_job.is_some()
             || self.job.is_some()
             || self.grid_job.is_some()
+            || self.level_panel.running()
             || self.contour.running()
     }
 
@@ -2675,7 +2706,12 @@ impl App {
         let action = self.editor.action();
         ui.add_enabled_ui(selected, |ui| match action {
             EditKind::Move => {
-                ui.label("New position in mm (absolute):");
+                match self.editor.axis_point() {
+                    Some((_, end)) => {
+                        ui.label(format!("New {} point in mm (absolute):", end.label()))
+                    }
+                    None => ui.label("New position in mm (absolute):"),
+                };
                 point_fields(ui, &mut self.editor.move_to);
             }
             EditKind::Copy => {
@@ -3110,10 +3146,11 @@ impl App {
             None => return,
         };
         let key = end.map(|v| v.round() as i64);
-        if self.ghost_end == Some(key) {
+        if self.ghost_end == Some(key) && self.ghost_form.as_ref() == Some(&self.tools.member) {
             return;
         }
         self.ghost_end = Some(key);
+        self.ghost_form = Some(self.tools.member.clone());
         let ghost = self.build_ghost(start, end, origin_mm);
         self.set_active_ghost(ghost.as_ref());
     }
@@ -3144,8 +3181,8 @@ impl App {
             axis_points_mm: vec![start, end],
             follow: None,
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
-            roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
-            section_placement: None,
+            roll_rad: self.tools.member.roll_radians().ok().flatten(),
+            section_placement: self.tools.member.section_placement().ok()?,
             placement: Placement {
                 translation_mm: [0.0; 3],
                 orientation_xyzw: orientation,
@@ -3295,6 +3332,7 @@ impl eframe::App for App {
         });
         self.poll_commit();
         self.poll_grid();
+        self.poll_levels();
         self.poll_annotations();
         self.poll_weld();
         self.poll_bolt();
@@ -3390,8 +3428,7 @@ impl eframe::App for App {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        App, Preset, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
-        target_size,
+        App, Preset, Source, WATCH_INTERVAL, load_icon, revisions_token, spawn_watch, target_size,
     };
 
     #[test]
@@ -4452,6 +4489,85 @@ pub(crate) mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }]
+    }
+
+    #[test]
+    fn the_levels_list_closes_on_esc_and_on_a_picked_element() {
+        use super::workbench::Bench;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        app.text = true;
+        app.set_bench(Bench::Levels);
+        app_frame(&mut app, &ctx, vec![]);
+        app_frame(&mut app, &ctx, escape());
+        assert!(app.bench == Bench::Select, "Esc leaves the levels list");
+        // A clicked list row keeps the keyboard focus; Esc still leaves.
+        app.tools.definitions.levels = vec![crate::tools::LevelChoice {
+            id: "01990000-0000-7000-8000-000000000c02".into(),
+            name: "Level 1".into(),
+            elevation_mm: 3000.0,
+            elements: 0,
+        }];
+        app.set_bench(Bench::Levels);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let row = labels
+            .iter()
+            .find(|(l, _)| l.starts_with("Level 1"))
+            .unwrap()
+            .1;
+        app_frame(&mut app, &ctx, click(row));
+        assert_eq!(
+            app.level_panel.selected_id(),
+            Some("01990000-0000-7000-8000-000000000c02")
+        );
+        app_frame(&mut app, &ctx, escape());
+        assert!(
+            app.bench == Bench::Select,
+            "Esc leaves it from a clicked row"
+        );
+        // From a text field: the first Esc leaves the field, the next one the list.
+        app.set_bench(Bench::Levels);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let row = labels
+            .iter()
+            .find(|(l, _)| l.starts_with("Level 1"))
+            .unwrap()
+            .1;
+        app_frame(&mut app, &ctx, click(row));
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let field = labels.iter().find(|(l, _)| l == "3000").unwrap().1;
+        app_frame(&mut app, &ctx, click(field));
+        app_frame(&mut app, &ctx, vec![]);
+        assert!(ctx.text_edit_focused(), "the elevation field has the focus");
+        app_frame(&mut app, &ctx, escape());
+        app_frame(&mut app, &ctx, vec![]);
+        app_frame(&mut app, &ctx, escape());
+        assert!(
+            app.bench == Bench::Select,
+            "Esc leaves it from a text field"
+        );
+
+        // A click on a column shows the column's properties, not the levels.
+        app.set_bench(Bench::Levels);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(Some(crate::command::Selected {
+            id: "01990000-0000-7000-8000-000000000c01".into(),
+            info: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+            details: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+        })))
+        .unwrap();
+        app.begin_select(rx);
+        app.poll_select();
+        assert!(app.bench == Bench::Select, "a picked element leaves it");
+
+        // A click on empty space shows the view's properties instead of the levels.
+        app.set_bench(Bench::Levels);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(None)).unwrap();
+        app.begin_select(rx);
+        app.poll_select();
+        assert!(app.bench == Bench::View, "an empty click shows the view");
     }
 
     #[test]
@@ -7785,6 +7901,8 @@ pub(crate) mod tests {
     fn a_rejected_grid_framing_keeps_the_old_scene_and_its_guides_together() {
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));
+        // Only a default view still waiting for its first framing fits a new scene.
+        app.views.active_pane_mut().unwrap().framed = None;
         let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
         let old_guides = app.grid_scene.clone();
         let mut next = refreshed(3);
@@ -8095,19 +8213,34 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_unchanged_framing_keeps_the_camera() {
-        let framing = ([10.0, 20.0, 30.0], 500.0, 1.6);
-        assert!(needs_refit(None, framing.0, framing.1, framing.2));
-        assert!(!needs_refit(Some(framing), framing.0, framing.1, framing.2));
-        // New bounds or a new viewport aspect follow.
-        assert!(needs_refit(
-            Some(framing),
-            [0.0, 20.0, 30.0],
-            framing.1,
-            framing.2
-        ));
-        assert!(needs_refit(Some(framing), framing.0, 600.0, framing.2));
-        assert!(needs_refit(Some(framing), framing.0, framing.1, 1.0));
+    fn a_new_revision_keeps_the_camera_where_the_user_left_it() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let world_eye = |app: &App| {
+            let [ox, oy, oz] = app.loaded.as_ref().unwrap().summary.origin_mm;
+            let [x, y, z, _] = app
+                .views
+                .active_pane()
+                .unwrap()
+                .camera
+                .view(1.6)
+                .unwrap()
+                .eye;
+            [f64::from(x) + ox, f64::from(y) + oy, f64::from(z) + oz]
+        };
+        let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+        let before = world_eye(&app);
+        // More plates, as after inserting an element: other bounds, another display origin.
+        deliver(&mut app, refreshed(6));
+        assert_ne!(app.loaded.as_ref().unwrap().summary.origin_mm, origin);
+        assert!(app.views.active_pane().unwrap().framed.is_some());
+        let after = world_eye(&app);
+        for (a, b) in before.iter().zip(after) {
+            assert!(
+                (a - b).abs() < 0.5,
+                "the camera moved: {before:?} -> {after:?}"
+            );
+        }
     }
 
     /// A development build finds the application icon in the source tree; the coded fallback is
@@ -8350,6 +8483,51 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_edit_with_several_views_selected_changes_them_all() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let id = |n: u64| Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap();
+        for (n, name, depth) in [
+            (1, "Grid 1", 1000.0),
+            (2, "Grid 2", 2000.0),
+            (3, "Grid 3", 3000.0),
+        ] {
+            let mut view = ModelView::new(id(n), name, WorkPlane::default(), 5000.0);
+            view.depth = Some([depth, depth]);
+            app.views.book.insert(view).unwrap();
+        }
+        app.views.selected = [id(1), id(2)].into_iter().collect();
+        app.edit_view(id(1));
+        app.views.form.folder = "Grids".into();
+        app.views.form.depth[0] = "500".into();
+        app.submit_view();
+        assert!(matches!(&app.views.note, Some(Ok(note)) if note.starts_with("2 views")));
+        let view = |app: &App, n| app.views.book.get(&id(n)).unwrap().clone();
+        for n in [1, 2] {
+            assert_eq!(view(&app, n).folder, "Grids", "view {n}");
+        }
+        // Only the changed value travels: each view keeps its own depth behind the plane and
+        // its own name.
+        assert_eq!(view(&app, 1).depth, Some([500.0, 1000.0]));
+        assert_eq!(view(&app, 2).depth, Some([500.0, 2000.0]));
+        assert_eq!(view(&app, 2).name, "Grid 2");
+        // An unselected view is untouched.
+        assert_eq!(view(&app, 3).folder, "");
+        assert_eq!(view(&app, 3).depth, Some([3000.0, 3000.0]));
+
+        // A change one selected view refuses changes none of them.
+        app.views.selected = [id(2), id(3)].into_iter().collect();
+        app.edit_view(id(2));
+        app.views.form.folder = "Bad/".into();
+        app.submit_view();
+        assert!(matches!(app.views.note, Some(Err(_))));
+        assert_eq!(view(&app, 2).folder, "Grids");
+        assert_eq!(view(&app, 3).folder, "");
+    }
+
+    #[test]
     fn a_visual_style_or_guides_switch_reaches_the_view_and_the_open_form() {
         use beamcraft_engine::RenderMode;
         use beamcraft_engine::views::ModelView;
@@ -8448,6 +8626,8 @@ pub(crate) mod tests {
             translation_mm: [0.0; 3],
             contour: plate.contour.clone(),
             thickness_mm: Some(20.0),
+            thickness_side: None,
+            orientation_xyzw: None,
             plate_size_mm: Some([100.0, 100.0]),
             section_mm: None,
             axis_points_mm: None,

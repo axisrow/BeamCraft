@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 //! Orbit and plane camera: spherical orbit, pan and zoom around a target, a perspective or an
 //! orthographic projection (V13), right-handed Z up, millimetres. A model view (V12) aligns the
-//! camera with its view plane: the camera then orbits about its own axes instead of yaw and
-//! pitch. Display only; derived from the V01 spike.
+//! camera with its view plane: the camera then orbits about the plane's normal and tilts from
+//! the plane, as the 3D view orbits about Z and tilts from the ground. Display only; derived
+//! from the V01 spike.
 use crate::Error;
 use beamcraft_engine::views::{ModelView, Projection};
 use beamcraft_engine::work_plane::WorkPlane;
@@ -17,7 +18,9 @@ pub struct Camera {
     pitch: f32,
     distance: f32,
     orthographic: bool,
-    /// Plane-aligned basis `[right, up, back]`; `None` derives it from yaw and pitch.
+    /// The view plane's frame `[x, y, normal]` of a plane-aligned camera: yaw and pitch then
+    /// turn about the plane's normal and tilt from it, exactly as the 3D view turns about the
+    /// world Z and tilts from the ground. `None` is the 3D view's world frame.
     basis: Option<[[f32; 3]; 3]>,
     /// The least eye distance of the orthographic projection: its scale follows `distance`, but
     /// the eye stands at least this far back so a view's depth in front of the plane is drawn.
@@ -49,26 +52,11 @@ pub const NO_TINT: [f32; 4] = [-1.0, 0.0, 0.0, 1.0];
 fn dot([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> f32 {
     x * a + y * b + z * c
 }
-fn cross([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> [f32; 3] {
-    [y * c - z * b, z * a - x * c, x * b - y * a]
-}
 fn scaled([x, y, z]: [f32; 3], s: f32) -> [f32; 3] {
     [x * s, y * s, z * s]
 }
 fn sum([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> [f32; 3] {
     [x + a, y + b, z + c]
-}
-/// Rodrigues rotation of `v` about the unit `axis`.
-fn rotate(v: [f32; 3], axis: [f32; 3], angle: f32) -> [f32; 3] {
-    let (s, c) = angle.sin_cos();
-    sum(
-        sum(scaled(v, c), scaled(cross(axis, v), s)),
-        scaled(axis, dot(v, axis) * (1.0 - c)),
-    )
-}
-fn unit(v: [f32; 3]) -> Option<[f32; 3]> {
-    let len = dot(v, v).sqrt();
-    (len.is_finite() && len > 1e-6).then(|| scaled(v, 1.0 / len))
 }
 fn narrow(v: [f64; 3]) -> [f32; 3] {
     v.map(|x| x as f32)
@@ -161,6 +149,10 @@ impl Camera {
         let target = narrow([px - ox, py - oy, pz - oz]);
         let mut camera = Self::new(target, 1000.0, 1.0)?;
         camera.basis = Some([narrow(plane.x()), narrow(plane.y()), narrow(plane.normal())]);
+        // Straight at the plane, its X to the right: the yaw and pitch that give the plane's own
+        // basis in its frame.
+        camera.yaw = -std::f32::consts::FRAC_PI_2;
+        camera.pitch = std::f32::consts::FRAC_PI_2;
         camera.distance = (span as f32 / (2.0 * HALF_FOV.tan())).clamp(10.0, 2e7);
         camera.orthographic = true;
         camera.reach = if extent.is_finite() {
@@ -233,22 +225,17 @@ impl Camera {
         }
         let [ox, oy] = orbit;
         let [px, py] = pan;
-        if let Some([right, up, back]) = self.basis {
-            // A plane-aligned camera turns about its own up, then its own right axis; the basis
-            // is re-orthonormalized so repeated steps never drift.
-            let right = rotate(right, up, ox);
-            let back = rotate(back, up, ox);
-            let up = rotate(up, right, -oy);
-            let back = rotate(back, right, -oy);
-            if let (Some(back), Some(up)) = (unit(back), unit(up))
-                && let Some(right) = unit(cross(up, back))
-            {
-                self.basis = Some([right, cross(back, right), back]);
-            }
+        // The 3D view and a view plane orbit alike: yaw about the up axis of their frame (the
+        // world Z, or the plane's normal) and pitch from that frame's ground. A view plane tilts
+        // up to looking straight at it, where it opened; the 3D view stops just short of the
+        // top so its turntable keeps a heading.
+        let top = if self.basis.is_some() {
+            std::f32::consts::FRAC_PI_2
         } else {
-            self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-            self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
-        }
+            1.52
+        };
+        self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
+        self.pitch = (self.pitch + oy).clamp(0.0, top);
         self.distance = (self.distance * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let view = self.view(1.0)?;
         let [rx, ry, rz, _] = view.right;
@@ -323,11 +310,18 @@ impl Camera {
         }
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
-        let [r, u, b] = self.basis.unwrap_or([
+        let local = [
             [-sy, cy, 0.0],
             [-cy * sp, -sy * sp, cp],
             [cy * cp, sy * cp, sp],
-        ]);
+        ];
+        // A view plane's camera reads the same yaw and pitch in the plane's frame.
+        let [r, u, b] = match self.basis {
+            Some([fx, fy, fz]) => {
+                local.map(|[a, b, c]| sum(sum(scaled(fx, a), scaled(fy, b)), scaled(fz, c)))
+            }
+            None => local,
+        };
         let pad = |[x, y, z]: [f32; 3]| [x, y, z, 0.0];
         let (right, up, back) = (pad(r), pad(u), pad(b));
         let [x, y, z] = self.target;
@@ -487,6 +481,38 @@ mod tests {
         );
         assert!(dot(r, u).abs() < 1e-4 && dot(r, b).abs() < 1e-4 && dot(u, b).abs() < 1e-4);
         assert!((dot(b, b) - 1.0).abs() < 1e-4);
+        // A plan turns like the 3D view about its plane: a sideways drag spins it about Z
+        // (the eye stays straight above), a tilt leans the eye towards the plane, and no tilt
+        // takes the eye below it.
+        let plan_plane = WorkPlane::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
+        let plan = Camera::aligned_to(plan_plane, [0.0; 3], 4000.0, 500.0).unwrap();
+        let mut spun = plan;
+        spun.navigate([0.7, 0.0], [0.0; 2], 0.0).unwrap();
+        let s = spun.view(1.0).unwrap();
+        assert!(
+            (s.back[2] - 1.0).abs() < 1e-5,
+            "still looking down: {:?}",
+            s.back
+        );
+        assert!(
+            s.right[2].abs() < 1e-5 && s.up[2].abs() < 1e-5,
+            "spun in plan"
+        );
+        let mut tilted = plan;
+        tilted.navigate([0.0, -0.5], [0.0; 2], 0.0).unwrap();
+        let t = tilted.view(1.0).unwrap();
+        assert!(t.back[2] > 0.5 && t.back[2] < 0.99, "leaned: {:?}", t.back);
+        assert!(
+            t.right[2].abs() < 1e-5,
+            "the horizon of the plan stays level"
+        );
+        for _ in 0..20 {
+            tilted.navigate([0.4, -0.5], [0.0; 2], 0.0).unwrap();
+        }
+        assert!(
+            tilted.view(1.0).unwrap().back[2] >= -1e-5,
+            "never below the plane"
+        );
         assert!(Camera::aligned_to(plane, origin, 0.0, 1.0).is_err());
         let mut moved = c;
         moved.rebase(origin, [0.0; 3]);

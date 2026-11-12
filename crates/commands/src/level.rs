@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! D2 adapter: `CreateLevel` committed as the next revision, plus a read of the levels of the
-//! head. The assignment of a plate, beam or column to a level is the level field of
+//! D2 adapter: `CreateLevel` and `UpdateLevel` committed as the next revision, plus a read of the
+//! levels of the head. The assignment of a plate, beam or column to a level is the level field of
 //! `UpdateElement` (see [`crate::edit`]); deleting a level is `delete-element`.
 //!
 //! A level is an element of kind `level` with its own UUIDv7 under `/World/Levels`, a label and an
@@ -13,11 +13,13 @@
 //!
 //! Honesty limits: replay of an `op_id` is decided from the revision the host ledger recorded for
 //! it, as in `weld`: a creation is a replay only when that revision introduced a level of that
-//! id with the same name and elevation; another request under the same id is `OP_ID_REUSE`. A
-//! level cannot be renamed or re-elevated yet, and a level is not copied. Deleting a level that
+//! id with the same name and elevation; another request under the same id is `OP_ID_REUSE`. An
+//! update replays from the request evidence of its revision. A new elevation moves no assigned
+//! element, and a level is not copied. Deleting a level that
 //! elements use is `DEPENDENCY_CONFLICT`; there is no cascade.
 
 use crate::assembly::read_prims;
+use crate::coordination::pinned_owns_element;
 use crate::plate::{check_footprint, number, prior_op_with, property, replay_summary, text};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -27,9 +29,10 @@ use beamcraft_layer_engine::authored::{
     Change, Element, Placement as LayerPlacement, Prepare, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
-use beamcraft_model::command::{CommandError, CreateLevel};
+use beamcraft_model::command::{CommandError, CreateLevel, UpdateLevel};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::level::CreateLevels;
 use session::Refusal;
 use session::pipeline::{
     Base, RevisionSummary, base_of, control, digest_of, host_uuid, integrity, load_base, open_base,
@@ -79,6 +82,9 @@ pub struct LevelChange {
     pub changed_layers: Vec<String>,
     /// The levels of the resulting head.
     pub levels: Vec<LevelView>,
+    /// The beams and columns an `update-level --move-elements` carried to the new elevation, in
+    /// identity order; empty for any other call and for a replay.
+    pub moved: Vec<ElementId>,
 }
 
 /// The kinds, levels and level records of a pinned set of prims. Elements of foreign or unknown
@@ -272,6 +278,7 @@ pub fn create_level(
                 footprint: None,
                 changed_layers: Vec::new(),
                 levels: views(&model),
+                moved: Vec::new(),
             });
         }
         PriorOp::Accepted { .. } => {
@@ -337,5 +344,263 @@ pub fn create_level(
         footprint: Some(creation.footprint),
         changed_layers,
         levels: levels(store)?,
+        moved: Vec::new(),
+    })
+}
+
+/// Creates several levels in one revision, or replays the operation from its recorded request
+/// evidence. The levels are decided together: one taken identity refuses them all and nothing is
+/// written.
+pub fn create_levels(
+    store: &RevisionStore,
+    context: &LevelContext,
+    command: &CreateLevels,
+    hook: &mut dyn CommitHook,
+) -> Result<LevelChange, Refusal> {
+    let fingerprint = command.content_fingerprint()?;
+    let control = control();
+    let (head, base) = load_base(store, &context.project, &context.workspace)?;
+    let base_request = open_base(&base)?;
+    let model = model_of(&base_request, &control)?;
+    let op_host = host_uuid(&context.op_id.to_string())?;
+    let (prior, recorded) = prior_op_with(store, &op_host, || Ok(fingerprint))?;
+    if let PriorOp::Accepted { .. } = prior {
+        let Some((_, sequence, _)) = &recorded else {
+            return Err(integrity("accepted level operation has no revision"));
+        };
+        let evidence = crate::command_evidence::read(&store.open_at(*sequence)?)?
+            .ok_or_else(|| integrity("level operation has no request evidence"))?;
+        if evidence.fingerprint != fingerprint {
+            return Err(CommandError::new(
+                ErrorCode::OpIdReuse,
+                "op_id",
+                "operation id was accepted with different content",
+            )
+            .into());
+        }
+        return Ok(LevelChange {
+            replayed: true,
+            revision: replay_summary(&head, recorded)?,
+            footprint: None,
+            changed_layers: Vec::new(),
+            levels: views(&model),
+            moved: Vec::new(),
+        });
+    }
+    let (creation, created) = model.create_all(command)?;
+    let before: BTreeMap<String, _> = base
+        .assets
+        .iter()
+        .map(|a| (a.name.clone(), a.digest))
+        .collect();
+    let Base {
+        project,
+        workspace,
+        generation: base_generation,
+        expected,
+        ..
+    } = base;
+    let schema = schema_identity()?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, true, schema, &control)?;
+    let changes = created
+        .iter()
+        .map(|level| {
+            Change::Create(Element {
+                id: level.new_id.to_string(),
+                name: level.name.clone(),
+                shape: Shape::Level {
+                    elevation_mm: level.elevation_mm,
+                },
+                placement: LayerPlacement {
+                    translation_mm: [0.0; 3],
+                    orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+                },
+                material: None,
+            })
+        })
+        .collect();
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: context.op_id.to_string(),
+            actor: context.actor.to_string(),
+            schema,
+            resources: Vec::new(),
+            changes,
+        },
+        &control,
+    )?;
+    check_footprint(&prepared, &creation.footprint)?;
+    let changed_layers = changed_layers(&prepared, &before);
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            footprint: &creation.footprint,
+            fingerprint,
+            prepared: &prepared,
+            schema,
+            project: &project,
+            workspace: &workspace,
+            revision_id: &context.revision_id,
+            op: op_host,
+            base_generation,
+            expected: &expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    Ok(LevelChange {
+        replayed: false,
+        revision: summarize(&committed.info),
+        footprint: Some(creation.footprint),
+        changed_layers,
+        levels: levels(store)?,
+        moved: Vec::new(),
+    })
+}
+
+/// Changes the name, the elevation or both of a level and publishes the next revision, or replays
+/// the operation from its recorded request evidence.
+pub fn update_level(
+    store: &RevisionStore,
+    context: &LevelContext,
+    command: &UpdateLevel,
+    hook: &mut dyn CommitHook,
+) -> Result<LevelChange, Refusal> {
+    let fingerprint = command.content_fingerprint()?;
+    let control = control();
+    let (head, base) = load_base(store, &context.project, &context.workspace)?;
+    let base_request = open_base(&base)?;
+    let model = model_of(&base_request, &control)?;
+    let op_host = host_uuid(&context.op_id.to_string())?;
+    let (prior, recorded) = prior_op_with(store, &op_host, || Ok(fingerprint))?;
+    if let PriorOp::Accepted { .. } = prior {
+        let Some((_, sequence, _)) = &recorded else {
+            return Err(integrity("accepted level operation has no revision"));
+        };
+        let evidence = crate::command_evidence::read(&store.open_at(*sequence)?)?
+            .ok_or_else(|| integrity("level operation has no request evidence"))?;
+        if evidence.fingerprint != fingerprint {
+            return Err(CommandError::new(
+                ErrorCode::OpIdReuse,
+                "op_id",
+                "operation id was accepted with different content",
+            )
+            .into());
+        }
+        return Ok(LevelChange {
+            replayed: true,
+            revision: replay_summary(&head, recorded)?,
+            footprint: None,
+            changed_layers: Vec::new(),
+            levels: views(&model),
+            moved: Vec::new(),
+        });
+    }
+    // A pinned coordination level is foreign bytes: no authority of this store reaches it.
+    if !model.contains(&command.target_id) && pinned_owns_element(store, &command.target_id)? {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "target_id",
+            "the level belongs to a pinned coordination project and is read-only",
+        )
+        .into());
+    }
+    let update = model.update(command)?;
+    // The beams and columns on the level follow a new elevation in the same revision, read from
+    // the same pinned base.
+    let follow = match (
+        command.move_elements,
+        update.elevation_mm,
+        model.level(&command.target_id),
+    ) {
+        (true, Some(to_mm), Some(record)) => {
+            crate::level_follow::follow_level(&base_request, &control, record.elevation_mm, to_mm)?
+        }
+        _ => crate::level_follow::Follow::default(),
+    };
+    if !follow.moved.is_empty() && !crate::scope::is_classic(store)? {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "move_elements",
+            "elements follow a level only in a store without section scopes",
+        )
+        .into());
+    }
+    let footprint = update.footprint.union(follow.footprint)?;
+    let before: BTreeMap<String, _> = base
+        .assets
+        .iter()
+        .map(|a| (a.name.clone(), a.digest))
+        .collect();
+    let Base {
+        project,
+        workspace,
+        generation: base_generation,
+        expected,
+        ..
+    } = base;
+    let schema = schema_identity()?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, true, schema, &control)?;
+    let index = author.element_index(&opened.context, &control)?;
+    let id = beamcraft_layer_engine::index::ElementId::parse(&command.target_id.to_string())?;
+    author.authorize_write(&index, &id, &control)?;
+    let mut changes = Vec::with_capacity(2usize.saturating_add(follow.changes.len()));
+    if let Some(name) = &update.name {
+        changes.push(Change::Label {
+            id: command.target_id.to_string(),
+            name: name.clone(),
+        });
+    }
+    if let Some(elevation_mm) = update.elevation_mm {
+        changes.push(Change::LevelElevation {
+            id: command.target_id.to_string(),
+            elevation_mm,
+        });
+    }
+    changes.extend(follow.changes);
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: context.op_id.to_string(),
+            actor: context.actor.to_string(),
+            schema,
+            resources: Vec::new(),
+            changes,
+        },
+        &control,
+    )?;
+    check_footprint(&prepared, &footprint)?;
+    let changed_layers = changed_layers(&prepared, &before);
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            footprint: &footprint,
+            fingerprint,
+            prepared: &prepared,
+            schema,
+            project: &project,
+            workspace: &workspace,
+            revision_id: &context.revision_id,
+            op: op_host,
+            base_generation,
+            expected: &expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    Ok(LevelChange {
+        replayed: false,
+        revision: summarize(&committed.info),
+        footprint: Some(footprint),
+        changed_layers,
+        levels: levels(store)?,
+        moved: follow.moved,
     })
 }

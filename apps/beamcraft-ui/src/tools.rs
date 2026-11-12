@@ -92,6 +92,8 @@ pub struct PlateForm {
     pub length: String,
     /// `--thickness`.
     pub thickness: String,
+    /// `--thickness-side`: `top`, `middle` or `bottom`; empty is the engine's default, `top`.
+    pub thickness_side: String,
     /// `--name`, optional.
     pub name: String,
     /// Authored part class, empty means the default zero.
@@ -123,8 +125,20 @@ pub struct MemberForm {
     pub name: String,
     /// Authored part class, empty means the default zero.
     pub class: String,
-    /// `--roll RAD`, optional (radians; empty means the flag is absent).
+    /// The roll in degrees, optional (`--roll` takes radians; empty means the flag is absent).
     pub roll: String,
+    /// `--section-plane`: `left`, `centre` or `right`.
+    pub plane: String,
+    /// `--section-plane-offset`, mm.
+    pub plane_offset: String,
+    /// `--section-depth`: `front`, `centre` or `back`.
+    pub depth: String,
+    /// `--section-depth-offset`, mm.
+    pub depth_offset: String,
+    /// `--start-offset`, mm.
+    pub start_offset: String,
+    /// `--end-offset`, mm.
+    pub end_offset: String,
     /// `--orientation-xyzw X,Y,Z,W`, optional (empty means the flag is absent).
     pub orientation: String,
     /// Column height above its base point, in mm, when no top level is chosen.
@@ -150,6 +164,12 @@ impl Default for MemberForm {
             name: String::new(),
             class: String::new(),
             roll: String::new(),
+            plane: "centre".into(),
+            plane_offset: "0".into(),
+            depth: "centre".into(),
+            depth_offset: "0".into(),
+            start_offset: "0".into(),
+            end_offset: "0".into(),
             orientation: String::new(),
             height: DEFAULT_COLUMN_HEIGHT.into(),
             top_level: None,
@@ -302,6 +322,9 @@ impl PlateForm {
             args.extend(["--normalize-winding".into(), "true".into()]);
         }
         args.extend(["--thickness".into(), number("Thickness", &self.thickness)?]);
+        if !matches!(self.thickness_side.as_str(), "" | "top") {
+            args.extend(["--thickness-side".into(), self.thickness_side.clone()]);
+        }
         push_name(&mut args, &self.name)?;
         if !self.class.trim().is_empty() {
             let class = self.class.trim().parse::<i32>().map_err(|_| FormError {
@@ -427,9 +450,9 @@ impl MemberForm {
         if self.axis_lock != beamcraft_engine::coordinate::AxisLock::None {
             args.extend(["--axis-lock".into(), self.axis_lock.token().into()]);
         }
-        let roll = self.roll.trim();
-        if !roll.is_empty() {
-            args.extend(["--roll".into(), number("Roll", roll)?]);
+        self.push_position(&mut args)?;
+        if let Some(radians) = self.roll_radians()? {
+            args.extend(["--roll".into(), radians.to_string()]);
         }
         let orientation = self.orientation.trim();
         if !orientation.is_empty() {
@@ -442,6 +465,101 @@ impl MemberForm {
             kind: ToolKind::Member,
             args,
         })
+    }
+
+    /// The typed roll in radians; `None` when the field is empty.
+    pub fn roll_radians(&self) -> Result<Option<f64>, FormError> {
+        let roll = self.roll.trim();
+        if roll.is_empty() {
+            return Ok(None);
+        }
+        let degrees = roll
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| FormError {
+                field: "Rotation",
+                message: "enter a finite angle in degrees".into(),
+            })?;
+        Ok(Some(degrees.to_radians()))
+    }
+
+    /// Adds the position on the axis. The default position adds nothing; any other replaces the
+    /// position whole, so all six values are sent.
+    fn push_position(&self, args: &mut Vec<String>) -> Result<(), FormError> {
+        let default = Self::default();
+        let position = |f: &Self| {
+            [
+                f.plane.trim().to_owned(),
+                f.plane_offset.trim().to_owned(),
+                f.depth.trim().to_owned(),
+                f.depth_offset.trim().to_owned(),
+                f.start_offset.trim().to_owned(),
+                f.end_offset.trim().to_owned(),
+            ]
+        };
+        if position(self) == position(&default) {
+            return Ok(());
+        }
+        for (flag, label, value) in [
+            (
+                "--section-plane-offset",
+                "On plane offset",
+                &self.plane_offset,
+            ),
+            (
+                "--section-depth-offset",
+                "At depth offset",
+                &self.depth_offset,
+            ),
+            ("--start-offset", "Start offset", &self.start_offset),
+            ("--end-offset", "End offset", &self.end_offset),
+        ] {
+            args.extend([flag.to_owned(), number(label, value.trim())?]);
+        }
+        args.extend([
+            "--section-plane".to_owned(),
+            self.plane.clone(),
+            "--section-depth".to_owned(),
+            self.depth.clone(),
+        ]);
+        Ok(())
+    }
+
+    /// The position on the axis as the engine authors it from the flags `push_position` sends:
+    /// `None` for the default position (no flag), otherwise the whole position. The ghost uses
+    /// it, so the preview sits where Commit puts the member.
+    pub fn section_placement(
+        &self,
+    ) -> Result<Option<steel::model::command::SectionPlacement>, FormError> {
+        use steel::model::command::{SectionDepthPosition, SectionPlanePosition};
+        let mut flags = Vec::new();
+        self.push_position(&mut flags)?;
+        if flags.is_empty() {
+            return Ok(None);
+        }
+        let value = |label, text: &str| -> Result<f64, FormError> {
+            number(label, text)?.parse::<f64>().map_err(|_| FormError {
+                field: label,
+                message: "enter a number".into(),
+            })
+        };
+        let plane = SectionPlanePosition::parse(self.plane.trim()).ok_or_else(|| FormError {
+            field: "On plane",
+            message: "choose left, centre or right".into(),
+        })?;
+        let depth = SectionDepthPosition::parse(self.depth.trim()).ok_or_else(|| FormError {
+            field: "At depth",
+            message: "choose front, centre or back".into(),
+        })?;
+        Ok(Some(steel::model::command::SectionPlacement {
+            plane,
+            plane_offset_mm: value("On plane offset", &self.plane_offset)?,
+            depth,
+            depth_offset_mm: value("At depth offset", &self.depth_offset)?,
+            start_offset_mm: value("Start offset", &self.start_offset)?,
+            end_offset_mm: value("End offset", &self.end_offset)?,
+        }))
     }
 
     /// Fills both endpoints from resolved world points (the two clicks of the viewport
@@ -678,6 +796,8 @@ pub struct LevelChoice {
     pub name: String,
     /// Its elevation in millimetres.
     pub elevation_mm: f64,
+    /// How many elements are assigned to it.
+    pub elements: usize,
 }
 
 /// The tallest column the form builds from a height, in millimetres.
@@ -813,6 +933,11 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                         id: text(entry, "id")?,
                         name: text(entry, "name")?,
                         elevation_mm: dimension(entry, "elevation_mm")?.parse().ok()?,
+                        elements: entry
+                            .get("elements")
+                            .ok()
+                            .and_then(|list| list.array().ok())
+                            .map_or(0, <[Json]>::len),
                     })
                 })
                 .collect()
@@ -1158,6 +1283,20 @@ mod tests {
     }
 
     #[test]
+    fn a_thickness_side_is_sent_only_when_it_is_not_the_default() {
+        let mut form = plate();
+        for side in ["", "top"] {
+            form.thickness_side = side.into();
+            let args = form.prepare(store()).unwrap().args;
+            assert!(!args.iter().any(|a| a == "--thickness-side"), "{side:?}");
+        }
+        form.thickness_side = "bottom".into();
+        let args = form.prepare(store()).unwrap().args;
+        let at = args.iter().position(|a| a == "--thickness-side").unwrap();
+        assert_eq!(args.get(at + 1).map(String::as_str), Some("bottom"));
+    }
+
+    #[test]
     fn a_plate_maps_to_the_cli_arguments() {
         let mut form = plate();
         let args = form.prepare(store()).unwrap().args;
@@ -1247,15 +1386,16 @@ mod tests {
         let args = form.prepare(store()).unwrap().args;
         assert!(!args.contains(&"--roll".to_owned()));
         assert!(!args.contains(&"--orientation-xyzw".to_owned()));
-        form.roll = " 0.7853981633974483 ".into();
+        form.roll = " 45 ".into();
         form.orientation = "0,0,0.7071067811865476,0.7071067811865476".into();
         let args = form.prepare(store()).unwrap().args;
+        assert!(!args.contains(&"--section-plane".to_owned()));
         assert_eq!(
             args.get(args.len() - 4..),
             Some(
                 &[
                     "--roll".to_owned(),
-                    "0.7853981633974483".into(),
+                    45.0_f64.to_radians().to_string(),
                     "--orientation-xyzw".to_owned(),
                     "0,0,0.7071067811865476,0.7071067811865476".into()
                 ][..]
@@ -1271,9 +1411,49 @@ mod tests {
             .prepare(store())
             .unwrap_err()
         };
-        assert_eq!(error_of("x", "").field, "Roll");
+        assert_eq!(error_of("x", "").field, "Rotation");
         assert_eq!(error_of("", "0,0,1").field, "Orientation");
         assert_eq!(error_of("", "0,0,1,2,3").field, "Orientation");
+    }
+
+    #[test]
+    fn a_position_on_the_axis_is_sent_whole_and_only_when_it_differs() {
+        let mut form = MemberForm {
+            profile: Some(DIGEST.into()),
+            ..MemberForm::default()
+        };
+        form.plane = "left".into();
+        form.start_offset = "25.5".into();
+        let args = form.prepare(store()).unwrap().args;
+        let value = |flag: &str| {
+            let at = args.iter().position(|a| a == flag).unwrap();
+            args[at + 1].clone()
+        };
+        assert_eq!(value("--section-plane"), "left");
+        assert_eq!(value("--section-depth"), "centre");
+        assert_eq!(value("--section-plane-offset"), "0");
+        assert_eq!(value("--start-offset"), "25.5");
+        form.end_offset = "x".into();
+        assert_eq!(form.prepare(store()).unwrap_err().field, "End offset");
+    }
+
+    #[test]
+    fn the_ghost_takes_the_position_the_command_authors() {
+        use steel::model::command::{SectionDepthPosition, SectionPlanePosition};
+        let mut form = MemberForm::default();
+        assert_eq!(form.section_placement().unwrap(), None);
+        form.depth = "front".into();
+        form.end_offset = "-150".into();
+        let placement = form.section_placement().unwrap().unwrap();
+        assert_eq!(placement.depth, SectionDepthPosition::Front);
+        assert_eq!(placement.plane, SectionPlanePosition::Centre);
+        assert_eq!(placement.end_offset_mm, -150.0);
+        assert_eq!(placement.start_offset_mm, 0.0);
+        form.depth_offset = "1,5".into();
+        assert_eq!(
+            form.section_placement().unwrap_err().field,
+            "At depth offset"
+        );
     }
 
     #[test]

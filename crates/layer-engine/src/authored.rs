@@ -506,6 +506,13 @@ pub enum Change {
         /// Exact new label.
         name: String,
     },
+    /// Replace the elevation of a level; its label is a separate [`Change::Label`].
+    LevelElevation {
+        /// Full target UUIDv7.
+        id: String,
+        /// New elevation in millimetres.
+        elevation_mm: f64,
+    },
     /// Set the authored integer class of a steel part.
     PartClass {
         /// Full target UUIDv7.
@@ -644,6 +651,7 @@ impl Change {
             Self::PartClass { id, .. } => (id, "steel:class"),
             Self::Label { id, .. } => (id, "bim:name"),
             Self::Grid { id, .. } => (id, "bim:grid"),
+            Self::LevelElevation { id, .. } => (id, "bim:elevationMm"),
             Self::Discipline(hook) => (hook.0.target(), hook.0.group_key()),
             Self::Material { id, .. } => (id, "bim:material"),
             Self::Placement { id, .. } => (id, "placement"),
