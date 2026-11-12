@@ -36,10 +36,18 @@ use beamcraft_model::id::ElementId;
 /// mesh in world millimetres at the identity pose. The solid is the same mesh as the element's
 /// representation with its volume, kept beside it so a proxy consumer (an IFC export reads the
 /// group's bolts, issue 558) needs no blob decode to read the triangles.
+///
+/// `far_faces` gives, per fastener in bearing order, the joint's far face along the shank axis
+/// (millimetres from the bearing plane), when the clamped parts could be measured. The nut and
+/// its washer then seat on that face and the length the standard size adds past the joint
+/// shows as protrusion beyond the nut; a fastener without a measured face, or one whose face
+/// lies past the tip-hung nut, keeps the prototype's stack (issue 562 item 5: a rounded-up
+/// length floated the nut washer off the far plate on bare shank).
 pub fn scene_element(
     id: ElementId,
     placed: &BoltGroupPlaced,
     spec: &FastenerSpec,
+    far_faces: &[Option<f64>],
 ) -> Result<(SceneElement, SolidMesh), CommandError> {
     let prototype = fastener::build(
         spec,
@@ -58,14 +66,43 @@ pub fn scene_element(
     let mut points = Vec::new();
     let mut triangles = Vec::new();
     let mut volume_mm3 = 0.0_f64;
-    for bearing in &placed.bearings_mm {
+    // The nut stack's lowest face in the prototype: the nut washer's bearing face, or the
+    // nut's own when no washer sits under it.
+    let nut_stack = |kind: fastener::ComponentKind| {
+        matches!(
+            kind,
+            fastener::ComponentKind::Nut | fastener::ComponentKind::WasherNut
+        )
+    };
+    let stack_base = prototype
+        .components
+        .iter()
+        .filter(|c| nut_stack(c.component))
+        .map(|c| c.z_offset_mm)
+        .fold(f64::INFINITY, f64::min);
+    for (index, bearing) in placed.bearings_mm.iter().enumerate() {
+        // Seat the stack on the far face, never past the tip (a face beyond the hung stack
+        // would pull the nut off the thread) and never for a face that is not finite.
+        let seat = far_faces
+            .get(index)
+            .copied()
+            .flatten()
+            .filter(|face| face.is_finite() && stack_base.is_finite())
+            .map(|face| face - stack_base)
+            .filter(|delta| *delta < 0.0)
+            .unwrap_or(0.0);
         for component in &prototype.components {
             let mesh = component.solid.mesh();
+            let lift = if nut_stack(component.component) {
+                seat
+            } else {
+                0.0
+            };
             let base = u32::try_from(points.len()).map_err(|_| capped())?;
             for vertex in mesh.vertices() {
                 // The prototype frame maps to the group frame: the bearing face at the bearing
                 // point, the stack along `z` towards the nut (bolt amendment section 4).
-                let local = [vertex.x, vertex.y, vertex.z + component.z_offset_mm];
+                let local = [vertex.x, vertex.y, vertex.z + component.z_offset_mm + lift];
                 points.push([
                     bearing[0]
                         + placed.x[0] * local[0]
@@ -173,6 +210,7 @@ mod tests {
             ElementId::parse("019a7bf0-0000-7000-8000-000000710001").unwrap(),
             &placed(),
             &bolt(),
+            &[],
         )
         .unwrap()
         .0
@@ -273,6 +311,7 @@ mod tests {
             ElementId::parse("019a7bf0-0000-7000-8000-000000710001").unwrap(),
             &broken,
             &bolt(),
+            &[],
         )
         .unwrap_err();
         assert_eq!(
@@ -282,11 +321,62 @@ mod tests {
     }
 
     #[test]
+    fn a_measured_far_face_seats_the_nut_stack_on_the_joint() {
+        // Issue 562 item 5: the 35 mm length leaves the hung nut washer at −0.8, short of a
+        // far face at −0.8 nothing changes; a joint whose far face lies at −2.0 (a longer
+        // standard size than the grip needs) pulls the washer down onto it, and the shank tip
+        // protrudes past the nut instead. A face past the hung stack, or an unknown one,
+        // keeps the prototype's stack.
+        let id = ElementId::parse("019a7bf0-0000-7000-8000-000000710001").unwrap();
+        let low = |faces: &[Option<f64>]| -> Vec<f64> {
+            let (element, _) = scene_element(id, &placed(), &bolt(), faces).unwrap();
+            // The lowest point of the nut washer of each fastener: vertices above the bearing
+            // plane within the washer's radius of each bearing.
+            [50.0, 130.0, 220.0]
+                .iter()
+                .map(|x| {
+                    element
+                        .full
+                        .vertices
+                        .iter()
+                        .filter(|v| (v.x - x).abs() <= 15.0 + 1e-9 && v.z > -0.85)
+                        .map(|v| v.z)
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .collect()
+        };
+        let hung = low(&[]);
+        for z in &hung {
+            assert!((z + 0.8).abs() < 1e-9, "{hung:?}");
+        }
+        let seated = {
+            let (element, _) =
+                scene_element(id, &placed(), &bolt(), &[Some(-2.0), None, Some(4.0)]).unwrap();
+            let washer_low = |x: f64| {
+                element
+                    .full
+                    .vertices
+                    .iter()
+                    .filter(|v| (v.x - x).abs() <= 15.0 + 1e-9 && v.z > -3.0 + 1e-6)
+                    .map(|v| v.z)
+                    .fold(f64::INFINITY, f64::min)
+            };
+            [washer_low(50.0), washer_low(130.0), washer_low(220.0)]
+        };
+        // The first seats at −2.0; the second has no face; the third's face lies past the
+        // hung stack, which stays where the tip puts it.
+        assert!((seated[0] + 2.0).abs() < 1e-9, "{seated:?}");
+        assert!((seated[1] + 0.8).abs() < 1e-9, "{seated:?}");
+        assert!((seated[2] + 0.8).abs() < 1e-9, "{seated:?}");
+    }
+
+    #[test]
     fn the_solid_beside_the_element_is_the_same_mesh_with_its_volume() {
         let (element, solid) = scene_element(
             ElementId::parse("019a7bf0-0000-7000-8000-000000710001").unwrap(),
             &placed(),
             &bolt(),
+            &[],
         )
         .unwrap();
         // The solid is the element's own representation: same vertices, same triangles, same

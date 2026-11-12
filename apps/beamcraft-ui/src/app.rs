@@ -301,6 +301,9 @@ struct SelectJob {
     asked: u64,
     rx: Receiver<Result<Option<Selected>, ToolError>>,
     cancel: Arc<AtomicBool>,
+    /// The window re-reads the selection after an edit: the user asked for nothing, so its
+    /// answer keeps the edit's outcome in the status line and shows no "Looking up…".
+    refresh: bool,
 }
 
 /// A set evaluation in flight (V17): the set it colours, its receiver and the flag that gives
@@ -1477,6 +1480,7 @@ impl App {
             asked: self.select_epoch.advance(),
             rx,
             cancel: Arc::clone(&cancel),
+            refresh: false,
         });
         cancel
     }
@@ -1540,10 +1544,17 @@ impl App {
     }
 
     fn poll_select(&mut self) {
-        let Some(SelectJob { asked, rx, .. }) = &self.select_job else {
+        let Some(SelectJob {
+            asked, rx, refresh, ..
+        }) = &self.select_job
+        else {
             return;
         };
         let asked = *asked;
+        // A refresh after an edit must not wipe the edit's outcome from the status line: the
+        // sentence "Undid the last change." vanished the moment the re-read answered (the 562
+        // recheck). A user's own pick still clears it.
+        let keep_note = *refresh;
         let result = match rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return,
@@ -1569,7 +1580,9 @@ impl App {
             Ok(None) => {
                 self.editor.deselect();
                 self.props.clear();
-                self.edit_note = None;
+                if !keep_note {
+                    self.edit_note = None;
+                }
                 self.empty_click();
             }
             Ok(Some(Selected { id, info, details })) => {
@@ -1585,7 +1598,9 @@ impl App {
                 match info {
                     Ok(info) => {
                         self.editor.select(info);
-                        self.edit_note = None;
+                        if !keep_note {
+                            self.edit_note = None;
+                        }
                     }
                     Err(e) => match self.unreadable_kind(&id) {
                         // A kind the editor reads nothing from is not a failure: the selection
@@ -1596,7 +1611,9 @@ impl App {
                             // arrival names the selection (the recheck of item 15).
                             let unnamed = name.is_empty();
                             self.editor.select_kind(id.clone(), kind, name);
-                            self.edit_note = None;
+                            if !keep_note {
+                                self.edit_note = None;
+                            }
                             if unnamed {
                                 self.bolt_load();
                             }
@@ -1772,6 +1789,9 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
+        if let Some(job) = self.select_job.as_mut() {
+            job.refresh = true;
+        }
         let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())

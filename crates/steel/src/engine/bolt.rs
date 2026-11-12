@@ -34,7 +34,7 @@
 use crate::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, CreateBolt, CreateBoltGroup, UpdateBoltGroup,
 };
-use crate::model::fastener::{FastenerKind, HoleMode};
+use crate::model::fastener::{FastenerKind, FastenerSpec, HoleMode};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_geom::tolerance::DIMENSION_CAP_MM;
@@ -380,8 +380,24 @@ fn bearing_ray_offsets(
     x: [f64; 3],
     y: [f64; 3],
 ) -> Vec<[f64; 3]> {
-    let spec = &inputs.fastener;
-    let hole = (spec.nominal_diameter_mm + inputs.resolved_hole_clearance_mm()) / 2.0;
+    ring_offsets(
+        &inputs.fastener,
+        inputs.resolved_hole_clearance_mm(),
+        washer_under_head,
+        x,
+        y,
+    )
+}
+
+/// The ray offsets of [`bearing_ray_offsets`] from the definition and the resolved clearance.
+fn ring_offsets(
+    spec: &FastenerSpec,
+    clearance_mm: f64,
+    washer_under_head: bool,
+    x: [f64; 3],
+    y: [f64; 3],
+) -> Vec<[f64; 3]> {
+    let hole = (spec.nominal_diameter_mm + clearance_mm) / 2.0;
     let bearing = match (washer_under_head, &spec.washer) {
         (true, Some(washer)) => washer.outer_diameter_mm,
         _ => spec.head_across_flats_mm,
@@ -696,6 +712,49 @@ pub fn place_bolt_group(
 fn chord_of(point1_mm: [f64; 3], point2_mm: [f64; 3]) -> f64 {
     (point2_mm[0] - point1_mm[0])
         .hypot((point2_mm[1] - point1_mm[1]).hypot(point2_mm[2] - point1_mm[2]))
+}
+
+/// The far face of the joint each fastener of a committed group clamps, along its shank axis
+/// in millimetres from the bearing plane, in bearing order: the furthest material end of the
+/// listed parts the placement's bearing-ring rays find (the rays [`place_bolt_group`] measures
+/// the grip with). `None` for a fastener whose rays cross none of the parts. The scene seats
+/// the nut stack on this face, so a standard length longer than the joint needs protrudes past
+/// the nut instead of floating the nut washer off the far plate (issue 562 item 5). The query
+/// is pure and bounded like the placement itself.
+pub fn far_faces(
+    placed: &BoltGroupPlaced,
+    spec: &FastenerSpec,
+    clearance_mm: f64,
+    parts: &[ElementId],
+    bounds: &BTreeMap<ElementId, Bounds>,
+    faces: &BTreeMap<ElementId, Faces>,
+) -> Vec<Option<f64>> {
+    let rays = ring_offsets(
+        spec,
+        clearance_mm,
+        placed.washer_under_head,
+        placed.x,
+        placed.y,
+    );
+    placed
+        .bearings_mm
+        .iter()
+        .map(|bearing| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    let admitted = bounds
+                        .get(part)
+                        .and_then(|b| axis_interval(bearing, &placed.z, b))?;
+                    let found = match faces.get(part) {
+                        Some(part_faces) => ring_intervals(bearing, &placed.z, &rays, part_faces),
+                        None => vec![admitted],
+                    };
+                    found.iter().map(|(_, end)| *end).reduce(f64::max)
+                })
+                .reduce(f64::max)
+        })
+        .collect()
 }
 
 impl BoltGroupPlaced {
@@ -1953,6 +2012,44 @@ mod tests {
             box_faces([450.0, -12.0, 1400.0], [850.0, 0.0, 1800.0]),
         );
         map
+    }
+
+    #[test]
+    fn the_far_face_is_where_the_joint_ends_on_each_shank() {
+        // Issue 562 item 5: the scene seats the nut stack on the joint's far face. For the
+        // knee the first fastener's rays leave the brace solid 36.5 mm from the bearing (its
+        // face grip); a part list without the brace still finds the plate; an empty list
+        // finds nothing.
+        let bounds = knee_bounds();
+        let faces = knee_faces();
+        let inputs = knee_inputs();
+        let placed = place_bolt_group(&inputs, &bounds, &faces).unwrap();
+        let clearance = inputs.resolved_hole_clearance_mm();
+        let far = far_faces(
+            &placed,
+            &inputs.fastener,
+            clearance,
+            &inputs.parts,
+            &bounds,
+            &faces,
+        );
+        assert_eq!(far.len(), 2);
+        let first = far.first().copied().flatten().unwrap();
+        assert!((first - 36.5).abs() < 1e-6, "{far:?}");
+        // The length (60) covers the face plus the nut stack and the protrusion, so the
+        // seated washer sits at or below where the tip-hung one would.
+        assert!(first <= placed.length_mm);
+        let plate_only = far_faces(
+            &placed,
+            &inputs.fastener,
+            clearance,
+            &[id(2)],
+            &bounds,
+            &faces,
+        );
+        assert!(plate_only.iter().all(Option::is_some), "{plate_only:?}");
+        let none = far_faces(&placed, &inputs.fastener, clearance, &[], &bounds, &faces);
+        assert!(none.iter().all(Option::is_none));
     }
 
     #[test]

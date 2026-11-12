@@ -922,7 +922,13 @@ impl StartPage {
                                 Some(id.to_owned()),
                                 label.as_str(),
                             )
-                            .on_hover_text(label);
+                            // The hover text wraps within the window: one long line ran
+                            // past its right edge and was cut there too.
+                            .on_hover_ui(|ui| {
+                                ui.set_max_width(width);
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                                ui.label(label.as_str());
+                            });
                         }
                     }
                 });

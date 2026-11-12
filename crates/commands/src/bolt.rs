@@ -352,7 +352,81 @@ fn part_faces(mesh: &Option<crate::plate::DerivedMesh>, placement: &Placement) -
 /// under any roll and any placement rotation). Alongside the bounds it collects every part's
 /// world faces (issue 519 defect B), placement and the member identities the hole decision
 /// (A14.4) needs.
+/// Builds the scene element and the proxy mesh of every committed bolt group of a decoded head
+/// (issue 512, issue 558), with each fastener's nut stack seated on the far face of the joint it
+/// clamps (issue 562 item 5). The joint is measured on the same world geometry the placement
+/// reads; a read never refuses for it: a model whose geometry this slice cannot measure (a
+/// framed plate) draws the prototype's tip-hung stack instead.
+pub(crate) fn attach_bolt_scene(
+    decoded: &mut crate::plate::Decoded,
+    views: Vec<BoltGroupView>,
+) -> Result<(), Refusal> {
+    if views.is_empty() {
+        return Ok(());
+    }
+    let geometry = world_geometry_for(decoded, Framed::Skip).ok();
+    let mut scene = Vec::new();
+    for view in views {
+        let spec = match decoded.definitions.get(&view.spec.fastener) {
+            Some(crate::definition::DefinitionRecord::Fastener { spec }) => spec.clone(),
+            _ => {
+                return Err(integrity(
+                    "a committed bolt group's fastener definition is missing",
+                ));
+            }
+        };
+        let clearance = view
+            .spec
+            .hole_clearance_mm
+            .unwrap_or(spec.hole_clearance_mm);
+        let placed = steel::engine::bolt::BoltGroupPlaced::from_stored(
+            &crate::plate::bolt_placement(view.spec.clone()),
+        )?;
+        let far = geometry
+            .as_ref()
+            .map(|(bounds, faces, ..)| {
+                steel::engine::bolt::far_faces(
+                    &placed,
+                    &spec,
+                    clearance,
+                    &view.parts,
+                    bounds,
+                    faces,
+                )
+            })
+            .unwrap_or_default();
+        let (element, solid) =
+            steel::engine::bolt_scene::scene_element(view.id, &placed, &spec, &far)
+                .map_err(Refusal::from)?;
+        // The merged fastener mesh a view draws is also the group's proxy representation
+        // (issue 558): an export reads the proxy mesh, so without it the file carries an
+        // empty element and the bolts and washers are gone from the picture.
+        if let Some(meta) = decoded.elements.get_mut(&view.id) {
+            meta.mesh = crate::plate::published_mesh(&crate::plate::kernel_mesh(&solid)?);
+        }
+        scene.push(element);
+    }
+    decoded.bolt_scene = scene;
+    Ok(())
+}
+
+/// What the world geometry does with a framed (out-of-plane contour) plate.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Framed {
+    /// Refuse: a group placement must not read a slab this slice cannot model.
+    Refuse,
+    /// Leave the plate out: a drawing query measures what it can and falls back otherwise.
+    Skip,
+}
+
 fn world_geometry(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
+    world_geometry_for(decoded, Framed::Refuse)
+}
+
+fn world_geometry_for(
+    decoded: &crate::plate::Decoded,
+    framed: Framed,
+) -> Result<Geometry, Refusal> {
     let mut bounds = BTreeMap::new();
     let mut faces = BTreeMap::new();
     let mut placements = BTreeMap::new();
@@ -366,6 +440,9 @@ fn world_geometry(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> 
         // (the review on the 1111 batch). Refuse the group honestly; the frame-aware bolt
         // slice is a documented follow-up.
         if authored.contour_points_mm.iter().any(|p| p[2] != 0.0) {
+            if framed == Framed::Skip {
+                continue;
+            }
             return Err(Refusal::new(
                 ErrorCode::UnsupportedGeometry,
                 "a framed (out-of-plane contour) plate in a bolt group has no slab this \
