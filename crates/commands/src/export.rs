@@ -334,7 +334,9 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
                 placement: r.authored.placement,
                 material: r.authored.material,
                 profile: None,
-                holes: u32::try_from(r.authored.holes_mm.len()).ok(),
+                // The body's count covers create-authored and AddHole holes alike; the
+                // deprecated create-authored attribute alone misses every AddHole (issue 598).
+                holes: u32::try_from(r.body.hole_count).ok(),
                 quantities: &r.quantities,
             },
         );
