@@ -60,6 +60,7 @@ mod hole_updates;
 mod holes;
 mod hostile_usd;
 mod ifc_inspect;
+mod ifc_shapes;
 mod independent_reader;
 mod inspection_cache;
 mod instance_group;

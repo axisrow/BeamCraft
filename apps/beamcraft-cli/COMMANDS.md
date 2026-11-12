@@ -1099,6 +1099,14 @@ read.
 ifc-inspect --source FILE
 ```
 
+### ifc-shapes
+
+read.
+
+```text
+ifc-shapes --source FILE
+```
+
 ## numbering
 
 ### preview-numbering

@@ -421,53 +421,22 @@ impl Scan {
 
     /// Classifies one DATA line: an instance head, or an unclassifiable line.
     fn instance_line(&mut self, line: &str) {
-        let bytes = line.as_bytes();
-        if bytes.first() != Some(&b'#') {
+        let Some((id, name, attributes)) = instance_head(line) else {
             self.out.non_instance_lines += 1;
-            if self.out.non_instance_lines <= MAX_LISTED as u64 {
+            if !line.starts_with('#') && self.out.non_instance_lines <= MAX_LISTED as u64 {
                 self.loss(
                     "NON_INSTANCE_LINE",
                     format!("a DATA line that does not start with '#': {:?}", clip(line)),
                 );
             }
             return;
-        }
-        let Some(equals) = line.find('=') else {
-            self.out.non_instance_lines += 1;
-            return;
         };
-        let Some(id) = line.get(1..equals).and_then(|d| d.trim().parse().ok()) else {
-            self.out.non_instance_lines += 1;
-            return;
-        };
-        let rest = line.get(equals + 1..).unwrap_or_default();
-        let Some(open) = rest.find('(') else {
-            self.out.non_instance_lines += 1;
-            return;
-        };
-        let raw_name = rest.get(..open).unwrap_or_default().trim();
-        let name: String = raw_name.chars().map(|c| c.to_ascii_uppercase()).collect();
-        let name_ok = !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
-        if !name_ok {
-            self.out.non_instance_lines += 1;
-            return;
-        }
         self.out.entity_count += 1;
         if self.out.entity_names.len() < MAX_DISTINCT_NAMES {
             *self.out.entity_names.entry(name.clone()).or_default() += 1;
         } else {
             self.out.unclassified_instances += 1;
         }
-        let attributes = rest.get(open + 1..).unwrap_or_default();
-        // A well-formed instance line ends with `);`; without it the attributes are a
-        // fragment of a multi-line instance and no argument split can succeed.
-        let attributes = attributes
-            .strip_suffix(';')
-            .and_then(|body| body.strip_suffix(')'))
-            .unwrap_or(attributes);
         self.global_id(id, attributes);
         // The units assignment may reference every member of the IfcUnit select type
         // (IfcSIUnit, IfcConversionBasedUnit, IfcContextDependentUnit, IfcDerivedUnit);
@@ -735,6 +704,36 @@ impl Scan {
     }
 }
 
+/// The head of one DATA instance line: `(#id, NAME, attribute text)`, the name upper case.
+/// `None` when the line is not one well-formed instance; the caller counts those as
+/// unclassifiable lines. Shared with the shapes reader.
+pub(crate) fn instance_head(line: &str) -> Option<(u64, String, &str)> {
+    if !line.starts_with('#') {
+        return None;
+    }
+    let equals = line.find('=')?;
+    let id = line.get(1..equals).and_then(|d| d.trim().parse().ok())?;
+    let rest = line.get(equals + 1..).unwrap_or_default();
+    let open = rest.find('(')?;
+    let raw_name = rest.get(..open).unwrap_or_default().trim();
+    let name: String = raw_name.chars().map(|c| c.to_ascii_uppercase()).collect();
+    let name_ok = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+    if !name_ok {
+        return None;
+    }
+    let attributes = rest.get(open + 1..).unwrap_or_default();
+    // A well-formed instance line ends with `);`; without it the attributes are a
+    // fragment of a multi-line instance and no argument split can succeed.
+    let attributes = attributes
+        .strip_suffix(';')
+        .and_then(|body| body.strip_suffix(')'))
+        .unwrap_or(attributes);
+    Some((id, name, attributes))
+}
+
 /// The declared schema of a header line `FILE_SCHEMA(('IFC4'));`, upper case.
 fn file_schema(line: &str) -> Option<String> {
     let inner = line.strip_prefix("FILE_SCHEMA((")?.strip_suffix("));")?;
@@ -782,6 +781,12 @@ fn file_name_facts(line: &str) -> (HeaderFacts, bool) {
 /// Splits a top-level argument list on its commas, honouring strings and parentheses.
 /// The raw text of each argument is returned; nothing beyond the structure is parsed.
 fn split_args(body: &str) -> Option<Vec<String>> {
+    split_args_cap(body, MAX_LINE_BYTES)
+}
+
+/// [`split_args`] with an explicit bound on one argument's bytes; the shapes reader calls it
+/// with its own, larger bound, because one tessellation argument carries megabytes.
+pub(crate) fn split_args_cap(body: &str, max_arg_bytes: usize) -> Option<Vec<String>> {
     let mut args = Vec::new();
     let mut current = String::new();
     let mut depth: usize = 0;
@@ -816,7 +821,7 @@ fn split_args(body: &str) -> Option<Vec<String>> {
                 _ => current.push(c),
             }
         }
-        if current.len() > MAX_LINE_BYTES {
+        if current.len() > max_arg_bytes {
             return None;
         }
     }
@@ -828,7 +833,7 @@ fn split_args(body: &str) -> Option<Vec<String>> {
 }
 
 /// The decoded text of a raw STEP string argument `'...'`, or `None` for any other shape.
-fn raw_string(raw: &str) -> Option<String> {
+pub(crate) fn raw_string(raw: &str) -> Option<String> {
     let text = raw.trim();
     let inner = text.strip_prefix('\'')?.strip_suffix('\'')?;
     if inner.contains('\'') {
@@ -851,7 +856,7 @@ fn project_global_id_is_valid(attributes: &str) -> bool {
 /// GlobalId candidate when they decode. Only entities under `IfcRoot` carry such an
 /// attribute in the schema; a property name of that shape would also count here, which the
 /// inventory discloses rather than resolves.
-fn first_string(attributes: &str) -> Option<&str> {
+pub(crate) fn first_string(attributes: &str) -> Option<&str> {
     let rest = attributes.trim_start();
     if !rest.starts_with('\'') {
         return None;
@@ -896,7 +901,7 @@ fn si_length_of(body: &str) -> Option<f64> {
     Some(name * prefix)
 }
 
-fn strip_dots(raw: &str) -> &str {
+pub(crate) fn strip_dots(raw: &str) -> &str {
     let text = raw.trim();
     let body = text.strip_suffix('.').unwrap_or(text);
     body.strip_prefix('.').unwrap_or(body)

@@ -1847,6 +1847,14 @@ pub const COMMANDS: &[Command] = &[
         &[req("--source", "FILE")],
     ),
     entry(
+        Route::Ifc,
+        "ifc",
+        "ifc-shapes",
+        Access::Read,
+        Ids::None,
+        &[req("--source", "FILE")],
+    ),
+    entry(
         Route::Numbering,
         "numbering",
         "preview-numbering",
