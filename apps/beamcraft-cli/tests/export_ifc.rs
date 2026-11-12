@@ -434,6 +434,34 @@ fn property_values(file: &StepFile, product: &verify::Instance) -> BTreeMap<Stri
     out
 }
 
+/// The named values of one product's element quantity set (`IfcPhysicalQuantity` reals).
+fn quantity_values(file: &StepFile, product: &verify::Instance) -> BTreeMap<String, f64> {
+    let mut out = BTreeMap::new();
+    for rel in file.all("IFCRELDEFINESBYPROPERTIES") {
+        let Value::List(related) = &rel.args[4] else {
+            continue;
+        };
+        if !related.contains(&Value::Ref(product.id)) {
+            continue;
+        }
+        let set = file.target(&rel.args[5]).unwrap();
+        if set.name != "IFCELEMENTQUANTITY" {
+            continue;
+        }
+        let Some(Value::List(items)) = set.args.last() else {
+            continue;
+        };
+        for item in items {
+            let quantity = file.target(item).unwrap();
+            let Value::Real(value) = quantity.args[3] else {
+                panic!("a quantity value that is not a real: {quantity:?}");
+            };
+            out.insert(str_arg(file, quantity.args.first()).to_owned(), value);
+        }
+    }
+    out
+}
+
 #[test]
 fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() {
     let f = Fixture::new();
@@ -934,6 +962,83 @@ fn an_unknown_density_leaves_the_mass_out_and_says_so() {
     let props = property_values(&file, file.all("IFCBEAM")[0]);
     assert_eq!(props["MassStatus"], Value::Str("unknown".into()));
     assert!(!props.contains_key("MaterialDigest"));
+}
+
+#[test]
+fn an_add_hole_plate_exports_its_hole_count_and_no_gross_quantities() {
+    // Issue 598: the exporter counted only the deprecated create-authored hole polygons, so
+    // a plate whose holes all come from add-hole said HoleCount 0 and carried gross values.
+    let f = Fixture::new();
+    let material = text(
+        at(
+            &f.ok(
+                "define-material",
+                &[
+                    "--project-id",
+                    PROJECT,
+                    "--density",
+                    "7850",
+                    "--name",
+                    "S355",
+                    "--grade",
+                    "S355",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "120",
+            "--length",
+            "80",
+            "--thickness",
+            "10",
+            "--material-digest",
+            &material,
+            "--name",
+            "PL-A",
+        ],
+    );
+    let plate = f.scene_plate();
+    f.ok("add-hole", &["--id", &plate, "--hole-round", "60,40,18"]);
+    let inspected = f.ok("inspect-elements", &[]);
+    let stored = at(
+        &list(&inspected, "plates")[0],
+        &["quantities", "volume", "mm3"],
+    )
+    .float()
+    .unwrap();
+    let report = f.export(&f.path("a.ifc"), &[]);
+    assert_eq!(text(&report, "outcome"), "exported");
+    let file = f.parsed("a.ifc");
+    file.check().unwrap();
+    let product = file.all("IFCPLATE")[0];
+    // The model's hole count, create-authored and AddHole alike, reaches the property set.
+    assert_eq!(property_values(&file, product)["HoleCount"], Value::Int(1));
+    // The face set still carries the hole: its volume is the net one.
+    let from_file = volumes_by_name(&file);
+    assert!(
+        ((from_file["PL-A"] - stored) / stored).abs() < 1e-4,
+        "face set {} store {stored}",
+        from_file["PL-A"]
+    );
+    // IFCX-QTY-004: an element with operations carries the net quantities only.
+    let quantities = quantity_values(&file, product);
+    assert!(quantities.contains_key("NetVolume"));
+    assert!(
+        !quantities.contains_key("GrossVolume"),
+        "a plate with a hole has no gross volume"
+    );
+    let props = property_values(&file, product);
+    assert!(props.contains_key("NetWeightKg"));
+    assert!(
+        !props.contains_key("GrossWeightKg"),
+        "a plate with a hole has no gross weight"
+    );
 }
 
 #[test]
