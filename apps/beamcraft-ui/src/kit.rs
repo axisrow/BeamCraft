@@ -237,9 +237,30 @@ pub fn type_box(ui: &mut Ui, icon: crate::theme::Icon, kind: &str) {
     ui.add_space(SPACE_S);
 }
 
+/// Records the window area below the model header and ribbon, where floating windows open
+/// and stay. Set every frame by the model window once its chrome is laid out.
+pub fn set_work_area(ctx: &egui::Context, rect: Rect) {
+    ctx.data_mut(|d| d.insert_temp(work_area_id(), rect));
+}
+
+/// The area floating windows open in and are kept within: below the header and ribbon when
+/// the model window recorded them, else the whole content area (the start page, tests).
+fn work_area(ctx: &egui::Context) -> Rect {
+    let content = ctx.content_rect();
+    ctx.data(|d| d.get_temp::<Rect>(work_area_id()))
+        .map(|area| content.intersect(area))
+        .filter(|area| area.is_positive())
+        .unwrap_or(content)
+}
+
+fn work_area_id() -> egui::Id {
+    egui::Id::unique("floating-work-area")
+}
+
 /// A settings window of the properties panel (Visibility/Graphics, Graphic Display, Color
-/// Scheme), as a CAD program opens its dialogs: a plain title, centred on the screen the first
-/// time, resizable, closed by its cross.
+/// Scheme), as a CAD program opens its dialogs: a plain title, centred below the ribbon the
+/// first time and kept below it, resizable, closed by its cross. A tall dialog centred on the
+/// whole screen rose over the ribbon buttons (the recheck of issue 562 item 46).
 pub fn dialog<'a>(
     title: &str,
     id: &str,
@@ -252,7 +273,8 @@ pub fn dialog<'a>(
         .collapsible(false)
         .resizable(true)
         .pivot(Align2::CENTER_CENTER)
-        .default_pos(ctx.content_rect().center())
+        .default_pos(work_area(ctx).center())
+        .constrain_to(work_area(ctx))
         .default_width(380.0)
 }
 
@@ -262,7 +284,8 @@ pub fn tool_window<'a>(title: &str, open: &'a mut bool, ctx: &egui::Context) -> 
     egui::Window::new(egui::RichText::new(title).size(13.0).strong())
         .open(open)
         .pivot(Align2::CENTER_CENTER)
-        .default_pos(ctx.content_rect().center())
+        .default_pos(work_area(ctx).center())
+        .constrain_to(work_area(ctx))
 }
 
 /// A search field with its magnifier inside the frame, filling the row up to `reserve`

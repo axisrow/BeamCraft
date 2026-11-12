@@ -40,6 +40,13 @@ block with both ends outside it; touching the block's border is allowed (issue 5
 keeps the D03 loose-paper export, and the pdf print defaults its sheet to the document's
 sheet size.
 
+A detail's callout name beside its circle on the parent view clears every stroke already on
+the sheet, the other callouts included: it steps one text line up, then down, until no body
+edge, title or dimension crosses it, so a line never strikes through the name (the recheck of
+visual audit item 8). An edit of the drawn objects authors every new or changed text, so a
+text the stroke glyphs cannot draw refuses at `edit-drafting` instead of publishing a version
+whose drawn export refuses; an unchanged standing object keeps the decode-time rule.
+
 ## Wire format and CLI
 
 The canonical intent gains one optional `Scope "Sheet"` (size token, frame inset, project,

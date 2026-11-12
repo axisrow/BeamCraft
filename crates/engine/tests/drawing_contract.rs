@@ -153,11 +153,30 @@ fn a_stored_revision_re_admits_text_the_glyph_set_grew_to_refuse_and_its_export_
         line_type: LineType::Continuous,
     };
     let mut s = spec();
-    s.layers = vec![layer];
-    s.drafting = vec![entity];
+    s.layers = vec![layer.clone()];
+    s.drafting = vec![entity.clone()];
     assert_eq!(Drawing::admit(s.clone()).unwrap_err().field, "drafting");
     let stored = Drawing::admit_stored(s).unwrap();
     assert_eq!(stored.ensure_drawable_text().unwrap_err().field, "drafting");
+    // An edit of the drawn objects authors them: a new text the glyphs cannot draw refuses
+    // there, instead of a published version whose every drawn export refuses (the recheck
+    // of visual audit finding 11). The standing object carried over unchanged still edits.
+    let fresh = DraftingSpec {
+        id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
+        geometry: DraftingGeometry::Text {
+            anchor: [12.0, 9.0],
+            text: "Ж Ä [3] @6".to_owned(),
+            height: 3.5,
+            rotation: 0.0,
+        },
+        layer: layer.id,
+        line_type: LineType::Continuous,
+    };
+    let edited = stored
+        .clone()
+        .with_drafting(vec![layer.clone()], vec![entity.clone(), fresh]);
+    assert_eq!(edited.unwrap_err().field, "drafting");
+    assert!(stored.with_drafting(vec![layer], vec![entity]).is_ok());
 }
 
 #[test]

@@ -136,6 +136,11 @@ impl ModelPreview {
         })
     }
 
+    /// Whether the preview holds no face: an empty model, which has nothing to picture.
+    pub fn is_empty(&self) -> bool {
+        self.faces.is_empty()
+    }
+
     /// Paints only this model's actual projected faces into a library preview or row thumbnail.
     pub fn paint(&self, painter: &Painter, rect: Rect, palette: Palette) {
         let painter = painter.with_clip_rect(rect);

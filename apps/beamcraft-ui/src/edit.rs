@@ -697,6 +697,14 @@ impl Editor {
         });
     }
 
+    /// Names the selected element when it is still `id`: a name read after the selection
+    /// (a bolt group's from the bolt listing). Any other selection is left alone.
+    pub fn rename_selected(&mut self, id: &str, name: String) {
+        if let Some(info) = self.selected.as_mut().filter(|info| info.id == id) {
+            info.name = name;
+        }
+    }
+
     /// Clears the selection and any staged edit.
     pub fn deselect(&mut self) {
         self.axis_point = None;
@@ -1215,6 +1223,21 @@ mod tests {
             store: Path::new("S"),
             workspace: None,
         }
+    }
+
+    #[test]
+    fn a_name_read_later_names_only_the_element_still_selected() {
+        // The recheck of issue 562 item 15: a bolt group selected before the bolt listing
+        // arrived took no name. The listing names it, but never a selection made since.
+        let mut editor = Editor::default();
+        editor.select_kind("G1".into(), "bolt group", String::new());
+        editor.rename_selected("G2", "BG2".into());
+        assert_eq!(editor.selected().map(|info| info.name.as_str()), Some(""));
+        editor.rename_selected("G1", "BG1".into());
+        assert_eq!(
+            editor.selected().map(|info| info.name.as_str()),
+            Some("BG1")
+        );
     }
 
     fn workspace() -> Target<'static> {

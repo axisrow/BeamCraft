@@ -107,6 +107,16 @@ impl EnvironmentView {
     }
 }
 
+/// The note under the start window's environment choice: what an environment holds, with
+/// Blank's own contents when Blank is chosen (docs/design/blank-environment.md).
+fn environment_note(chosen: Option<&str>) -> &'static str {
+    if chosen == Some("blank") {
+        "Sections, materials and defaults. Blank ships 19 generic profiles, 3 part presets and 2 materials."
+    } else {
+        "Sections, materials and defaults for new models."
+    }
+}
+
 /// One project folder as the page lists it, or as `create-project` reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectView {
@@ -890,31 +900,39 @@ impl StartPage {
             .map_or_else(|| "choose…".to_owned(), EnvironmentView::label);
         ui.horizontal(|ui| {
             theme::icon(ui, Icon::Block, 26.0, palette.line);
+            let width = ui.available_width();
             egui::ComboBox::from_id_salt("start-environment")
-                .width(ui.available_width())
+                .width(width)
                 .height(260.0)
                 // A long environment name is cut off, not allowed to widen the row: an
                 // overflowing combo collapsed the whole welcome layout (issue axisrow/BeamCraft#562).
                 .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
+                    // The open list keeps the combo's width too: a long name ran past the
+                    // window edge, unreadable there. It is cut with an ellipsis and its whole
+                    // text shows on hover (the recheck of issue 562 item 54).
+                    ui.set_max_width(width);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                     for env in &self.environments {
                         if let Some(id) = env.usable_id() {
+                            let label = env.label();
                             ui.selectable_value(
                                 &mut self.environment,
                                 Some(id.to_owned()),
-                                env.label(),
-                            );
+                                label.as_str(),
+                            )
+                            .on_hover_text(label);
                         }
                     }
                 });
         });
+        // The note describes Blank only while Blank is the choice: under another environment
+        // its counts described the wrong one.
         ui.label(
-            egui::RichText::new(
-                "Sections, materials and defaults. Blank ships 19 generic profiles, 3 part presets and 2 materials.",
-            )
-            .small()
-            .color(palette.muted),
+            egui::RichText::new(environment_note(self.environment.as_deref()))
+                .small()
+                .color(palette.muted),
         );
         for env in &self.environments {
             if let Some(reason) = &env.refused {
@@ -1312,22 +1330,27 @@ impl StartPage {
                             egui::vec2(62.0, 48.0),
                         );
                         painter.rect_filled(preview, 3, palette.head);
+                        match self.previews.get(&project.path) {
+                            Some(Ok(model)) if !model.is_empty() => {
+                                model.paint(painter, preview, palette)
+                            }
+                            // An empty model has no picture: it shows the same placeholder as a
+                            // model whose preview is not read, never a bare box.
+                            _ => theme::paint_icon(
+                                painter,
+                                preview.shrink(10.0),
+                                Icon::Block,
+                                palette.muted,
+                            ),
+                        }
+                        // The frame is drawn last: the preview's own fill painted over it, and
+                        // in the light theme a selected row's thumbnail vanished into the row.
                         painter.rect_stroke(
                             preview,
                             3,
                             egui::Stroke::new(1.0, palette.rule),
                             egui::StrokeKind::Inside,
                         );
-                        if let Some(Ok(model)) = self.previews.get(&project.path) {
-                            model.paint(painter, preview, palette);
-                        } else {
-                            theme::paint_icon(
-                                painter,
-                                preview.shrink(10.0),
-                                Icon::Block,
-                                palette.muted,
-                            );
-                        }
                         let text_x = preview.right() + 10.0;
                         // Name and folder stop before the date columns; both are cut with an
                         // ellipsis instead of a mid-glyph clip (issue axisrow/BeamCraft#562).
@@ -1460,7 +1483,12 @@ impl StartPage {
                                 egui::Sense::hover(),
                             );
                             ui.painter().rect_filled(rect, 4, palette.head);
-                            if let Some(Ok(model)) = self.previews.get(&project.path) {
+                            // An empty model shows the placeholder, as in its row, not a bare box.
+                            if let Some(Ok(model)) = self
+                                .previews
+                                .get(&project.path)
+                                .filter(|preview| preview.as_ref().is_ok_and(|m| !m.is_empty()))
+                            {
                                 model.paint(ui.painter(), rect, palette);
                             } else {
                                 theme::paint_icon(
@@ -1745,6 +1773,16 @@ mod tests {
     /// A configuration directory of its own, so a test never reads or writes the user's settings.
     fn scratch_config(tag: &str) -> Option<PathBuf> {
         Some(std::env::temp_dir().join(format!("ui-start-{tag}-{}", std::process::id())))
+    }
+
+    #[test]
+    fn the_environment_note_describes_blank_only_when_blank_is_chosen() {
+        // The recheck of issue 562 item 55: under another environment the note still listed
+        // Blank's contents.
+        assert!(environment_note(Some("blank")).contains("Blank ships 19 generic profiles"));
+        for chosen in [Some("site-office-copy"), None] {
+            assert!(!environment_note(chosen).contains("Blank"), "{chosen:?}");
+        }
     }
 
     #[test]
