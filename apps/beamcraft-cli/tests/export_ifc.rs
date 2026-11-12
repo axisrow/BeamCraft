@@ -1517,8 +1517,10 @@ fn the_report_file_equals_the_printed_report() {
         printed.trim_end(),
         fs::read_to_string(&report_path).unwrap()
     );
-    // The report holds no path, host name or time.
-    for forbidden in [f.shared.root.to_str().unwrap(), "tmp", "T00:", "hostname"] {
+    // The report holds no path, host name or time. The temp-path guard is separator-anchored:
+    // a bare "tmp" also occurs inside random IFC GlobalIds (22-char base64, alphabet without
+    // "/"), which tripped the assertion about once per ~2000 runs with no path leaked.
+    for forbidden in [f.shared.root.to_str().unwrap(), "/tmp/", "T00:", "hostname"] {
         assert!(!printed.contains(forbidden), "{forbidden}");
     }
     // Keys are sorted: the first key is `contract_version`.
