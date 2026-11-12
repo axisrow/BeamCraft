@@ -110,6 +110,161 @@ fn sets_file(sets: &[(&str, [u8; 3])]) -> Vec<u8> {
 }
 
 #[test]
+fn screenshot_view_renders_a_received_ifc_with_a_see_through_hole() {
+    // The display issue: BeamCraft could write an IFC but nothing could render it back.
+    // `screenshot-view --source` reads the committed export path end to end: the CLI reads
+    // the store, writes the IFC, reads its placed bodies and renders them through the same
+    // viewport renderer, and no store is opened by the source branch.
+    let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
+        panic!("the beamcraft CLI is required next to the beamcraft-ui binary");
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("screenshot-tests")
+        .join(format!("ifc-{}", support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let store = root.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let store = store.to_str().unwrap();
+    run_expect_success(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "120",
+            "--length",
+            "80",
+            "--thickness",
+            "10",
+            "--name",
+            "PL-A",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a001",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000c001",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "add-hole",
+            "--store",
+            store,
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000a001",
+            "--hole-round",
+            "60,40,18",
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000c002",
+        ],
+    );
+    let source = root.join("repro.ifc");
+    run_expect_success(
+        &cli,
+        &[
+            "export-ifc",
+            "--store",
+            store,
+            "--out",
+            source.to_str().unwrap(),
+        ],
+    );
+    let out = root.join("ifc.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--source",
+            source.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--yaw",
+            "0",
+            "--pitch",
+            "1.52",
+            "--projection",
+            "ortho",
+            "--background",
+            "light",
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert_eq!(
+        reply.get("outcome").unwrap().string().unwrap(),
+        "screenshot_saved"
+    );
+    assert_eq!(reply.get("elements").unwrap().unsigned().unwrap(), 1);
+    assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
+    let rgba = image::open(&out).unwrap().to_rgba8();
+    assert_eq!((rgba.width(), rgba.height()), (1280, 800));
+    // The plate fills the fitted frame; its centre is the 18 mm hole at (60, 40), and the
+    // paper shows through it: every pixel within 30 px of the centre is background, while
+    // the plate body left and right of the hole is drawn.
+    let paper = |p: [u8; 4]| p[0] >= 240 && p[1] >= 240 && p[2] >= 240;
+    let (cx, cy) = (640i64, 400i64);
+    for dy in -30i64..=30 {
+        for dx in -30i64..=30 {
+            if dx * dx + dy * dy <= 900 {
+                let pixel = rgba.get_pixel((cx + dx) as u32, (cy + dy) as u32).0;
+                assert!(
+                    paper(pixel),
+                    "the hole is not see-through at ({dx},{dy}): {pixel:?}"
+                );
+            }
+        }
+    }
+    let plate_left = rgba.get_pixel((cx - 150) as u32, cy as u32).0;
+    let plate_right = rgba.get_pixel((cx + 150) as u32, cy as u32).0;
+    assert!(!paper(plate_left), "{plate_left:?}");
+    assert!(!paper(plate_right), "{plate_right:?}");
+    // The refusals: a source that is not a STEP file, both a store and a source, and the
+    // store-only extras.
+    let garbage = root.join("garbage.ifc");
+    std::fs::write(&garbage, "not a step file\n").unwrap();
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--source",
+            garbage.to_str().unwrap(),
+            "--out",
+            root.join("no.png").to_str().unwrap(),
+        ],
+        "INVALID_ARGUMENT",
+    );
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--source",
+            source.to_str().unwrap(),
+            "--out",
+            root.join("no.png").to_str().unwrap(),
+        ],
+        "INVALID_ARGUMENT",
+    );
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--source",
+            source.to_str().unwrap(),
+            "--out",
+            root.join("no.png").to_str().unwrap(),
+            "--grids",
+            "true",
+        ],
+        "INVALID_ARGUMENT",
+    );
+    assert!(!root.join("no.png").exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn screenshot_view_renders_the_head_through_the_ui_binary() {
     let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
         panic!("the beamcraft CLI is required next to the beamcraft-ui binary");

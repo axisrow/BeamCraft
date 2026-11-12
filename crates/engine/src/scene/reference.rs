@@ -11,6 +11,7 @@ use beamcraft_kernel::trimesh::{MAX_TRIANGLES, MAX_VERTICES, TriMesh};
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::ElementId;
 
 /// A decoded foreign polygon mesh, before explicit R01 units interpretation.
 /// Triangles and convex planar quads are supported; no shell certification is implied.
@@ -287,4 +288,110 @@ pub fn reference_element(
         placement,
         mesh,
     )))
+}
+
+/// Combines a bounded display surface of a foreign source that no wrapper carries — for
+/// example a received IFC tessellation, already placed and converted to millimetres by its
+/// own reader — into one reference-kind display element. `translation_mm` stays the only
+/// instance; the points are the element-local display vertices.
+///
+/// Like [`reference_element`], the element never becomes a certified body or a quantity,
+/// and picking or measurement support is not added by this conversion. `None` for a
+/// surface without triangles. The kernel's [`TriMesh`] rules bound it: vertex, triangle
+/// and coordinate caps, finite coordinates, in-range indices.
+pub fn foreign_display_element(
+    id: ElementId,
+    translation_mm: [f64; 3],
+    points: &[[f64; 3]],
+    triangles: &[[u32; 3]],
+) -> Result<Option<SceneElement>, CommandError> {
+    if points.is_empty() || triangles.is_empty() {
+        return Ok(None);
+    }
+    let mesh = TriMesh::from_buffers(points, triangles).map_err(|e| error(e.code.f04_code()))?;
+    let blob = mesh.to_blob();
+    let digest = Sha256::digest(&blob).map_err(|_| error(ErrorCode::LimitExceeded))?;
+    let scene_mesh = SceneMesh::new(
+        blob,
+        digest,
+        mesh.vertices()
+            .iter()
+            .map(|[x, y, z]| Point3::new(*x, *y, *z))
+            .collect(),
+    );
+    let placement = Translation3::new(translation_mm[0], translation_mm[1], translation_mm[2])
+        .map_err(|_| error(ErrorCode::NonFiniteNumber))?;
+    Ok(Some(SceneElement::new(
+        id,
+        ElementKind::Reference,
+        placement,
+        scene_mesh,
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synthetic_id(ordinal: u64) -> ElementId {
+        ElementId::parse(&format!("01990000-0000-7000-8000-{ordinal:012x}"))
+            .ok()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_display_surface_becomes_one_reference_element() {
+        let id = synthetic_id(1);
+        let element = foreign_display_element(
+            id,
+            [10.0, 0.0, 5.0],
+            &[[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 80.0, 0.0]],
+            &[[0, 1, 2]],
+        )
+        .ok()
+        .flatten()
+        .unwrap();
+        assert_eq!(element.kind, ElementKind::Reference);
+        assert_eq!(element.id, id);
+        assert_eq!(element.placement.offset().components(), [10.0, 0.0, 5.0]);
+        assert!(element.full.blob.starts_with(b"BCMESH01"));
+        let digest = Sha256::digest(&element.full.blob).ok().unwrap();
+        assert_eq!(element.full.digest, digest);
+        assert_eq!(element.full.vertices.len(), 3);
+    }
+
+    #[test]
+    fn an_empty_surface_is_none_and_bad_geometry_is_refused() {
+        let id = synthetic_id(2);
+        assert_eq!(
+            foreign_display_element(id, [0.0; 3], &[], &[])
+                .ok()
+                .flatten(),
+            None
+        );
+        // An index the point list does not hold is refused, never wrapped.
+        assert!(
+            foreign_display_element(
+                id,
+                [0.0; 3],
+                &[[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 80.0, 0.0]],
+                &[[0, 1, 7]],
+            )
+            .is_err()
+        );
+        // A vertex beyond the coordinate bound is refused.
+        assert!(
+            foreign_display_element(
+                id,
+                [0.0; 3],
+                &[
+                    [0.0, 0.0, 0.0],
+                    [100.0, 0.0, 0.0],
+                    [beamcraft_kernel::trimesh::MAX_COORDINATE_MM + 1.0, 0.0, 0.0]
+                ],
+                &[[0, 1, 2]],
+            )
+            .is_err()
+        );
+    }
 }

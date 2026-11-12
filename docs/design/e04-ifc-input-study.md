@@ -22,6 +22,8 @@ bodies* of the same bytes, and `beamcraft ifc-shapes --source FILE` reports them
 |---|---|---|
 | Shapes reader | `beamcraft_ifc::shapes` | every product whose seventh attribute resolves to an `IfcProductDefinitionShape`, its `IfcLocalPlacement` chain, its `IfcTriangulatedFaceSet` bodies, the declared length unit; bodies leave the reader in millimetres, every unreadable construct is an explicit loss, and the budgets (instances, vertices, triangles, listed bodies) are module constants |
 | Shapes command | `ifc-shapes` (family `ifc`, route `Ifc`, access `read`) | one JSON object: the source digest and size, the declared schema, the length unit, product and shape counts, per-body identity, vertex/triangle counts and placed bounds, the loss list |
+| Display bundle | `export-view --source FILE` | each read body becomes one engine reference-kind display element (`engine::scene::foreign_display_element`, the kernel `TriMesh` rules); the snapshot is pinned to the file's own SHA-256, so the same bytes give the same bundle and `from_bundle` re-validates it like a store snapshot; the framed store extras and the colour-set evaluation are refused — a source file is one read-only display |
+| Source screenshot | `screenshot-view --source FILE` | the same relay as `--store`, handing `--source` to `beamcraft-ui`, which exports the bundle from the CLI and renders it; no store is opened; `--store` given a file now refuses with "a file and not a store" (the display issue's minimal ask) |
 
 Placement frames follow `IfcAxis2Placement3D`: Z from `Axis` (default 0,0,1), X from
 `RefDirection` orthogonalized against Z (default 1,0,0), Y = Z x X. A file without a usable SI
@@ -33,10 +35,9 @@ facts, and the writer round trip asserts the same numbers against a fresh `expor
 
 What this reader deliberately is not: no schema table (products are recognised by their
 attribute shape resolving to an `IfcProductDefinitionShape`, not by a name list), no conversion
-into a stored USD reference or a display bundle (the read bodies have no consumer inside this
-slice yet), no native elements, no identity matching across deliveries, and no claim about
-which entity families a converter must admit — those remain the owner decisions the study
-records upstream.
+into a stored USD reference, no native elements, no identity matching across deliveries, and no
+claim about which entity families a converter must admit — those remain the owner decisions the
+study records upstream.
 
 ## What is implemented
 
