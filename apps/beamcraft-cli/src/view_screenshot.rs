@@ -105,6 +105,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
         if !matches!(
             *key,
             "--store"
+                | "--source"
                 | "--out"
                 | "--width"
                 | "--height"
@@ -122,9 +123,19 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
             return Err(invalid("unknown or repeated option"));
         }
     }
+    match (
+        options.contains_key("--store"),
+        options.contains_key("--source"),
+    ) {
+        (true, true) => return Err(invalid("take --store or --source, not both")),
+        (false, false) => return Err(invalid("--store or --source is required")),
+        _ => {}
+    }
     let store = options
         .get("--store")
-        .ok_or_else(|| invalid("--store is required"))?;
+        .or_else(|| options.get("--source"))
+        .ok_or_else(|| invalid("--store or --source is required"))?;
+    let source = options.contains_key("--source");
     let out = options
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
@@ -150,7 +161,9 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
     let mut spawn = Command::new(&ui);
     // The child inherits this process's directory, so a relative --out resolves as the caller
     // passed it.
-    spawn.arg("--store").arg(store);
+    spawn
+        .arg(if source { "--source" } else { "--store" })
+        .arg(store);
     spawn.arg("--screenshot").arg(out);
     if let Some(width) = width {
         spawn.arg("--width").arg(width.to_string());

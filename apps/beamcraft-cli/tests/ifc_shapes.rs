@@ -210,12 +210,44 @@ fn a_schema_outside_the_studied_set_is_a_loss_not_a_refusal() {
 }
 
 #[test]
+fn the_display_bundle_is_deterministic_and_names_its_source() {
+    let fixture = Fixture::new("bundle");
+    let source = committed_fixture().to_str().unwrap().to_owned();
+    let raw = fixture.path("bundle.bin");
+    let (code, body) = fixture.run(&["export-view", "--source", &source, "--out", &raw]);
+    assert_eq!(code, 0, "{body:?}");
+    assert_eq!(text(&body, "outcome"), "view_exported");
+    assert_eq!(number(&body, &["source", "bytes"]), FIXTURE_BYTES);
+    assert_eq!(string(&body, &["source", "sha256"]), FIXTURE_SHA256);
+    assert_eq!(string(&body, &["elements"]), "2");
+    assert_eq!(string(&body, &["meshes"]), "2");
+    assert_eq!(string(&body, &["shapes"]), "2");
+    let bytes = fs::read(&raw).unwrap();
+    assert!(bytes.starts_with(b"BCVIEW03"));
+    // The same bytes give the same bundle: the pin is the file digest.
+    let again = fixture.path("bundle-again.bin");
+    let (_, second) = fixture.run(&["export-view", "--source", &source, "--out", &again]);
+    assert_eq!(text(&body, "token"), text(&second, "token"));
+    assert_eq!(bytes, fs::read(&again).unwrap());
+    // The raw pipe carries the same bundle.
+    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+        .args(["export-view", "--source", &source, "--out", "-"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, bytes);
+}
+
+#[test]
 fn the_refusals_keep_their_typed_codes() {
     let fixture = Fixture::new("refusals");
     // Bytes that are not a STEP file.
     let garbage = fixture.path("garbage.ifc");
     fs::write(&garbage, "hello world, not a step file\n").unwrap();
     let (code, body) = fixture.run(&["ifc-shapes", "--source", &garbage]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
+    let (code, body) = fixture.run(&["export-view", "--source", &garbage, "--out", "-"]);
     assert_eq!(code, 2);
     assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
     // A missing file.
@@ -226,4 +258,38 @@ fn the_refusals_keep_their_typed_codes() {
     let (code, body) = fixture.run(&["ifc-shapes", "--source", "https://example.com/m.ifc"]);
     assert_eq!(code, 2);
     assert_eq!(text(&body, "code"), "PERMISSION_DENIED");
+    // A store root that is a file says so.
+    let fixture_path = committed_fixture().to_str().unwrap().to_owned();
+    let (code, body) = fixture.run(&["export-view", "--store", &fixture_path, "--out", "-"]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
+    assert!(
+        text(&body, "message").contains("a file and not a store"),
+        "{body:?}"
+    );
+    // One of --store/--source, not both.
+    let store = fixture.path("store");
+    let (code, body) = fixture.run(&[
+        "export-view",
+        "--store",
+        &store,
+        "--source",
+        &fixture_path,
+        "--out",
+        "-",
+    ]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
+    // The framed store extras do not apply to a source file.
+    let (code, body) = fixture.run(&[
+        "export-view",
+        "--source",
+        &fixture_path,
+        "--out",
+        "-",
+        "--with-grids",
+        "true",
+    ]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
 }

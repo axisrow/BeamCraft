@@ -165,10 +165,34 @@ pub fn load_with_grids(
 /// Longest message a relayed rejection keeps.
 const MAX_REJECTION_MESSAGE: usize = 1024;
 
+/// The pinned display snapshot of one received IFC source file: `export-view --source` runs
+/// in the CLI process (the reader and the budgets live there), and this side re-validates
+/// the bundle it receives. No store is opened; a rejection is relayed with its own code and
+/// message (issue 555 finding 6), and a missing file stays `NOT_FOUND`, not the store's
+/// typed empty state.
+pub fn load_source(cli: &Path, source: &Path, stats: &Stats) -> Result<ViewSnapshot, Error> {
+    let limits = Limits::default();
+    let cap = max_bundle_bytes(&limits);
+    let args = [
+        "export-view".to_owned(),
+        "--source".into(),
+        source.to_string_lossy().into_owned(),
+        "--out".into(),
+        "-".into(),
+    ];
+    let output =
+        command::run_capped(cli, &args, command::DEADLINE, cap, stats).map_err(export_error)?;
+    if output.code != Some(0) {
+        return Err(rejected_source(&output.stdout));
+    }
+    Ok(ViewSnapshot::from_bundle(&output.stdout, &limits)?)
+}
+
 /// A rejection is one JSON object: keep its stable code, its message and its diagnostics, so
 /// the reason survives the process boundary (issue 555 finding 6). A reply that does not decode
-/// or carries no well-formed code is reported as unreadable.
-fn rejected(stdout: &[u8]) -> Error {
+/// or carries no well-formed code is reported as unreadable. `store` adds the typed
+/// no-revision state that only a store can have.
+fn rejected_inner(stdout: &[u8], store: bool) -> Error {
     let reply = beamcraft_json::decode(stdout.trim_ascii(), &beamcraft_json::Limits::DEFAULT).ok();
     let field = |key: &str| {
         reply
@@ -182,7 +206,7 @@ fn rejected(stdout: &[u8]) -> Error {
     else {
         return Error::Cli("export-view rejected: UNKNOWN".into());
     };
-    if code == "NOT_FOUND" {
+    if store && code == "NOT_FOUND" {
         // A store with no published revision yet: typed, so the empty state cannot drift apart
         // from the matcher that treats it as normal.
         return Error::NoRevision;
@@ -207,6 +231,17 @@ fn rejected(stdout: &[u8]) -> Error {
         message,
         diagnostics,
     })
+}
+
+/// A store export rejection, with the store's typed no-revision state.
+fn rejected(stdout: &[u8]) -> Error {
+    rejected_inner(stdout, true)
+}
+
+/// A source export rejection: every code, including `NOT_FOUND` for a missing file, stays
+/// the relayed rejection it is.
+fn rejected_source(stdout: &[u8]) -> Error {
+    rejected_inner(stdout, false)
 }
 
 /// The first bytes of a framed `export-view` reply (the CLI defines the frame).

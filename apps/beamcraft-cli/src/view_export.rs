@@ -121,15 +121,24 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
         let [key, value] = pair;
         if !matches!(
             *key,
-            "--store" | "--out" | "--with-definitions" | "--with-element" | "--with-grids"
+            "--store"
+                | "--source"
+                | "--out"
+                | "--with-definitions"
+                | "--with-element"
+                | "--with-grids"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
         }
     }
-    let store = options
-        .get("--store")
-        .ok_or_else(|| invalid("--store is required"))?;
+    let store = options.get("--store");
+    let source = options.get("--source");
+    match (store, source) {
+        (Some(_), Some(_)) => return Err(invalid("take --store or --source, not both")),
+        (None, None) => return Err(invalid("--store or --source is required")),
+        _ => {}
+    }
     let out = options
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
@@ -151,6 +160,28 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
     // Checked before the store is opened, so a refused request never creates the file.
     if framed && *out != "-" {
         return Err(invalid("a framed reply needs --out -"));
+    }
+    // A source file carries no definitions, element reports or project grids: it is one
+    // read-only display, not a revision.
+    if framed && source.is_some() {
+        return Err(invalid(
+            "--with-definitions, --with-element and --with-grids need a store; a source \
+             file exports a plain bundle",
+        ));
+    }
+    if let Some(source) = source {
+        return run_source(source, out);
+    }
+    let store = store.ok_or_else(|| invalid("--store is required"))?;
+    // The repro of the IFC display issue names this refusal: a path that is a file and not
+    // a store says so, instead of a bare integrity error.
+    if std::fs::metadata(store)
+        .map(|meta| !meta.is_dir())
+        .unwrap_or(false)
+    {
+        return Err(invalid(
+            "the store root is a file and not a store; render an IFC file with --source FILE",
+        ));
     }
     let blobs = BlobStore::new(store).map_err(|e| Refusal {
         rule_id: None,
@@ -259,6 +290,51 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
             ("meshes", Json::text(snapshot.meshes().len().to_string())),
             ("bytes", Json::text(bundle.len().to_string())),
             ("skipped_plates", skipped_plates),
+        ]),
+        0,
+    ))
+}
+
+/// The bundle of a source IFC file ([`crate::ifc_view`]): raw bytes for `--out -`, else a
+/// new file and the JSON summary. The reply keeps the source facts beside the snapshot
+/// facts, so the file a picture came from is named in the same answer.
+fn run_source(source: &str, out: &str) -> Result<Output, Refusal> {
+    let (bundle, facts) = crate::ifc_view::bundle(source)?;
+    if out == "-" {
+        return Ok(Output::Raw(bundle));
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out)
+        .map_err(|_| Refusal {
+            rule_id: None,
+            code: ErrorCode::InvalidArgument,
+            message: "the output file exists or cannot be created",
+        })?;
+    file.write_all(&bundle)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| Refusal {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "the bundle could not be written",
+        })?;
+    Ok(Output::Json(
+        Json::object([
+            ("outcome", Json::text("view_exported")),
+            (
+                "source",
+                Json::object([
+                    ("bytes", Json::uint(facts.bytes)),
+                    ("sha256", Json::text(facts.digest)),
+                ]),
+            ),
+            ("token", Json::text(facts.token)),
+            ("elements", Json::text(facts.elements.to_string())),
+            ("meshes", Json::text(facts.meshes.to_string())),
+            ("bytes", Json::text(facts.bundle_bytes.to_string())),
+            ("shapes", Json::text(facts.shape_count.to_string())),
+            ("products", Json::text(facts.product_count.to_string())),
         ]),
         0,
     ))
