@@ -592,6 +592,14 @@ impl Editor {
     /// Selects an element whose details could not be read: the move form is left empty rather
     /// than filled with a guess.
     pub fn select_id(&mut self, id: String) {
+        self.select_kind(id, "element", "(details unavailable)".into());
+    }
+
+    /// Selects an element of a kind the editor reads no details from (a bolt group), named by
+    /// what the window already knows of it, so the status line says what is selected instead of
+    /// "details unavailable" (issue 562 item 15). The move form stays empty, as for any element
+    /// without readable details.
+    pub fn select_kind(&mut self, id: String, kind: &str, name: String) {
         self.move_to = Default::default();
         if self.copy_offset.iter().all(String::is_empty) {
             self.copy_offset = ["0".into(), "0".into(), "0".into()];
@@ -599,8 +607,8 @@ impl Editor {
         self.staged = None;
         self.selected = Some(ElementInfo {
             id,
-            kind: "element".into(),
-            name: "(details unavailable)".into(),
+            kind: kind.into(),
+            name,
             translation_mm: [0.0; 3],
             contour: None,
         });

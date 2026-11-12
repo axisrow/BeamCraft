@@ -950,7 +950,7 @@ mod tests {
 \"dimensions_mm\":{{\"width\":1000.0,\"length\":500.0,\"thickness\":10.0}},\
 \"placement\":{{\"translation_mm\":[100.0,-20.5,0.0]}},\
 \"quantities\":{{\"volume\":{{\"mm3\":5000000.0,\"status\":\"current\"}},\
-\"mass\":{{\"kg\":39.25,\"kg_display\":39.3,\"density_kg_m3\":7850.0,\"status\":\"current\"}}}},\
+\"mass\":{{\"kg\":39.254,\"kg_display\":39.25,\"density_kg_m3\":7850.0,\"status\":\"current\"}}}},\
 \"level\":null}}],\
 \"members\":[{{\"element_id\":\"{BEAM}\",\"kind\":\"beam\",\"name\":\"B1\",\
 \"material_digest\":null,\"profile_digest\":\"aa11\",\"profile_name\":\"R200x300\",\
@@ -994,7 +994,7 @@ mod tests {
         assert_eq!(plate.thickness_mm, Some(10.0));
         assert_eq!(plate.translation_mm, [100.0, -20.5, 0.0]);
         assert_eq!(plate.revision.sequence, 3);
-        assert_eq!(plate.quantities.mass_kg, Some(39.3));
+        assert_eq!(plate.quantities.mass_kg, Some(39.25));
         let rows = plate.read_only_rows();
         let row = |label: &str| {
             rows.iter()
@@ -1003,7 +1003,7 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(row("Width x length"), "1000 x 500 mm");
-        assert_eq!(row("Mass"), "39.3 kg");
+        assert_eq!(row("Mass"), "39.25 kg");
         assert_eq!(row("Volume"), "5000000 mm3");
         assert_eq!(row("Material"), "S355");
         assert_eq!(row("Level"), "none");

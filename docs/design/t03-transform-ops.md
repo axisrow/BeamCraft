@@ -55,6 +55,10 @@ beamcraft array-polar    --store ROOT --id UUID --count N --point P --axis V --a
   direction field, and one honest rule for the whole bent body was preferred. A member with
   hole records (A04.2) refuses too: the hole polygons live in a face's own frame, which has no
   face-aware mirrored encoding yet.
+- An element that shares an instance definition with others (P11) refuses a mirror with
+  `DEPENDENCY_CONFLICT`: the mirror re-encodes the element's own authored path, roll and section
+  position, and the other instances would take the mirrored body under their unmirrored authored
+  state. A mirror is per element, as a split is.
 - **Honesty limit:** the profile definition is not mirrored. The re-encode is exact for every
   section symmetric about its own height axis — every parametric family (the I, the channel,
   the hollow and the cold-formed ones) and such a custom outline — which is why a channel
