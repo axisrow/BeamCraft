@@ -32,13 +32,15 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 
-/// The scene element of one committed bolt group: its fasteners merged into one mesh in world
-/// millimetres at the identity pose.
+/// The scene element of one committed bolt group with its solid: the fasteners merged into one
+/// mesh in world millimetres at the identity pose. The solid is the same mesh as the element's
+/// representation with its volume, kept beside it so a proxy consumer (an IFC export reads the
+/// group's bolts, issue 558) needs no blob decode to read the triangles.
 pub fn scene_element(
     id: ElementId,
     placed: &BoltGroupPlaced,
     spec: &FastenerSpec,
-) -> Result<SceneElement, CommandError> {
+) -> Result<(SceneElement, SolidMesh), CommandError> {
     let prototype = fastener::build(
         spec,
         placed.length_mm,
@@ -101,12 +103,8 @@ pub fn scene_element(
     })?;
     let identity = Translation3::new(0.0, 0.0, 0.0)
         .map_err(|_| CommandError::new(ErrorCode::NonFiniteNumber, "placement", "unreachable"))?;
-    Ok(SceneElement::new(
-        id,
-        ElementKind::Connection,
-        identity,
-        solid.scene_mesh(),
-    ))
+    let element = SceneElement::new(id, ElementKind::Connection, identity, solid.scene_mesh());
+    Ok((element, solid))
 }
 
 fn capped() -> CommandError {
@@ -177,6 +175,7 @@ mod tests {
             &bolt(),
         )
         .unwrap()
+        .0
     }
 
     #[test]
@@ -280,5 +279,27 @@ mod tests {
             (error.code, error.field),
             (ErrorCode::InvalidArgument, "length_mm")
         );
+    }
+
+    #[test]
+    fn the_solid_beside_the_element_is_the_same_mesh_with_its_volume() {
+        let (element, solid) = scene_element(
+            ElementId::parse("019a7bf0-0000-7000-8000-000000710001").unwrap(),
+            &placed(),
+            &bolt(),
+        )
+        .unwrap();
+        // The solid is the element's own representation: same vertices, same triangles, same
+        // blob digest, so a proxy consumer reads exactly what the view draws.
+        assert_eq!(solid.vertices().len(), element.full.vertices.len());
+        assert_eq!(solid.digest().to_string(), element.full.digest.to_string());
+        let prototype = fastener::build(&bolt(), 35.0, true, true).unwrap();
+        let volume: f64 = prototype
+            .components
+            .iter()
+            .map(|c| c.solid.volume_mm3())
+            .sum::<f64>()
+            * placed().bearings_mm.len() as f64;
+        assert!((volume - solid.volume_mm3()).abs() < 1e-6);
     }
 }
