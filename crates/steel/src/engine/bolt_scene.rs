@@ -4,10 +4,9 @@
 //! The view snapshot's fastener meshes of committed bolt groups (issue 512).
 //!
 //! A committed group places one A14.2 fastener prototype at every bearing point with one rigid
-//! transform: the bearing face on the bearing point — floated the
-//! [`BEARING_FACE_LIFT_MM`] lift off the plate face so coplanar front faces do not fight in
-//! the picture (issue 593) — and the stack along the group's shank axis
-//! towards the nut (bolt amendment section 4). This module merges those instances into the one
+//! transform: the bearing face on the bearing point — floated a hair off the plate face so
+//! coplanar front faces do not fight in the picture (issue 593) — and the stack along the
+//! group's shank axis towards the nut (bolt amendment section 4). This module merges those instances into the one
 //! closed scene mesh a snapshot element carries. Every dimension is the pinned definition's or
 //! the placement decision's — nothing is invented — and the group's own record is never
 //! rewritten: the display reads, like every view.
