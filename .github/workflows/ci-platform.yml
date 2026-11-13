@@ -5,6 +5,11 @@ name: Platform tests
 # budgets, and full evidence uploads. This track runs beside ci.yml on every integration
 # push, nightly and on manual dispatch before a release, so the CI wall stays
 # receipt-gated and fast while every integration commit still gets three-OS coverage.
+#
+# Every job pins Rust 1.99.1 instead of stable. Cargo 1.100 moved test executables from
+# <target>/debug/deps to <target>/debug/build/<package>/<hash>/out, and the UI tests that
+# look for the CLI at current_exe()/../../beamcraft no longer find it there. Go back to
+# stable once those lookups no longer depend on Cargo's layout.
 
 on:
   push:
@@ -45,7 +50,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
@@ -75,7 +80,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
           tool: cargo-nextest@0.9.149
@@ -110,7 +115,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
@@ -140,7 +145,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
           tool: cargo-nextest@0.9.149
@@ -171,7 +176,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
@@ -204,7 +209,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
           tool: cargo-nextest@0.9.149
