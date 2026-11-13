@@ -71,14 +71,26 @@ fn load_bytes(bytes: &[u8]) -> Result<ViewBook, String> {
 /// The file also serves the CLI headlessly (`docs/design/v12-named-views.md`), so it may have
 /// moved on since the window read it: the disk is read back and merged before the write —
 /// what the window never touched keeps the version another process wrote, what it deleted
-/// stays deleted, and what it created or changed wins (issue 569 item 3). The merged book
+/// stays deleted, and what it created or changed wins, field by field where the other process
+/// changed the same view (issue 569 item 3, the 584 recheck on master). The merged book
 /// comes back, so the caller can take it as what the file now holds. An unreadable file
 /// refuses the write instead of clobbering it. Temporary views are not written. A store that
 /// is not a directory (no model is open there) has nothing to keep the views beside, so
 /// nothing is written.
 pub fn persist(store: &Path, book: &ViewBook, baseline: &ViewBook) -> Result<ViewBook, String> {
+    persist_merging(store, book, baseline).map(|(merged, _)| merged)
+}
+
+/// [`persist`], also naming the views the window changed that another process changed too
+/// since the window read the file: the merge kept the other process's fields in those, and the
+/// window says so instead of changing a view under the user's eyes without a word.
+pub fn persist_merging(
+    store: &Path,
+    book: &ViewBook,
+    baseline: &ViewBook,
+) -> Result<(ViewBook, Vec<String>), String> {
     if !store.is_dir() {
-        return Ok(book.clone());
+        return Ok((book.clone(), Vec::new()));
     }
     let path = session_path(store);
     let disk = match std::fs::read(&path) {
@@ -86,9 +98,12 @@ pub fn persist(store: &Path, book: &ViewBook, baseline: &ViewBook) -> Result<Vie
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("the saved views could not be read: {}", e.kind())),
     };
-    let merged = match disk {
-        None => book.clone(),
-        Some(disk) => merge(book, baseline, &disk)?,
+    let (merged, shared) = match disk {
+        None => (book.clone(), Vec::new()),
+        Some(disk) => (
+            merge(book, baseline, &disk)?,
+            changed_on_both_sides(book, baseline, &disk),
+        ),
     };
     let bytes = session::views_layer::layer_bytes(&merged)
         .map_err(|e| format!("the saved views were refused: {}", e.message))?;
@@ -99,7 +114,23 @@ pub fn persist(store: &Path, book: &ViewBook, baseline: &ViewBook) -> Result<Vie
     std::fs::write(&temp, &bytes)
         .and_then(|()| std::fs::rename(&temp, &path))
         .map_err(|e| format!("the saved views could not be written: {}", e.kind()))?;
-    Ok(merged)
+    Ok((merged, shared))
+}
+
+/// The names of the views both the window and another process changed since the window last
+/// read the file: the window's copy differs from what it read, and so does the file's, in a
+/// field other than the plane (the layer keeps the plane as a rotation, so a plane written by
+/// the window itself reads back a few bits off).
+fn changed_on_both_sides(book: &ViewBook, baseline: &ViewBook, disk: &ViewBook) -> Vec<String> {
+    book.views()
+        .iter()
+        .filter_map(|view| {
+            let base = baseline.get(&view.id)?;
+            let mut theirs = disk.get(&view.id)?.clone();
+            theirs.plane = base.plane;
+            (view != base && theirs != *base).then(|| view.name.clone())
+        })
+        .collect()
 }
 
 /// Merges the window's book with what the file holds, over what the window last read or
@@ -153,8 +184,9 @@ fn merge(book: &ViewBook, baseline: &ViewBook, disk: &ViewBook) -> Result<ViewBo
     ViewBook::from_all(views, folders, filters).map_err(|e| e.to_string())
 }
 
-/// The merged version of one view by identity: the window's edit when it has one, the disk's
-/// view when the window never touched it, gone when the window or the disk removed it.
+/// The merged version of one view by identity: the window's edit when it has one (laid over
+/// the disk's version field by field), the disk's view when the window never touched it, gone
+/// when the window or the disk removed it.
 fn merge_view(
     id: Uuid7,
     book: &ViewBook,
@@ -162,8 +194,13 @@ fn merge_view(
     disk: &ViewBook,
 ) -> Option<ModelView> {
     match (book.get(&id), baseline.get(&id), disk.get(&id)) {
-        // Changed or created in the window: the window wins, the disk has nothing to keep.
-        (Some(view), Some(kept), _) if view != kept => Some(view.clone()),
+        // Changed in the window and still on disk: the window's changed fields over the disk's
+        // version, so what another process changed in the same view meanwhile survives.
+        (Some(view), Some(kept), Some(theirs)) if view != kept => {
+            Some(merge_fields(view, kept, theirs))
+        }
+        // Changed in the window and dropped from the disk: the window's version comes back.
+        (Some(view), Some(kept), None) if view != kept => Some(view.clone()),
         (Some(view), None, _) => Some(view.clone()),
         // Untouched by the window: the disk's version, or its removal, stands.
         (Some(_), Some(_), Some(view)) => Some(view.clone()),
@@ -174,6 +211,73 @@ fn merge_view(
         (None, None, Some(view)) => Some(view.clone()),
         (None, None, None) => None,
     }
+}
+
+/// One view the window changed since it read `base`, while another process wrote `theirs`:
+/// `theirs` with every field the window changed (`ours` against `base`) laid over it; a field
+/// both changed keeps the window's value. An Apply that only ticked Favourite therefore keeps
+/// the render mode and colour the CLI set meanwhile (the 584 recheck on master: the window's
+/// whole stale copy replaced them). Every field is named, so a field added to the view has to
+/// be merged here as well.
+fn merge_fields(ours: &ModelView, base: &ModelView, theirs: &ModelView) -> ModelView {
+    fn carry<T: PartialEq + Clone>(slot: &mut T, ours: &T, base: &T) {
+        if ours != base {
+            slot.clone_from(ours);
+        }
+    }
+    let ModelView {
+        id: _,
+        name,
+        plane,
+        projection,
+        span_mm,
+        depth,
+        render_mode,
+        grids_visible,
+        folder,
+        favorite,
+        temporary,
+        is_default,
+        hidden_kinds,
+        work_area,
+        rotation_rad,
+        color,
+        opacity,
+        overrides,
+        representation,
+        colour_set,
+        provenance,
+    } = ours;
+    let mut merged = theirs.clone();
+    carry(&mut merged.name, name, &base.name);
+    carry(&mut merged.plane, plane, &base.plane);
+    carry(&mut merged.projection, projection, &base.projection);
+    carry(&mut merged.span_mm, span_mm, &base.span_mm);
+    carry(&mut merged.depth, depth, &base.depth);
+    carry(&mut merged.render_mode, render_mode, &base.render_mode);
+    carry(
+        &mut merged.grids_visible,
+        grids_visible,
+        &base.grids_visible,
+    );
+    carry(&mut merged.folder, folder, &base.folder);
+    carry(&mut merged.favorite, favorite, &base.favorite);
+    carry(&mut merged.temporary, temporary, &base.temporary);
+    carry(&mut merged.is_default, is_default, &base.is_default);
+    carry(&mut merged.hidden_kinds, hidden_kinds, &base.hidden_kinds);
+    carry(&mut merged.work_area, work_area, &base.work_area);
+    carry(&mut merged.rotation_rad, rotation_rad, &base.rotation_rad);
+    carry(&mut merged.color, color, &base.color);
+    carry(&mut merged.opacity, opacity, &base.opacity);
+    carry(&mut merged.overrides, overrides, &base.overrides);
+    carry(
+        &mut merged.representation,
+        representation,
+        &base.representation,
+    );
+    carry(&mut merged.colour_set, colour_set, &base.colour_set);
+    carry(&mut merged.provenance, provenance, &base.provenance);
+    merged
 }
 
 /// [`merge_view`] for a named filter.
@@ -631,6 +735,37 @@ impl Form {
         view.color = self.color_on.then(|| self.color.map(f64::from));
         view.opacity = f64::from(self.opacity).clamp(0.0, 1.0);
         view.overrides.clone_from(&self.overrides);
+        view.validate().map_err(|e| e.to_string())
+    }
+
+    /// [`Self::apply`] for an existing view: a value the form still shows exactly as it showed
+    /// it for `view` (the visible height, each rotation, the colour, the opacity) keeps the
+    /// view's own value, which the form's text and single-precision fields only approximate.
+    /// An Apply then changes nothing the user did not touch, and the merge with another
+    /// process's copy of the view cannot take a rounding for an edit.
+    pub fn apply_edits(&self, view: &mut ModelView) -> Result<(), String> {
+        let before = view.clone();
+        let shown = Self::from_view(&before);
+        self.apply(view)?;
+        if self.span == shown.span {
+            view.span_mm = before.span_mm;
+        }
+        for ((text, was), (value, kept)) in self
+            .rotation
+            .iter()
+            .zip(&shown.rotation)
+            .zip(view.rotation_rad.iter_mut().zip(before.rotation_rad))
+        {
+            if text == was {
+                *value = kept;
+            }
+        }
+        if self.color_on == shown.color_on && self.color == shown.color {
+            view.color = before.color;
+        }
+        if self.opacity == shown.opacity {
+            view.opacity = before.opacity;
+        }
         view.validate().map_err(|e| e.to_string())
     }
 
@@ -1309,6 +1444,99 @@ mod tests {
         let merged = persist(&store, &edited, &merged).unwrap();
         assert_eq!(merged.get(&id(1)).unwrap().span_mm, 9000.0);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_window_edit_keeps_what_another_process_changed_in_the_same_view() {
+        // The 584 recheck on master: the window ticked Favourite on Elev without reloading, and
+        // its whole stale copy replaced the render mode and colour the CLI had set meanwhile.
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-views-ui-fields-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("m.store");
+        std::fs::create_dir_all(&store).unwrap();
+        let elev = view(1, "Elev", "");
+        let baseline = ViewBook::from_all(vec![elev.clone()], Vec::new(), Vec::new()).unwrap();
+        persist(&store, &baseline, &baseline).unwrap();
+        // Another process turns Elev wireframe, red and 12000 mm high, and adds AgentView.
+        let mut theirs = elev.clone();
+        theirs.render_mode = RenderMode::Wireframe;
+        theirs.color = Some([1.0, 0.0, 0.0]);
+        theirs.span_mm = 12_000.0;
+        let cli = ViewBook::from_all(
+            vec![theirs, view(2, "AgentView", "")],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        std::fs::write(
+            session_path(&store),
+            session::views_layer::layer_bytes(&cli).unwrap(),
+        )
+        .unwrap();
+        // The window, which never reloaded, ticks Favourite and sets a height of its own.
+        let mut ours = elev.clone();
+        ours.favorite = true;
+        ours.span_mm = 9000.0;
+        let book = ViewBook::from_all(vec![ours], Vec::new(), Vec::new()).unwrap();
+        let (merged, shared) = persist_merging(&store, &book, &baseline).unwrap();
+        assert_eq!(
+            shared,
+            ["Elev".to_owned()],
+            "the window names the merged view"
+        );
+        for (what, book) in [("merged", merged), ("file", load(&store).unwrap())] {
+            let elev = book.get(&id(1)).unwrap();
+            assert_eq!(
+                elev.render_mode,
+                RenderMode::Wireframe,
+                "{what}: the CLI's mode"
+            );
+            assert_eq!(
+                elev.color,
+                Some([1.0, 0.0, 0.0]),
+                "{what}: the CLI's colour"
+            );
+            assert!(elev.favorite, "{what}: the window's favourite");
+            assert_eq!(
+                elev.span_mm, 9000.0,
+                "{what}: both changed it, the window wins"
+            );
+            assert!(book.get(&id(2)).is_some(), "{what}: the CLI's new view");
+        }
+        // Writing again over what the window now holds merges nothing more.
+        let reread = load(&store).unwrap();
+        let (_, shared) = persist_merging(&store, &reread, &reread).unwrap();
+        assert!(
+            shared.is_empty(),
+            "nothing changed on both sides: {shared:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_unchanged_form_applies_back_bit_for_bit() {
+        // The form shows the height to the millimetre, the colour and opacity in single
+        // precision and each rotation as degree text: an Apply that touched none of them keeps
+        // the view's own values, so it changes nothing the user did not touch.
+        let mut original = view(1, "Elev", "");
+        original.span_mm = 8095.3;
+        original.color = Some([0.1, 0.2, 0.3]);
+        original.opacity = 0.3;
+        original.rotation_rad = [0.123_456_789, 0.0];
+        let mut applied = original.clone();
+        Form::from_view(&original)
+            .apply_edits(&mut applied)
+            .unwrap();
+        assert_eq!(applied, original);
+        // A touched field is written: a new height replaces the old one, the rest stays.
+        let mut form = Form::from_view(&original);
+        form.span = "9000".into();
+        let mut applied = original.clone();
+        form.apply_edits(&mut applied).unwrap();
+        assert_eq!(applied.span_mm, 9000.0);
+        assert_eq!(applied.color, original.color);
+        assert_eq!(applied.rotation_rad, original.rotation_rad);
     }
 
     #[test]

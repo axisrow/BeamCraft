@@ -76,6 +76,16 @@ fn a_command_help_answers_with_help_not_a_refusal() {
 }
 
 #[test]
+fn screenshot_view_help_states_the_zoom_scale() {
+    // Issue 607: the help says what `--zoom` and `--pan` mean, not just that they exist.
+    let (code, out) = run(&["screenshot-view", "--help"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("e to the power"), "{out}");
+    assert!(out.contains("-10 to 10"), "{out}");
+    assert!(out.contains("+X to the right and +Y up"), "{out}");
+}
+
+#[test]
 fn early_route_commands_answer_help_before_dispatch() {
     // The early-return routes (commands, session, the batch words, view export/screenshot and
     // export) used to finish before the per-command help block, so `--help` on their words

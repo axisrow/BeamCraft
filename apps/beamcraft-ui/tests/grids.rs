@@ -143,7 +143,7 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
     );
     assert_eq!(
         guides
-            .hit_test(rect, &view, summary.origin_mm, pixel)
+            .hit_test(rect, &view, summary.origin_mm, pixel, None)
             .unwrap()
             .id,
         created.id
@@ -154,7 +154,8 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
                 rect,
                 &view,
                 summary.origin_mm,
-                rect.min - egui::vec2(20.0, 20.0)
+                rect.min - egui::vec2(20.0, 20.0),
+                None
             )
             .is_none()
     );
