@@ -175,8 +175,10 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   `--screenshot FILE` renders one fitted frame the same way and writes `FILE` as a PNG (created
   new, never overwritten), printing one JSON summary; `--yaw RAD` and `--pitch RAD` point the
   fitted camera from another direction (pitch above the horizon, clamped to the orbit bounds),
-  `--projection ortho` switches to the orthographic projection, `--zoom F32` is the logarithmic
-  zoom and `--pan X,Y` shifts the fitted target in screen-plane millimetres. `--colour-set TEXT`
+  `--projection ortho` switches to the orthographic projection, `--zoom EXP` is the logarithmic
+  zoom (frame lengths scale by e to its power: 1 is about a 2.7x close-up, a negative value
+  zooms out, the accepted range is -10 to 10) and `--pan MM,MM` shifts the fitted target in
+  screen-plane millimetres, +X to the right and +Y up. `--colour-set TEXT`
   names a built-in set (`Catalogue`, the default, or `Part classes`) or a `colour-sets.json`
   file holding exactly one set of its own, evaluated by the same path the window uses;
   `--background light|dark` (default `dark`) renders over a light paper tone instead of the
@@ -187,7 +189,7 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   egui pass (`grid_lines` in the reply counts them); `--grids false` leaves them out of both
   the picture and the fit (issue 543).
   `beamcraft screenshot-view --store ROOT --out FILE [--yaw RAD] [--pitch RAD] [--projection
-  ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark]
+  ortho] [--zoom EXP] [--pan MM,MM] [--colour-set TEXT] [--background light|dark]
   [--grids true|false]` drives this
   from the CLI, finding the UI binary next to its own executable.
 - `--perf-run PLAN` opens the window, runs a scripted measurement in it and prints one JSON report:
