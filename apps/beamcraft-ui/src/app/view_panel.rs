@@ -277,11 +277,32 @@ impl App {
 
     /// The scene diagonal, the reach of an orthographic eye.
     fn view_extent(&self) -> f32 {
-        self.loaded.as_ref().map_or(1000.0, |l| {
-            let [a, b, c] = l.summary.min;
-            let [d, e, f] = l.summary.max;
-            ((d - a).hypot(e - b).hypot(f - c) * 2.0).max(1000.0)
-        })
+        self.loaded
+            .as_ref()
+            .map_or(1000.0, |l| scene_reach(&l.summary))
+    }
+
+    /// The camera the default view opens on when it was saved with its own target (an orbit
+    /// or any user-drawn anchor): its own, as a double click opens any other view, at the scene
+    /// `origin` with `reach` (the shown scene's when `None`). `None` for a default view on a
+    /// derived anchor (the window's own "3D View"), which is fitted to its first scene instead,
+    /// and when the book has no default view.
+    pub(super) fn default_view_camera(
+        &self,
+        origin: [f64; 3],
+        reach: Option<f32>,
+    ) -> Option<Result<Camera, crate::Error>> {
+        let view = self
+            .default_view_id()
+            .and_then(|id| self.views.book.get(&id))?;
+        if crate::camera::derived_anchor(&view.plane) {
+            return None;
+        }
+        Some(Camera::from_view(
+            view,
+            origin,
+            reach.unwrap_or_else(|| self.view_extent()),
+        ))
     }
 
     fn view_note(&mut self, result: Result<String, String>) {
@@ -290,15 +311,25 @@ impl App {
 
     /// Writes the book beside the store, merged with what the file holds now (issue 569
     /// item 3); a failure is a note. The window takes the merged book and makes it the new
-    /// baseline, so the views it never touched follow the file from here on.
-    pub(super) fn persist_views(&mut self) {
-        match crate::views::persist(&self.source.store, &self.views.book, &self.views.baseline) {
-            Ok(merged) => {
+    /// baseline, so the views it never touched follow the file from here on. Returns the names
+    /// of the views the window changed that another process changed too: the merge kept the
+    /// other process's fields there.
+    pub(super) fn persist_views(&mut self) -> Vec<String> {
+        match crate::views::persist_merging(
+            &self.source.store,
+            &self.views.book,
+            &self.views.baseline,
+        ) {
+            Ok((merged, shared)) => {
                 self.views.book = merged.clone();
                 self.views.baseline = merged;
                 self.reconcile_panes_with_book();
+                shared
             }
-            Err(e) => self.view_note(Err(e)),
+            Err(e) => {
+                self.view_note(Err(e));
+                Vec::new()
+            }
         }
     }
 
@@ -419,7 +450,9 @@ impl App {
         };
         view.is_default = true;
         match self.views.book.insert(view) {
-            Ok(()) => self.persist_views(),
+            Ok(()) => {
+                self.persist_views();
+            }
             Err(e) => self.view_note(Err(e.to_string())),
         }
     }
@@ -439,16 +472,25 @@ impl App {
         }
     }
 
-    /// The input frame a view installs: its plane, except for the default view, which leaves the
-    /// model's work plane as it is (a 3D view has no plane of its own to work on).
+    /// Whether showing `view` installs its plane as the input frame. A plan and an elevation or
+    /// section do. The default view and an inclined view leave the model's work plane as it is:
+    /// a 3D view has no plane of its own to work on, and an orbit camera's plane is only the
+    /// direction it looks along (the 584 recheck on master: a beam started on a grid crossing
+    /// in a 3D view floated 273 mm above the grid and dived under the slab). An inclined plane
+    /// to work on is installed through the Work plane section (three points, a picked face).
+    fn installs_plane(view: &ModelView) -> bool {
+        !view.is_default && crate::views::view_kind(view) != crate::views::ViewKind::Inclined
+    }
+
+    /// The input frame a view installs: its plane, when [`Self::installs_plane`] says so.
     fn input_plane_of(view: &ModelView) -> Option<Option<WorkPlane>> {
-        (!view.is_default).then_some(Some(view.plane))
+        Self::installs_plane(view).then_some(Some(view.plane))
     }
 
     /// Shows `id`, or the default view for `None`: a pane that shows it already is focused;
     /// otherwise the active pane switches to it, and with no pane open one opens. The camera of a
     /// view opened before comes back as the user left it; its render mode, grid guides, hidden
-    /// kinds and plane (the input frame) come from the view.
+    /// kinds and, for a plan or an elevation, plane (the input frame) come from the view.
     pub(crate) fn activate_view(&mut self, id: Option<Uuid7>) {
         let default = self.default_view_id();
         let id = id.or(default);
@@ -478,7 +520,13 @@ impl App {
         else {
             return;
         };
-        let leaving_free = current.is_none() || current == default;
+        // Free: a pane that keeps the model's work plane (no view, the default view or an
+        // inclined one), whose plane is the one to restore when a free view comes back.
+        let leaving_free = current.is_none()
+            || current == default
+            || current
+                .and_then(|id| self.views.book.get(&id))
+                .is_some_and(|view| !Self::installs_plane(view));
         match current {
             Some(current) => {
                 self.views.cameras.insert(current, camera);
@@ -839,14 +887,33 @@ impl App {
             self.view_note(Err("Pick the points in the model first.".into()));
             return;
         }
-        let result = match self.views.form.id {
+        let updating = self.views.form.id;
+        let result = match updating {
             Some(id) => self.update_view_from_form(id),
             None => self.create_views_from_form(),
         };
         match result {
             Ok(Some(note)) => {
-                self.persist_views();
+                let shared = self.persist_views();
+                // The form reloads from the merged view, so it shows what another process
+                // changed meanwhile and a later Apply cannot write the stale values back (the
+                // 584 recheck on master).
+                if let Some(id) = updating
+                    && self.views.book.get(&id).is_some()
+                {
+                    self.edit_view(id);
+                }
                 if !matches!(self.views.note, Some(Err(_))) {
+                    let note = if shared.is_empty() {
+                        note
+                    } else {
+                        let names: Vec<String> =
+                            shared.iter().map(|name| format!("“{name}”")).collect();
+                        format!(
+                            "{note} Kept what another process changed meanwhile in {}.",
+                            names.join(", ")
+                        )
+                    };
                     self.view_note(Ok(note));
                 }
             }
@@ -895,7 +962,7 @@ impl App {
             let name = view.name.clone();
             view.plane = target.plane;
             target
-                .apply(&mut view)
+                .apply_edits(&mut view)
                 .and_then(|()| trial.update(view).map_err(|e| e.to_string()))
                 .map_err(|e| format!("{name}: {e}"))?;
         }
@@ -922,7 +989,7 @@ impl App {
             .cloned()
             .ok_or_else(|| "the view is gone".to_owned())?;
         view.plane = form.plane;
-        form.apply(&mut view)?;
+        form.apply_edits(&mut view)?;
         self.views.book.update(view).map_err(|e| e.to_string())?;
         // The camera follows the new definition; a session camera would hide the change.
         self.views.cameras.remove(&id);
@@ -945,8 +1012,15 @@ impl App {
             pane.filtered = None;
         }
         if self.views.active() == Some(id) {
-            if let Some(plane) = Self::input_plane_of(&view) {
-                self.install_plane(plane);
+            match Self::input_plane_of(&view) {
+                Some(plane) => self.install_plane(plane),
+                // A view that no longer installs its plane (made the default) gives the free
+                // work plane back, as leaving it for a free view does.
+                None => {
+                    if let Some(plane) = self.views_input.take() {
+                        self.install_plane(plane);
+                    }
+                }
             }
             self.tool_note = None;
             if self.views.shown != self.views.active_hidden() {
@@ -1923,7 +1997,9 @@ impl App {
                 self.persist_views();
             }
             BrowserAction::SetDefault(id) => match self.views.book.set_default(&id) {
-                Ok(()) => self.persist_views(),
+                Ok(()) => {
+                    self.persist_views();
+                }
                 Err(e) => self.view_note(Err(e.to_string())),
             },
             // A folder is removed with its contents kept: they move up one level.
@@ -1948,7 +2024,9 @@ impl App {
                 let target = crate::views::new_folder_path(parent, &name);
                 if target != folder && !name.is_empty() {
                     match self.views.book.rename_folder(&folder, &target) {
-                        Ok(_) => self.persist_views(),
+                        Ok(_) => {
+                            self.persist_views();
+                        }
                         Err(e) => self.view_note(Err(e.to_string())),
                     }
                 }
@@ -2509,7 +2587,9 @@ impl App {
 
     fn keep_view(&mut self, view: ModelView) {
         match self.views.book.update(view) {
-            Ok(()) => self.persist_views(),
+            Ok(()) => {
+                self.persist_views();
+            }
             Err(e) => self.view_note(Err(e.to_string())),
         }
     }
@@ -2525,7 +2605,9 @@ impl App {
         copy.folder = folder;
         copy.is_default = false;
         match self.views.book.insert(copy) {
-            Ok(()) => self.persist_views(),
+            Ok(()) => {
+                self.persist_views();
+            }
             Err(e) => self.view_note(Err(e.to_string())),
         }
     }
@@ -3575,23 +3657,29 @@ impl App {
     }
 
     /// The input frame and display follow a newly active pane. `from` is the view of the pane
-    /// that was active before (`Some(None)` a pane without a view, `None` no pane at all). The
-    /// default view and no view leave the model's own work plane; any other view installs its
-    /// plane. A plane change cancels an unfinished view pick and the tool drafts, as
-    /// `activate_view` does.
+    /// that was active before (`Some(None)` a pane without a view, `None` no pane at all). No
+    /// view, the default view and an inclined view leave the model's own work plane; a plan or an
+    /// elevation installs its plane (see `installs_plane`). A plane change cancels an unfinished
+    /// view pick and the tool drafts, as `activate_view` does.
     fn pane_focused(&mut self, from: Option<Option<Uuid7>>) {
         let to = self.views.active_pane().map(|p| p.view);
         let default = self.default_view_id();
-        let free = |id: Option<Uuid7>| id.is_none() || id == default;
+        let free = |views: &crate::views::Views, id: Option<Uuid7>| {
+            id.is_none()
+                || id == default
+                || id
+                    .and_then(|id| views.book.get(&id))
+                    .is_some_and(|view| !Self::installs_plane(view))
+        };
         let plane_of = |views: &crate::views::Views, id: Option<Uuid7>| {
-            id.filter(|id| Some(*id) != default)
-                .and_then(|id| views.book.get(&id))
-                .map(|v| v.plane)
+            id.and_then(|id| views.book.get(&id))
+                .and_then(Self::input_plane_of)
+                .flatten()
         };
         let from_view = from.flatten();
         let to_view = to.flatten();
         let mut changed = false;
-        match (free(from_view), free(to_view)) {
+        match (free(&self.views, from_view), free(&self.views, to_view)) {
             // Free to view: the free work plane is kept until a free view comes back.
             (true, false) => {
                 if let Some(plane) = plane_of(&self.views, to_view) {
@@ -3632,6 +3720,13 @@ impl App {
             self.show_view_properties();
         }
     }
+}
+
+/// The reach of an orthographic eye over a scene: twice its diagonal, at least a metre.
+pub(super) fn scene_reach(summary: &crate::scene::SceneSummary) -> f32 {
+    let [a, b, c] = summary.min;
+    let [d, e, f] = summary.max;
+    ((d - a).hypot(e - b).hypot(f - c) * 2.0).max(1000.0)
 }
 
 /// What the type box at the top of the view properties shows.
@@ -4038,6 +4133,177 @@ mod tests {
         assert_eq!(elev.render_mode, RenderMode::Wireframe, "{:?}", elev);
         assert_eq!(elev.color, Some([1.0, 0.0, 0.0]), "{:?}", elev);
         assert!(!agent.temporary, "the adopted view is the file's own");
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// An Apply made without R keeps a views-only CLI edit of the same view (the 584 recheck on
+    /// master): ticking Favourite on the stale Elev wrote the window's whole copy back, so the
+    /// CLI's wireframe and red were lost without a word. The merge lays the window's changed
+    /// fields over the file's copy, the form reloads from the merged view, and a second Apply
+    /// does not write the stale values back.
+    #[test]
+    fn an_apply_without_reload_keeps_a_views_only_cli_edit() {
+        let Some(mut app) = super::super::tests::headless() else {
+            return;
+        };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("bc-recheck-merge-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let views_file = crate::views::session_path(&store);
+        let views_file = views_file.to_str().unwrap();
+        let store_arg = store.to_str().unwrap();
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        run(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+            "--environment",
+            "blank",
+        ]);
+        run(&[
+            "create-member",
+            "--store",
+            store_arg,
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3500",
+            "--profile",
+            "H-200x200",
+            "--material",
+            "Steel",
+        ]);
+        run(&[
+            "save-view",
+            "--file",
+            views_file,
+            "--store",
+            store_arg,
+            "--name",
+            "Elev",
+            "--yaw",
+            "-1.0",
+            "--pitch",
+            "0.45",
+            "--target",
+            "3000,0,1750",
+            "--default",
+            "true",
+        ]);
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        app.reload();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.reload_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_reload();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.reload_job.is_none(), "the refresh timed out");
+        let elev = app
+            .views
+            .book
+            .views()
+            .iter()
+            .find(|v| v.name == "Elev")
+            .cloned()
+            .expect("the refresh lists the file's Elev");
+        // The views-only CLI edits while the window is open; the window is not refreshed.
+        run(&[
+            "update-view",
+            "--file",
+            views_file,
+            "--store",
+            store_arg,
+            "--view",
+            "Elev",
+            "--render-mode",
+            "wireframe",
+            "--color",
+            "1,0,0",
+        ]);
+        run(&[
+            "save-view",
+            "--file",
+            views_file,
+            "--store",
+            store_arg,
+            "--name",
+            "AgentView",
+            "--parallel",
+            "xz",
+            "--offset",
+            "0",
+        ]);
+        assert_eq!(
+            app.views.book.get(&elev.id).unwrap().render_mode,
+            RenderMode::Shaded,
+            "the window has not seen the edit"
+        );
+        // Favourite + Apply on the stale view.
+        app.edit_view(elev.id);
+        app.views.form.favorite = true;
+        app.submit_view();
+        let saved = crate::views::load(&store).unwrap();
+        let file_elev = saved.get(&elev.id).unwrap();
+        assert_eq!(
+            file_elev.render_mode,
+            RenderMode::Wireframe,
+            "{file_elev:?}"
+        );
+        assert_eq!(file_elev.color, Some([1.0, 0.0, 0.0]), "{file_elev:?}");
+        assert!(file_elev.favorite, "{file_elev:?}");
+        assert!(saved.views().iter().any(|v| v.name == "AgentView"));
+        // The form shows the merged view, and the note names the view whose edit was kept.
+        assert_eq!(app.views.form.mode, RenderMode::Wireframe);
+        assert!(app.views.form.color_on);
+        assert!(
+            matches!(&app.views.note, Some(Ok(note)) if note.contains("“Elev”")),
+            "{:?}",
+            app.views.note
+        );
+        // A second Apply (Favourite off again) keeps the CLI's mode and colour.
+        app.views.form.favorite = false;
+        app.submit_view();
+        let saved = crate::views::load(&store).unwrap();
+        let file_elev = saved.get(&elev.id).unwrap();
+        assert_eq!(
+            file_elev.render_mode,
+            RenderMode::Wireframe,
+            "{file_elev:?}"
+        );
+        assert_eq!(file_elev.color, Some([1.0, 0.0, 0.0]), "{file_elev:?}");
+        assert!(!file_elev.favorite, "{file_elev:?}");
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
     }

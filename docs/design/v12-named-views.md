@@ -12,8 +12,9 @@ A view is a view plane with its own display properties. The engine owns the sema
 (`crates/engine/src/views.rs`):
 
 * `ModelView`: a UUIDv7 identity, a name (1 to 128 characters, unique case-insensitively), the
-  view plane (a `WorkPlane`; local +Z points towards the viewer, and the plane is also the input
-  frame while the view is active), the projection, the visible height at the plane, the depth
+  view plane (a `WorkPlane`; local +Z points towards the viewer, and the plane of a plan or an
+  elevation is also the input frame while the view is active), the projection, the visible
+  height at the plane, the depth
   `[above, below]` the plane (`None` shows everything), the render mode, grid visibility, the
   browser folder, a favourite mark, a temporary mark (session only), the hidden element kinds,
   the work area (V15's `view_clipping::WorkArea`), the camera rotation about the view's own Z
@@ -149,8 +150,13 @@ leave the view's scene and cannot be picked (`views::pick_visible_except`).
   shader reads: a colour replaces the model colour, zero opacity draws nothing, opacity blends in
   the transparent mode), and adds its slab and work area to the cut. Picking and snapping see
   only what it shows. Each view keeps its session camera; Ctrl+Tab cycles the open views; the
-  default view fits the model like a free camera and keeps the model's own work plane, which
-  comes back as it was when another view is left.
+  default view fits the model like a free camera (one saved with its own target opens on that
+  target, so its saved height is not replaced by the fit) and keeps the model's own work plane, which
+  comes back as it was when another view is left. An inclined view keeps the model's work
+  plane too: an orbit camera's plane is only the direction it looks along, and a member drawn
+  on it floated above the grid and dived under the slab (the 584 recheck on master). A plan
+  and an elevation or section install their plane; an inclined plane to work on is installed
+  through the Work plane section (three points, a picked face).
 * The work area holds up to 16 open views as tabs in at most eight tab groups
   (`beamcraft_ui::dock`), drawn inside it and never over the side panels. Each tab shows a view
   with its own camera, cut, tint, hidden kinds, filter overlay, render mode and grid guides. A
