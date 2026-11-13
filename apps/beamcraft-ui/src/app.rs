@@ -1350,7 +1350,12 @@ impl App {
         // keeps the facts the window already holds, a failed read keeps the picture and says
         // why (issue 614).
         match reloaded.foreign {
-            Some(Ok(facts)) => self.foreign = Arc::new(facts),
+            Some(Ok(facts)) => {
+                self.foreign = Arc::new(facts);
+                // A note about facts that failed earlier must not outlive the facts that
+                // finally loaded (issue 614 review).
+                self.foreign_note = None;
+            }
             Some(Err(why)) => {
                 self.foreign = Arc::new(BTreeMap::new());
                 self.foreign_note = Some(why);
@@ -2193,11 +2198,15 @@ impl App {
         self.refresh_status();
     }
 
-    /// Re-reads the selected element and the head, so a stale reading becomes current.
+    /// Re-reads the selected element and the head, so a stale reading becomes current. A
+    /// source window has no element reading to refresh: the reload re-reads the file itself,
+    /// and the facts panel follows it (issue 614).
     fn reread(&mut self) {
         self.invalidate_select();
         self.reload();
-        self.refresh_selection();
+        if !self.source.read_only() {
+            self.refresh_selection();
+        }
     }
 
     /// The display kind and name of a selected element the properties editor has no details
@@ -4061,6 +4070,18 @@ pub(crate) mod tests {
             app.edit_note
                 .as_ref()
                 .is_some_and(|note| matches!(note, Err(text) if text.contains("Read-only")))
+        );
+        // Reload properties has no store reading to refresh: the pick worker never starts,
+        // even with a selection recorded (issue 614 review).
+        app.props.load(
+            "01990000-0000-7000-8000-000000000001",
+            Err(ToolError::local("FOREIGN_BODY", "read-only")),
+        );
+        assert!(app.props.selected().is_some());
+        app.reread();
+        assert!(
+            app.select_job.is_none(),
+            "no store lookup on a source window"
         );
         // A colour set of a store has nothing to be evaluated against.
         app.start_colour("Some other set", false);
@@ -8880,6 +8901,45 @@ pub(crate) mod tests {
                 modifiers: egui::Modifiers::NONE,
             },
         ]
+    }
+
+    #[test]
+    fn a_failed_facts_note_is_cleared_by_the_facts_that_later_loaded() {
+        use crate::source::ForeignBody;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        // The facts read failed once: the panel says why.
+        let failed = Reloaded {
+            foreign: Some(Err("the source file changed while it was being read".into())),
+            ..reloaded(Ok(Refreshed::Unchanged))
+        };
+        deliver(&mut app, failed);
+        assert_eq!(
+            app.foreign_note.as_deref(),
+            Some("the source file changed while it was being read")
+        );
+        // The next refresh read the facts: the note is gone and the bodies are named.
+        let pin = ViewPin::new(Sha256::digest(b"facts").unwrap(), 1);
+        let snapshot =
+            ViewSnapshot::build(pin, plate_scene(2, false).unwrap(), &Limits::default()).unwrap();
+        let mut facts = std::collections::BTreeMap::new();
+        facts.insert(
+            snapshot.elements().first().unwrap().id,
+            ForeignBody {
+                entity: "IFCPLATE".into(),
+                global_id: None,
+                name: Some("Gusset".into()),
+                bounds: [[0.0; 3], [120.0, 80.0, 10.0]],
+            },
+        );
+        let loaded = Reloaded {
+            foreign: Some(Ok(facts)),
+            ..reloaded(Ok(Refreshed::Unchanged))
+        };
+        deliver(&mut app, loaded);
+        assert_eq!(app.foreign_note, None);
+        assert_eq!(app.foreign.len(), 1);
     }
 
     #[test]

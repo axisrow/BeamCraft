@@ -1098,7 +1098,10 @@ impl App {
                                 ui,
                                 Icon::Refresh,
                                 "Reload properties",
+                                // A source window reads no properties from a store: the facts
+                                // panel follows the file's own refresh (issue 614 review).
                                 self.props.selected().is_some()
+                                    && !self.source.read_only()
                                     && !self.other_command_running()
                                     && !self.props.busy(),
                             )
