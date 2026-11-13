@@ -9,7 +9,9 @@ name: Platform tests
 # Every job pins Rust 1.99.1 instead of stable. Cargo 1.100 moved test executables from
 # <target>/debug/deps to <target>/debug/build/<package>/<hash>/out, and the UI tests that
 # look for the CLI at current_exe()/../../beamcraft no longer find it there. Go back to
-# stable once those lookups no longer depend on Cargo's layout.
+# stable once those lookups no longer depend on Cargo's layout. A pinned toolchain installs
+# the minimal profile, so each job lists clippy and rustfmt, which the runner's stable
+# carried: the test-gate process tests run a nested gate with format and Clippy stages.
 
 on:
   push:
@@ -51,6 +53,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
           toolchain: 1.99.1
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
@@ -81,6 +84,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
           toolchain: 1.99.1
+          components: clippy, rustfmt
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
           tool: cargo-nextest@0.9.149
@@ -116,6 +120,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
           toolchain: 1.99.1
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
@@ -146,6 +151,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
           toolchain: 1.99.1
+          components: clippy, rustfmt
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
           tool: cargo-nextest@0.9.149
@@ -177,6 +183,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
           toolchain: 1.99.1
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
@@ -210,6 +217,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
           toolchain: 1.99.1
+          components: clippy, rustfmt
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
           tool: cargo-nextest@0.9.149
