@@ -132,7 +132,8 @@ fn a_committed_group_exports_its_fasteners_into_the_bundle() {
     assert_eq!(group.kind, ElementKind::Connection);
     assert_eq!(group.placement_mm, [0.0; 3]);
     assert_eq!(group.orientation_xyzw, [0.0, 0.0, 0.0, 1.0]);
-    // The placed stack, by hand: washer −2..0 and head −8.5..−2 outside the joint, shank
+    // The placed stack, by hand: washer −2.05..−0.05 (floated off the bearing plane) and
+    // head −8.5..−2 outside the joint, shank
     // −8.5..41.5 through it with the tip at 41.5, and the nut stack hanging downward from
     // the tip: nut 29.5..38.5, washer nut 27.5..29.5. The washer's 22 mm outer diameter is
     // the widest part.
