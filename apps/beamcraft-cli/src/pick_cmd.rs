@@ -217,6 +217,10 @@ fn run(args: &[OsString]) -> Run<Json> {
                         Some("true") => true,
                         Some(_) => return Err(invalid("--include-backfaces is true or false")),
                     },
+                    // The CLI pick is the engineering pick: foreign display bodies stay out
+                    // of it (R01); only a viewer's own display pick of a received file turns
+                    // them on, and that is no CLI command (AGENTS §3, interactive picking).
+                    include_reference: false,
                     selection,
                 })),
                 (None, Some(_)) => {
