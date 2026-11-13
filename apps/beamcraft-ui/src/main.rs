@@ -22,8 +22,10 @@
 //! leaves them out), and writes
 //! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
 //! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
-//! direction, `--projection ortho` switches to the orthographic projection, `--zoom` is the
-//! logarithmic zoom and `--pan X,Y` shifts the fitted target in screen-plane millimetres;
+//! direction, `--projection ortho` switches to the orthographic projection, `--zoom EXP` is
+//! the logarithmic zoom (frame lengths scale by e to its power, range -10 to 10) and
+//! `--pan MM,MM` shifts the fitted target in screen-plane millimetres, +X to the right and
+//! +Y up;
 //! `--colour-set` names a built-in set (`Catalogue`, the default, or `Part classes`) or a
 //! colour-sets file holding exactly one set of its own, and `--background light` renders over
 //! a light paper tone instead of the dark clear colour (issue 537).
@@ -50,7 +52,7 @@ use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT] | --source FILE --screenshot FILE) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids true|false] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT] | --source FILE --screenshot FILE) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom EXP] [--pan MM,MM] [--colour-set TEXT] [--background light|dark] [--grids true|false] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -315,7 +317,11 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             }
         };
         if !zoom.is_finite() || zoom.abs() > 10.0 {
-            return Err(usage());
+            // The refusal names the scale and the range itself (issue 607): the whole usage
+            // line says neither.
+            return Err(Error::Input(
+                "--zoom EXP is the logarithmic zoom: lengths in the frame scale by e to the power of EXP; the accepted range is -10 to 10",
+            ));
         }
         let background = match map.get("--background").map(String::as_str) {
             None | Some("dark") => screenshot::Background::Dark,

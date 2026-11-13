@@ -1485,8 +1485,8 @@ write.
 
 ```text
 screenshot-view --out FILE (--store ROOT | --source FILE) [--width U32] [--height U32]
-    [--samples 1|4] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32]
-    [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids true|false]
+    [--samples 1|4] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom EXP]
+    [--pan MM,MM] [--colour-set TEXT] [--background light|dark] [--grids true|false]
 ```
 
 ## bom

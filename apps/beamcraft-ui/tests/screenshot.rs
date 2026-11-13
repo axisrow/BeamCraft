@@ -969,3 +969,108 @@ fn screenshot_view_relays_the_cli_refusal_of_another_layer_mapping() {
     );
     assert!(!out.exists());
 }
+
+#[test]
+fn screenshot_view_flags_an_empty_frame_and_names_the_zoom_range() {
+    // Issue 607: a frame in which every pixel is the background is flagged in the summary
+    // (the PNG is still written, the outcome stays `screenshot_saved`), and the refusal of an
+    // out-of-range zoom names the accepted range instead of printing the usage line.
+    let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
+        panic!("the beamcraft CLI is required next to the beamcraft-ui binary");
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("screenshot-tests")
+        .join(format!("empty-{}", support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let store = root.to_str().unwrap();
+    run_expect_success(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "120",
+            "--length",
+            "80",
+            "--thickness",
+            "10",
+        ],
+    );
+    // The model panned far off the frame: the empty render is flagged, still saved, exit 0.
+    let empty = root.join("empty.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            empty.to_str().unwrap(),
+            "--pan",
+            "10000,0",
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert_eq!(
+        reply.get("outcome").unwrap().string().unwrap(),
+        "screenshot_saved"
+    );
+    assert_eq!(reply.get("lit_pixels").unwrap().unsigned().unwrap(), 0);
+    assert!(
+        reply
+            .get("warning")
+            .unwrap()
+            .string()
+            .unwrap()
+            .contains("none of the model"),
+        "{stdout:?}"
+    );
+    assert!(
+        std::fs::read(&empty)
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+    // A frame that holds the model carries no warning.
+    let filled = root.join("filled.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            filled.to_str().unwrap(),
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
+    assert!(reply.get("warning").is_err(), "{stdout:?}");
+    // The refusal of an out-of-range zoom names the range, not the whole usage line.
+    let refused = root.join("refused.png");
+    let output = Command::new(&cli)
+        .args([
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            refused.to_str().unwrap(),
+            "--zoom",
+            "11",
+        ])
+        .output()
+        .unwrap();
+    let body = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert_eq!(output.status.code(), Some(2), "{body}");
+    let reply = beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert_eq!(
+        reply.get("code").unwrap().string().unwrap(),
+        "INVALID_ARGUMENT",
+        "{body}"
+    );
+    let message = reply.get("message").unwrap().string().unwrap();
+    assert!(message.contains("-10 to 10"), "{message}");
+    assert!(!message.contains("usage:"), "{message}");
+    assert!(!refused.exists());
+}
