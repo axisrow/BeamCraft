@@ -63,10 +63,13 @@ jobs:
           echo "upstream commits not in origin/master: $pending"
           echo "pending=$pending" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      # Rust 1.99.1, not stable: the sync runs the full gate, and Cargo 1.100 moved test
+      # executables out of <target>/debug/deps, where the UI tests look for the CLI (see
+      # ci-platform.yml). Go back to stable together with the platform track.
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # 1.99.1
         if: steps.guard.outputs.pending != '0'
         with:
-          toolchain: stable
+          toolchain: 1.99.1
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
