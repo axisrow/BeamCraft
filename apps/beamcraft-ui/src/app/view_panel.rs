@@ -2701,6 +2701,9 @@ impl App {
             TypeBox {
                 icon: kind.map_or(theme::Icon::NewView, crate::views::ViewKind::icon),
                 kind: match (kind, self.views.subject) {
+                    // The model's default view is the 3D view whatever its camera plane: its
+                    // isometric camera read as an "Inclined view" (the 562 recheck).
+                    (Some(_), _) if shown.is_some_and(|v| v.is_default) => "3D view".to_owned(),
                     (Some(kind), _) => kind_name(kind).to_owned(),
                     (None, Subject::NewView) => "New view".to_owned(),
                     (None, _) => "3D view".to_owned(),

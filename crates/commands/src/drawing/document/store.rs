@@ -228,6 +228,10 @@ impl DocumentStore {
 
     /// Opens an existing dedicated document directory.
     pub fn open(root: &Path) -> Result<Self, Refusal> {
+        // Name the cause: a relative path read only as "not usable" (the 562 recheck).
+        if !root.is_absolute() {
+            return Err(bad("document directory must be an absolute path"));
+        }
         let blobs = BlobStore::new(root).map_err(|_| bad("document directory is not usable"))?;
         Ok(Self {
             revisions: RevisionStore::new(blobs),

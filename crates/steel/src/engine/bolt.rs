@@ -716,8 +716,8 @@ fn chord_of(point1_mm: [f64; 3], point2_mm: [f64; 3]) -> f64 {
 
 /// The far face of the joint each fastener of a committed group clamps, along its shank axis
 /// in millimetres from the bearing plane, in bearing order: the furthest material end of the
-/// listed parts the placement's bearing-ring rays find (the rays [`place_bolt_group`] measures
-/// the grip with). `None` for a fastener whose rays cross none of the parts. The scene seats
+/// listed parts any of the placement's bearing-ring rays finds (the rays [`place_bolt_group`]
+/// measures the grip with). `None` for a fastener whose rays cross none of the parts. The scene seats
 /// the nut stack on this face, so a standard length longer than the joint needs protrudes past
 /// the nut instead of floating the nut washer off the far plate (issue 562 item 5). The query
 /// is pure and bounded like the placement itself.
@@ -746,8 +746,13 @@ pub fn far_faces(
                     let admitted = bounds
                         .get(part)
                         .and_then(|b| axis_interval(bearing, &placed.z, b))?;
-                    let found = match faces.get(part) {
-                        Some(part_faces) => ring_intervals(bearing, &placed.z, &rays, part_faces),
+                    // The furthest material end over every ray, not only the ray with the
+                    // most grip: a rib under one side of the ring still carries the washer.
+                    let found: Vec<(f64, f64)> = match faces.get(part) {
+                        Some(part_faces) => rays
+                            .iter()
+                            .flat_map(|ray| ring_intervals(bearing, &placed.z, &[*ray], part_faces))
+                            .collect(),
                         None => vec![admitted],
                     };
                     found.iter().map(|(_, end)| *end).reduce(f64::max)

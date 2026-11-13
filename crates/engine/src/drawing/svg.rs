@@ -41,6 +41,8 @@ const EXTENSION_GAP_MM: f64 = 1.5;
 const EXTENSION_OVERSHOOT_MM: f64 = 1.5;
 /// Label distance from the dimension line to the glyph box edge.
 const LABEL_GAP_MM: f64 = 1.5;
+/// Clearance a label keeps past the extension lines' overshoot when it reaches over them.
+const LABEL_CLEAR_OF_OVERSHOOT_MM: f64 = 1.0;
 /// Most 1 mm steps a dimension label takes along its normal to clear the body's box: two
 /// text heights, so the label always stays readable as its own line's label.
 const LABEL_MAX_STEPS: u32 = 7;
@@ -311,26 +313,34 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[0.1, 1.1], [1.9, 1.1]],
         ]),
         // An angular ampersand: an open upper loop and a crossed lower loop.
+        // An ampersand with a closed upper loop, a lower bowl and a tail: the earlier
+        // open strokes read as a section sign (the 562 recheck).
         '&' => Some(&[
-            [[1.8, 2.4], [0.5, 3.5]],
-            [[0.5, 3.5], [0.5, 2.2]],
-            [[0.5, 2.2], [1.8, 0.8]],
-            [[1.8, 0.8], [1.2, 0.0]],
-            [[1.2, 0.0], [0.3, 0.0]],
-            [[0.3, 0.0], [1.5, 1.6]],
+            [[1.9, 0.0], [0.4, 2.4]],
+            [[0.4, 2.4], [0.4, 3.2]],
+            [[0.4, 3.2], [0.7, 3.5]],
+            [[0.7, 3.5], [1.2, 3.5]],
+            [[1.2, 3.5], [1.5, 3.2]],
+            [[1.5, 3.2], [1.5, 2.6]],
+            [[1.5, 2.6], [0.2, 1.2]],
+            [[0.2, 1.2], [0.2, 0.4]],
+            [[0.2, 0.4], [0.6, 0.0]],
+            [[0.6, 0.0], [1.2, 0.0]],
+            [[1.2, 0.0], [2.0, 1.2]],
         ]),
         '_' => Some(&[[[0.0, -0.6], [2.0, -0.6]]]),
-        // Two diamonds on a slash.
+        // A full-height slash between two small boxes in opposite corners: the earlier
+        // narrow slash with dots read as squeezed against the digit before it.
         '%' => Some(&[
-            [[1.8, 0.0], [0.2, 3.5]],
-            [[0.55, 2.45], [1.1, 3.0]],
-            [[1.1, 3.0], [0.55, 3.5]],
-            [[0.55, 3.5], [0.0, 3.0]],
-            [[0.0, 3.0], [0.55, 2.45]],
-            [[1.45, -0.05], [2.0, 0.5]],
-            [[2.0, 0.5], [1.45, 1.05]],
-            [[1.45, 1.05], [0.9, 0.5]],
-            [[0.9, 0.5], [1.45, -0.05]],
+            [[0.0, 0.0], [2.0, 3.5]],
+            [[0.0, 2.7], [0.8, 2.7]],
+            [[0.8, 2.7], [0.8, 3.5]],
+            [[0.8, 3.5], [0.0, 3.5]],
+            [[0.0, 3.5], [0.0, 2.7]],
+            [[1.2, 0.0], [2.0, 0.0]],
+            [[2.0, 0.0], [2.0, 0.8]],
+            [[2.0, 0.8], [1.2, 0.8]],
+            [[1.2, 0.8], [1.2, 0.0]],
         ]),
         _ => None,
     }
@@ -402,7 +412,17 @@ pub(super) fn label_strokes(
         [0.0, -1.0]
     };
     let extent = width * normal[0].abs() + GLYPH_HEIGHT * normal[1].abs();
-    let mut offset = LABEL_GAP_MM + extent / 2.0;
+    // A label wider than its own line reaches over the extension lines, whose overshoot
+    // runs past the line by as much as the label gap: the label then keeps a clear gap past
+    // the overshoot instead of sitting on the extension lines' tips (a 2 mm free dimension's
+    // "2.0" sat on them, the 562 recheck).
+    let along = width * normal[1].abs() + GLYPH_HEIGHT * normal[0].abs();
+    let gap = if along > length {
+        LABEL_GAP_MM.max(EXTENSION_OVERSHOOT_MM + LABEL_CLEAR_OF_OVERSHOOT_MM)
+    } else {
+        LABEL_GAP_MM
+    };
+    let mut offset = gap + extent / 2.0;
     // Step the label along its normal until the glyph box clears the body's box (with a
     // breathing margin); bounded so a pathological body box can never loop forever.
     if let Some([lo_x, lo_y, hi_x, hi_y]) = avoid {
