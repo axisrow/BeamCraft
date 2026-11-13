@@ -235,6 +235,7 @@ impl App {
                     beamcraft_engine::query::pick::SelectionFilter::ALL,
                     &std::collections::BTreeSet::new(),
                     self.cut.as_ref(),
+                    false,
                 )
                 .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
                 .map(|hit| hit.point_world_mm),
@@ -244,6 +245,7 @@ impl App {
                     ray.direction,
                     beamcraft_engine::query::pick::SelectionFilter::ALL,
                     self.cut.as_ref(),
+                    false,
                 )
                 .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
                 .map(|hit| hit.point_world_mm),

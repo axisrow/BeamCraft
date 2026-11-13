@@ -470,6 +470,8 @@ pub struct StartPage {
     create: NewModelForm,
     note: Option<Result<String, String>>,
     open: Option<PathBuf>,
+    /// A received IFC file the file picker chose: Shell opens it read-only (issue 614).
+    open_ifc: Option<PathBuf>,
     search: String,
     selected: Option<usize>,
     logo: Option<egui::TextureHandle>,
@@ -502,6 +504,7 @@ impl StartPage {
             create: NewModelForm::new(),
             note: None,
             open: None,
+            open_ifc: None,
             search: String::new(),
             selected: None,
             logo: None,
@@ -758,6 +761,11 @@ impl StartPage {
             let config = self.config_dir.clone();
             self.run_worker(move || Reply::Recent(load_recent(config.as_deref())));
         }
+    }
+
+    /// The received IFC file the file picker chose, if it was not read yet.
+    pub fn take_open_ifc(&mut self) -> Option<PathBuf> {
+        self.open_ifc.take()
     }
 
     pub(crate) fn busy(&self) -> bool {
@@ -1143,6 +1151,29 @@ impl StartPage {
                             && let Some(path) = self.browse("Open a BeamCraft model folder")
                         {
                             self.open_project(path);
+                        }
+                        // The file picker beside the store picker (issue 614): a received IFC
+                        // file opens read-only, the way `beamcraft-ui --source FILE` does.
+                        if theme::icon_text_button(
+                            ui,
+                            Icon::Sheet,
+                            "Open IFC file...",
+                            !busy,
+                            140.0,
+                        )
+                        .clicked()
+                        {
+                            let start = match self.tab {
+                                Tab::All => self.folder.trim(),
+                                _ => self.create.parent().trim(),
+                            };
+                            let start =
+                                (!start.is_empty()).then(|| std::path::PathBuf::from(start));
+                            match crate::dialog::pick_file("Open an IFC file", start.as_deref()) {
+                                Ok(Some(file)) => self.open_ifc = Some(file),
+                                Ok(None) => {}
+                                Err(e) => self.note = Some(Err(e.to_string())),
+                            }
                         }
                     });
                 });

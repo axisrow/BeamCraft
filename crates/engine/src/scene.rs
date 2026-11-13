@@ -6,7 +6,9 @@
 
 mod reference;
 pub(crate) use reference::foreign_surface;
-pub use reference::{ReferenceGeometry, foreign_display_element, reference_element};
+pub use reference::{
+    ReferenceGeometry, foreign_display_element, foreign_display_id, reference_element,
+};
 
 use crate::element::{ElementId, ElementKind};
 use beamcraft_geom::{Point3, Translation3};
