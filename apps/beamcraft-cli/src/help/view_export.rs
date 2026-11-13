@@ -22,7 +22,7 @@ pub(super) const HELP: &str = concat!(
 pub(super) const SCREENSHOT_HELP: &str = concat!(
     "View screenshot: screenshot-view (--store ROOT | --source FILE) --out FILE [--width U32] ",
     "[--height U32] [--samples 1|4] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] ",
-    "[--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids ",
+    "[--zoom EXP] [--pan MM,MM] [--colour-set TEXT] [--background light|dark] [--grids ",
     "true|false] (one viewport render of the verified head through the native renderer in the ",
     "beamcraft-ui binary, which this command finds next to its own executable; the project ",
     "grids are drawn with their labels as the window draws them and the camera is fitted over ",

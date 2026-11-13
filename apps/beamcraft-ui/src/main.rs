@@ -15,7 +15,7 @@
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
 //! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--yaw RAD]
-//! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y]
+//! [--pitch RAD] [--projection perspective|ortho] [--zoom EXP] [--pan MM,MM]
 //! [--colour-set TEXT] [--background light|dark] [--grids true|false] [--cli PATH]` renders the
 //! store's published head once offscreen with the camera fitted over the whole scene and its
 //! project grids, paints the grid lines and labels like the window (issue 543; `--grids false`
