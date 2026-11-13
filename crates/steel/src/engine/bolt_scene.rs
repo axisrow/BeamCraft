@@ -4,8 +4,9 @@
 //! The view snapshot's fastener meshes of committed bolt groups (issue 512).
 //!
 //! A committed group places one A14.2 fastener prototype at every bearing point with one rigid
-//! transform: the bearing face on the bearing point and the stack along the group's shank axis
-//! towards the nut (bolt amendment section 4). This module merges those instances into the one
+//! transform: the bearing face on the bearing point — floated a hair off the plate face so
+//! coplanar front faces do not fight in the picture (issue 593) — and the stack along the
+//! group's shank axis towards the nut (bolt amendment section 4). This module merges those instances into the one
 //! closed scene mesh a snapshot element carries. Every dimension is the pinned definition's or
 //! the placement decision's — nothing is invented — and the group's own record is never
 //! rewritten: the display reads, like every view.
@@ -31,6 +32,15 @@ use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+
+/// The display lift that floats the fastener's bearing face — the head washer's joint face,
+/// the head's own face where the definition carries no washer — a hair outside the joint
+/// (issue 593). The bearing face lies exactly on the bearing plane by construction, the same
+/// plane the bearing plate's face occupies with the same outward normal, so in the ring
+/// between the hole and the washer rim two front-facing faces competed for one depth value
+/// and tore the picture. The lift separates the planes for the depth buffer and stays far
+/// below what a view can resolve.
+const BEARING_FACE_LIFT_MM: f64 = 0.05;
 
 /// The scene element of one committed bolt group with its solid: the fasteners merged into one
 /// mesh in world millimetres at the identity pose. The solid is the same mesh as the element's
@@ -98,11 +108,26 @@ pub fn scene_element(
             } else {
                 0.0
             };
+            let bearing_lift = match component.component {
+                fastener::ComponentKind::WasherHead => Some(-BEARING_FACE_LIFT_MM),
+                // The head owns the bearing face only where no washer sits under it; with a
+                // washer its underside meets the washer's top face across opposing normals,
+                // which the back-face cull keeps clean.
+                fastener::ComponentKind::Head if !placed.washer_under_head => {
+                    Some(-BEARING_FACE_LIFT_MM)
+                }
+                _ => None,
+            };
             let base = u32::try_from(points.len()).map_err(|_| capped())?;
             for vertex in mesh.vertices() {
-                // The prototype frame maps to the group frame: the bearing face at the bearing
-                // point, the stack along `z` towards the nut (bolt amendment section 4).
-                let local = [vertex.x, vertex.y, vertex.z + component.z_offset_mm + lift];
+                // The prototype frame maps to the group frame: the bearing face on the bearing
+                // point, lifted a hair outside the joint (issue 593), the stack along `z`
+                // towards the nut (bolt amendment section 4).
+                let local = [
+                    vertex.x,
+                    vertex.y,
+                    vertex.z + component.z_offset_mm + lift + bearing_lift.unwrap_or(0.0),
+                ];
                 points.push([
                     bearing[0]
                         + placed.x[0] * local[0]
@@ -368,6 +393,72 @@ mod tests {
         assert!((seated[0] + 2.0).abs() < 1e-9, "{seated:?}");
         assert!((seated[1] + 0.8).abs() < 1e-9, "{seated:?}");
         assert!((seated[2] + 0.8).abs() < 1e-9, "{seated:?}");
+    }
+
+    #[test]
+    fn the_bearing_face_floats_a_hair_outside_the_joint_so_coplanar_faces_do_not_fight() {
+        // Issue 593: the washer's joint face sat exactly on the bearing plane — the plane the
+        // bearing plate's face occupies with the same outward normal — so the two front-facing
+        // faces of the ring between hole and washer rim tore each other apart in the depth
+        // buffer. The lift now holds the fastener's bearing face outside the plane, with a
+        // washer and with the head's own face where the definition carries none.
+        let placed = |washer_under_head: bool| -> BoltGroupPlaced {
+            BoltGroupPlaced::from_stored(&StoredPlacement {
+                point1_mm: [0.0; 3],
+                point2_mm: [400.0, 0.0, 0.0],
+                plane_normal_mm: [0.0, 0.0, 1.0],
+                rotation_rad: 0.0,
+                on_plane_mm: 0.0,
+                depth_mm: 0.0,
+                offset_start_mm: 50.0,
+                spacings_mm: vec![80.0, 90.0],
+                length_mm: 35.0,
+                washer_under_head,
+                washer_under_nut: true,
+            })
+            .unwrap()
+        };
+        let id = ElementId::parse("019a7bf0-0000-7000-8000-000000710001").unwrap();
+        // The washered stack: the vertices of the washer's outer rim (the Ø30 ring) sit on
+        // its two circular faces, and the joint face is the upper one — at the lift, never on
+        // the bearing plane. Below zero keeps the nut-side washer, the same Ø30 ring, out.
+        let (washer, _) = scene_element(id, &placed(true), &bolt(), &[]).unwrap();
+        let rim = [50.0, 130.0, 220.0]
+            .iter()
+            .map(|x| {
+                washer
+                    .full
+                    .vertices
+                    .iter()
+                    .filter(|v| v.z < 0.0 && ((v.x - x).hypot(v.y) - 15.0).abs() < 1e-6)
+                    .map(|v| v.z)
+                    .fold(f64::NEG_INFINITY, f64::max)
+            })
+            .collect::<Vec<_>>();
+        for z in &rim {
+            assert!((z + BEARING_FACE_LIFT_MM).abs() < 1e-9, "{rim:?}");
+        }
+        // Without a washer the head's own face owns the bearing plane: its hexagon corners
+        // (across flats 24) below zero touch the plane at the lift, and the head floats a
+        // hair higher than the shank start that stays at the bare stack.
+        let (bare, _) = scene_element(id, &placed(false), &bolt(), &[]).unwrap();
+        let corner = [50.0, 130.0, 220.0]
+            .iter()
+            .map(|x| {
+                bare.full
+                    .vertices
+                    .iter()
+                    .filter(|v| v.z < 0.0 && (v.x - x).hypot(v.y) >= 13.5)
+                    .map(|v| v.z)
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .collect::<Vec<_>>();
+        for z in &corner {
+            assert!(
+                (z - (-10.0 - BEARING_FACE_LIFT_MM)).abs() < 1e-9,
+                "{corner:?}"
+            );
+        }
     }
 
     #[test]

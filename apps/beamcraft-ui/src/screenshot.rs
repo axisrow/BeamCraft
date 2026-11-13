@@ -300,12 +300,19 @@ fn paint_overlays(
 }
 
 impl Screenshot {
-    /// One JSON object.
+    /// One JSON object. A frame in which every pixel is the background colour carries a
+    /// `warning` saying so next to `lit_pixels` (issue 607); the PNG is still written and the
+    /// outcome stays `screenshot_saved`, so existing callers keep parsing the reply.
     pub fn to_json(&self) -> String {
+        let warning = if self.lit_pixels == 0 {
+            ",\"warning\":\"the frame holds none of the model: every pixel is the background colour\""
+        } else {
+            ""
+        };
         format!(
             concat!(
                 "{{\"outcome\":\"screenshot_saved\",\"bytes\":{},\"width\":{},\"height\":{},",
-                "\"samples\":{},\"elements\":{},\"grid_lines\":{},\"lit_pixels\":{}}}"
+                "\"samples\":{},\"elements\":{},\"grid_lines\":{},\"lit_pixels\":{}{}}}"
             ),
             self.bytes,
             self.width,
@@ -314,6 +321,7 @@ impl Screenshot {
             self.elements,
             self.grid_lines,
             self.lit_pixels,
+            warning,
         )
     }
 }

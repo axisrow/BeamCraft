@@ -684,6 +684,28 @@ fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
     });
 }
 
+/// Frames a pane's first scene. A default view saved with its own target opens on its own
+/// camera (`own_camera`, see `default_view_camera`), as a double click opens any other view, so
+/// its height, projection and orbit stay the saved ones (the 584 recheck on master: the fit
+/// replaced a saved 10000 mm height, View properties then marked the fitted one changed, and
+/// Apply wrote it back). A pane without a view, and the window's own "3D View", are fitted to
+/// the scene.
+fn first_framing(
+    pane: &mut crate::panes::ViewPane,
+    own_camera: Option<Result<Camera, crate::Error>>,
+    target: [f32; 3],
+    extent: f32,
+    aspect: f32,
+) -> Result<(), crate::Error> {
+    match own_camera.filter(|_| pane.view.is_some()) {
+        Some(camera) => {
+            pane.camera = camera?;
+            Ok(())
+        }
+        None => pane.camera.fit(target, extent, aspect),
+    }
+}
+
 /// The offscreen render target size in device pixels: the viewport with its longest side clamped
 /// to the renderer's 4096 limit, scaled as a whole. A target that keeps the viewport's aspect
 /// ratio can be drawn over the whole panel without stretching the model (a wide window used to
@@ -1271,8 +1293,10 @@ impl App {
                 {
                     let aspect = self.aspect();
                     // An active model view keeps its own camera (V12); the default view is
-                    // framed once, then stays where the user left it.
+                    // framed once (on its own camera when saved with its own target, see
+                    // `first_framing`), then stays where the user left it.
                     let default = self.default_view_id();
+                    let own_camera = self.default_view_camera(self.view_origin(), None);
                     match self
                         .views
                         .active_pane_mut()
@@ -1285,7 +1309,7 @@ impl App {
                                 pane.framed = content.then_some((target, extent, aspect));
                                 self.error = None;
                             } else {
-                                match pane.camera.fit(target, extent, aspect) {
+                                match first_framing(pane, own_camera, target, extent, aspect) {
                                     Ok(()) => {
                                         pane.framed = content.then_some((target, extent, aspect));
                                         self.error = None;
@@ -1326,10 +1350,16 @@ impl App {
                 let aspect = self.aspect();
                 let default = self.default_view_id();
                 // The default view is framed when it shows its first scene with something in
-                // it; after that a new revision (an inserted column, an undo) keeps the user's
+                // it (on its own camera when saved with its own target, see `first_framing`);
+                // after that a new revision (an inserted column, an undo) keeps the user's
                 // camera, carried to the new display origin in `show`. A scene the camera cannot
                 // frame keeps the previous scene and shows why.
                 let content = loaded.summary.elements > 0 || !next_grids.lines.is_empty();
+                // The new scene's origin and reach: `show` installs them only below.
+                let own_camera = self.default_view_camera(
+                    loaded.summary.origin_mm,
+                    Some(view_panel::scene_reach(&loaded.summary)),
+                );
                 let fitted = match self
                     .views
                     .active_pane_mut()
@@ -1342,9 +1372,11 @@ impl App {
                             pane.framed = content.then_some((target, extent, aspect));
                             None
                         } else {
-                            Some(pane.camera.fit(target, extent, aspect).map(|()| {
-                                pane.framed = content.then_some((target, extent, aspect));
-                            }))
+                            Some(first_framing(pane, own_camera, target, extent, aspect).map(
+                                |()| {
+                                    pane.framed = content.then_some((target, extent, aspect));
+                                },
+                            ))
                         }
                     }
                     // Framed already: the framing is tracked and the camera stays, carried to
@@ -8257,6 +8289,49 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_default_view_saved_with_its_own_target_opens_on_it() {
+        // The 584 recheck on master: the window fitted the default view to its first scene even
+        // when it was saved with its own target, so a view saved 10000 mm high opened about
+        // 8100 mm high and orthographic; View properties, which follows the pane's live height,
+        // then marked the height changed, and Apply wrote the fitted one back. A default view
+        // with its own target opens on its own camera, as a double click opens any other view.
+        use beamcraft_engine::views::{ModelView, Projection, orbit_plane};
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000021").unwrap();
+        let plane = orbit_plane([3000.0, 0.0, 1750.0], -1.0, 0.45).unwrap();
+        let mut elev = ModelView::new(id, "Elev", plane, 10_000.0);
+        elev.projection = Projection::Perspective;
+        elev.is_default = true;
+        app.views.book.insert(elev.clone()).unwrap();
+        assert_eq!(app.default_view_id(), Some(id));
+        app.views.active_pane_mut().unwrap().set_view(Some(&elev));
+        deliver(&mut app, refreshed(2));
+        let origin = app.view_origin();
+        let pane = app.views.active_pane().unwrap();
+        assert!(pane.framed.is_some(), "the first scene was framed");
+        assert!(
+            !pane.camera.is_orthographic(),
+            "the saved perspective is kept"
+        );
+        let (_, span) = pane.camera.frame(origin).unwrap();
+        assert!(
+            (span - 10_000.0).abs() < 0.5,
+            "the pane shows the saved height, which View properties reads, got {span}"
+        );
+        // The window's own "3D View" (a derived anchor) is still fitted to its first scene:
+        // a fresh window frames the whole model, as before.
+        let Some(mut fresh) = headless() else { return };
+        let before = fresh.views.active_pane().unwrap().camera.distance();
+        deliver(&mut fresh, refreshed(2));
+        let after = fresh.views.active_pane().unwrap().camera.distance();
+        assert!(
+            (after - before).abs() > 1.0,
+            "the window's own default view is fitted to the first scene: {before} -> {after}"
+        );
+    }
+
+    #[test]
     fn the_render_target_is_clamped_as_a_whole() {
         // Below the limit the viewport passes through unchanged.
         assert_eq!(target_size([1280.0, 800.0], 1.0), [1280, 800]);
@@ -9898,6 +9973,65 @@ pub(crate) mod tests {
         assert_eq!(app.tools.plane, Some(free));
     }
 
+    #[test]
+    fn an_inclined_view_keeps_the_model_work_plane() {
+        // The 584 recheck on master: opening a 3D (orbit) view installed its camera plane as
+        // the work plane, so a beam started on a grid crossing floated above the grid and dived
+        // under the slab. An inclined view keeps the model's work plane, like the default view;
+        // a plan or an elevation still installs its own.
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let free = WorkPlane::parallel("xy", -250.0).unwrap();
+        app.install_plane(Some(free));
+        let orbit_id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000011").unwrap();
+        let orbit = beamcraft_engine::views::orbit_plane([0.0; 3], -0.9, 0.6).unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(orbit_id, "Show grid", orbit, 20_000.0))
+            .unwrap();
+        let elevation_id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000012").unwrap();
+        let elevation = WorkPlane::parallel("xz", 1200.0).unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(elevation_id, "Elevation", elevation, 5000.0))
+            .unwrap();
+        assert_eq!(
+            crate::views::view_kind(app.views.book.get(&orbit_id).unwrap()),
+            crate::views::ViewKind::Inclined
+        );
+        app.open_pane(Some(orbit_id));
+        let orbit_pane = app.views.active_pane().unwrap().key;
+        assert_eq!(
+            app.tools.plane,
+            Some(free),
+            "the 3D view keeps the model's work plane"
+        );
+        app.open_pane(Some(elevation_id));
+        let elevation_pane = app.views.active_pane().unwrap().key;
+        assert_eq!(
+            app.tools.plane,
+            Some(elevation),
+            "an elevation installs its plane"
+        );
+        app.focus_pane(orbit_pane);
+        assert_eq!(
+            app.tools.plane,
+            Some(free),
+            "back on the 3D view, the free work plane comes back"
+        );
+        app.focus_pane(elevation_pane);
+        assert_eq!(app.tools.plane, Some(elevation));
+        app.close_pane(elevation_pane);
+        assert_eq!(app.tools.plane, Some(free));
+        // Switching a pane's view (Ctrl+Tab, the browser) follows the same rule.
+        app.activate_view(Some(elevation_id));
+        assert_eq!(app.tools.plane, Some(elevation));
+        app.activate_view(Some(orbit_id));
+        assert_eq!(app.tools.plane, Some(free));
+    }
+
     /// A window on `config_dir`, opened the way a restart opens one: a fresh window on the
     /// render state of an existing one, on a store with no CLI behind it.
     fn reopened(state: &eframe::egui_wgpu::RenderState, config_dir: std::path::PathBuf) -> App {
@@ -11065,6 +11199,184 @@ mod navigation_tests {
                 .zip([6000., 5000., 0.])
                 .all(|(a, b)| (a - b).abs() < 10.0),
             "the snap lands on the 2/B intersection, got {point:?}"
+        );
+    }
+
+    #[test]
+    fn a_grid_crossing_snapped_in_a_3d_view_lies_on_the_grid() {
+        // The 584 recheck on master: the 3D view "Show grid" (saved by --yaw/--pitch, its plane
+        // through the origin) became the work plane on a double click, and the Beam tool's
+        // grid-intersection snap at 2/B lifted the crossing onto that inclined plane: it read
+        // (6000.0, 5000.0, 273.3), a beam floated above the slab and dived under it. Opened
+        // through the browser, the 3D view keeps the model's work plane and the snap lies on
+        // the grid; a plan still installs its own plane and snaps there.
+        use beamcraft_engine::query::pick::SnapKind;
+        use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
+        use beamcraft_model::id::ElementId;
+        let Some(mut app) = headless() else { return };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file(), "build beamcraft-cli before native tests");
+        let root = std::env::temp_dir().join(format!(
+            "bc-recheck-3d-snap-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.to_str().unwrap().to_owned();
+        let views_file = format!("{store}.views.usda");
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .arg(command)
+                .args(["--store", &store])
+                .args(args)
+                .env(
+                    "BEAMCRAFT_CONFIG_DIR",
+                    std::env::temp_dir().join("bc-recheck-cli-config"),
+                )
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{command}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        };
+        run(
+            "create-plate",
+            &[
+                "--contour",
+                "-500,-500;12500,-500;12500,5500;-500,5500",
+                "--thickness",
+                "20",
+                "--thickness-side",
+                "bottom",
+                "--name",
+                "SLAB",
+            ],
+        );
+        for (name, plane) in [
+            ("Show grid", &["--yaw", "-0.9", "--pitch", "0.6"][..]),
+            ("Plan", &["--parallel", "xy", "--offset", "0"][..]),
+        ] {
+            let mut args = vec!["--file", &views_file, "--name", name, "--span", "20000"];
+            args.extend_from_slice(plane);
+            run("save-view", &args);
+        }
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reloaded = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
+        deliver(&mut app, reloaded);
+        let book = crate::views::load(&root).unwrap();
+        app.views.baseline = book.clone();
+        app.views.book = book;
+        let view_named = |app: &App, name: &str| {
+            app.views
+                .book
+                .views()
+                .iter()
+                .find(|view| view.name == name)
+                .cloned()
+                .unwrap_or_else(|| panic!("the saved view {name} was not in the book"))
+        };
+        let show = view_named(&app, "Show grid");
+        assert_eq!(
+            crate::views::view_kind(&show),
+            crate::views::ViewKind::Inclined
+        );
+        // The drawn grid of the repro store, the same lines the window's grid job loads.
+        app.grid_scene.query_grids = vec![Grid {
+            id: ElementId::parse("01990000-0000-7000-8000-000000004001").unwrap(),
+            name: "Main".into(),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+            u: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: ElementId::parse("01990000-0000-7000-8000-000000004002").unwrap(),
+                label: "B".into(),
+                start_mm: [-2000.0, 5000.0],
+                end_mm: [14000.0, 5000.0],
+            }]),
+            v: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: ElementId::parse("01990000-0000-7000-8000-000000004003").unwrap(),
+                label: "2".into(),
+                start_mm: [6000.0, -2000.0],
+                end_mm: [6000.0, 7000.0],
+            }]),
+        }];
+        app.set_bench(super::workbench::Bench::Beam);
+        for kind in SnapKind::ALL {
+            app.selection
+                .set_snap(kind, kind == SnapKind::GridIntersection);
+        }
+        // Snaps 2/B through the active pane's camera, as a click on the crossing does.
+        let snap_2b = |app: &mut App| {
+            let origin = app.view_origin();
+            let view = app
+                .views
+                .active_pane()
+                .unwrap()
+                .camera
+                .view(app.aspect())
+                .unwrap();
+            let local = std::array::from_fn(|i| ([6000., 5000., 0.][i] - origin[i]) as f32);
+            let [x, y, _] = view.project(local);
+            let ray = crate::edit::ray_through(&view, [x, y], origin).unwrap();
+            app.creation_hit(ray, false).unwrap()
+        };
+        // The double click on the 3D view in the browser.
+        app.browser_action(super::view_panel::BrowserAction::Activate(show.id));
+        assert_eq!(app.views.active(), Some(show.id));
+        assert_eq!(
+            app.tools.plane, None,
+            "the 3D view keeps the model's work plane (world XY)"
+        );
+        let (point, kind) = snap_2b(&mut app);
+        assert_eq!(
+            kind,
+            Some(SnapKind::GridIntersection),
+            "snapped at {point:?}"
+        );
+        assert!(
+            point
+                .iter()
+                .zip([6000., 5000., 0.])
+                .all(|(a, b)| (a - b).abs() < 1.0),
+            "the 3D view snaps 2/B on the grid, got {point:?}"
+        );
+        // The control: a plan still installs its plane, and snaps on it.
+        let plan = view_named(&app, "Plan");
+        app.browser_action(super::view_panel::BrowserAction::Activate(plan.id));
+        assert_eq!(
+            app.tools.plane,
+            Some(plan.plane),
+            "a plan installs its plane"
+        );
+        let (point, kind) = snap_2b(&mut app);
+        assert_eq!(
+            kind,
+            Some(SnapKind::GridIntersection),
+            "snapped at {point:?}"
+        );
+        assert!(
+            point
+                .iter()
+                .zip([6000., 5000., 0.])
+                .all(|(a, b)| (a - b).abs() < 1.0),
+            "the plan snaps 2/B on its plane, got {point:?}"
         );
     }
 }

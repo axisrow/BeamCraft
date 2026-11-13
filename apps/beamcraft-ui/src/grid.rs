@@ -24,6 +24,30 @@ fn pair(json: &Json, key: &str) -> Option<[f64; 2]> {
     values.iter().all(|n| n.is_finite()).then_some(values)
 }
 
+/// Whether the grid line between `points` belongs to `shown`, the view a pane displays; a pane
+/// with no saved view shows every line. A grid line stands for the vertical grid plane through
+/// it (the engine snaps to grid guides the same way). A plane that is not vertical meets that
+/// grid plane at every distance, so its slab always crosses it; in a vertical view the distance
+/// does not depend on height, and the line's two ground endpoints carry the whole plane. One
+/// rule for drawing and picking, so a line is clickable exactly where it is drawn.
+fn line_in_view(
+    shown: Option<&beamcraft_engine::views::ModelView>,
+    points: &[[f64; 3]; 2],
+) -> bool {
+    shown.is_none_or(|v| {
+        let Some([above, below]) = v.depth else {
+            return true;
+        };
+        if crate::views::view_kind(v) != crate::views::ViewKind::Vertical {
+            return true;
+        }
+        points.iter().all(|p| {
+            let d = v.plane_distance(*p);
+            d >= -below && d <= above
+        })
+    })
+}
+
 fn project(point: [f64; 3], rect: egui::Rect, view: &View, origin: [f64; 3]) -> Option<egui::Pos2> {
     let local = std::array::from_fn(|i| {
         (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
@@ -856,12 +880,16 @@ impl GridScene {
     }
 
     /// Picks a visible guide in screen pixels. This is display hit testing of engine endpoints.
+    /// `shown` is the view the pane displays: a line its depth slab leaves out is not drawn
+    /// (see [`Self::paint`]), so it is not picked either, and a click where nothing is drawn
+    /// selects no grid (the 584 recheck: an elevation's hidden lines still selected theirs).
     pub fn hit_test(
         &self,
         rect: egui::Rect,
         view: &View,
         origin: [f64; 3],
         point: egui::Pos2,
+        shown: Option<&beamcraft_engine::views::ModelView>,
     ) -> Option<&GridProperties> {
         if !rect.contains(point) {
             return None;
@@ -870,6 +898,9 @@ impl GridScene {
         let mut hit = None;
         for grid in &self.grids {
             for line in self.lines.get(grid.lines.clone()).unwrap_or_default() {
+                if !line_in_view(shown, &line.points) {
+                    continue;
+                }
                 let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
                     continue;
                 };
@@ -972,25 +1003,7 @@ impl GridScene {
         selected: Option<&str>,
         shown: Option<&beamcraft_engine::views::ModelView>,
     ) {
-        // A grid line stands for the vertical grid plane through it (the engine snaps to grid
-        // guides the same way). A plane that is not vertical meets that grid plane at every
-        // distance, so its slab always crosses it; in a vertical view the distance does not
-        // depend on height, and the line's two ground endpoints carry the whole plane.
-        let in_view = |points: &[[f64; 3]; 2]| {
-            shown.is_none_or(|v| {
-                let Some([above, below]) = v.depth else {
-                    return true;
-                };
-                if crate::views::view_kind(v) != crate::views::ViewKind::Vertical {
-                    return true;
-                }
-                let within = |p: &[f64; 3]| {
-                    let d = v.plane_distance(*p);
-                    d >= -below && d <= above
-                };
-                points.iter().all(within)
-            })
-        };
+        let in_view = |points: &[[f64; 3]; 2]| line_in_view(shown, points);
         let painter = ui.painter_at(rect);
         let palette = theme::Palette::current(ui);
         let selected_lines = selected
@@ -1405,6 +1418,73 @@ mod form_tests {
             as_str(&labels),
             ["2", "2"],
             "the section on 2 labels 2: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn a_grid_line_a_vertical_view_leaves_out_is_not_picked() {
+        // The 584 recheck: an elevation draws only the lines its depth slab keeps, but a click
+        // where a left-out line runs still selected its grid, with nothing drawn under the
+        // pointer. Turn the camera off the elevation on B (as orbiting the pane does, while its
+        // slab stays) so the left-out lines leave B's screen line.
+        let mut scene = demo_scene();
+        scene.grids = vec![GridProperties {
+            id: "main".into(),
+            form: GridForm::default(),
+            editable: true,
+            lines: 0..6,
+        }];
+        let on_b = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0, 5000.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        let mut elevation_b = beamcraft_engine::views::ModelView::new(
+            beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000004").unwrap(),
+            "Elevation B",
+            on_b,
+            20_000.0,
+        );
+        elevation_b.depth = Some([300.0, 300.0]);
+        let turned = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0, 5000.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.6, 0.8],
+        )
+        .unwrap();
+        let view = crate::camera::Camera::aligned_to(turned, [0.0; 3], 20_000.0, 100.0)
+            .unwrap()
+            .view(800.0 / 600.0)
+            .unwrap();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let at = |point: [f64; 3]| super::project(point, rect, &view, [0.0; 3]).unwrap();
+        let on_line_a = at([2000.0, 0.0, 0.0]);
+        let on_line_b = at([2000.0, 5000.0, 0.0]);
+        let on_line_2 = at([4000.0, 8000.0, 0.0]);
+        let picked = |point: egui::Pos2, shown| {
+            scene
+                .hit_test(rect, &view, [0.0; 3], point, shown)
+                .map(|grid| grid.id.clone())
+        };
+        // A pane without a saved view draws every line, and picks every line.
+        assert_eq!(picked(on_line_a, None), Some("main".to_owned()));
+        // The elevation on B leaves A and line 2 out: nothing is drawn there, nothing is picked.
+        assert_eq!(
+            picked(on_line_a, Some(&elevation_b)),
+            None,
+            "line A at {on_line_a:?}"
+        );
+        assert_eq!(
+            picked(on_line_2, Some(&elevation_b)),
+            None,
+            "line 2 at {on_line_2:?}"
+        );
+        // The drawn line B stays pickable.
+        assert_eq!(
+            picked(on_line_b, Some(&elevation_b)),
+            Some("main".to_owned()),
+            "line B at {on_line_b:?}"
         );
     }
 

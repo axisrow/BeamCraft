@@ -1043,12 +1043,22 @@ impl App {
             )
         {
             // The grids switch (V11) takes grids out of picking; the display switch stays the
-            // pane's grid guides.
+            // pane's grid guides. The pane's view picks only what it draws: a view hiding the
+            // grid kind draws no guides, and a line its depth slab leaves out draws nothing, so
+            // neither selects a grid (the 584 recheck).
+            let shown = self
+                .views
+                .panes
+                .iter()
+                .find(|p| p.key == draw.key)
+                .and_then(|p| p.view)
+                .and_then(|id| self.views.book.get(&id));
             if !self.beam_mode
                 && !self.plate_mode
                 && self.views.picking.is_none()
                 && self.grid_line.click.is_none()
                 && self.grids_shown()
+                && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
                 && self
                     .selection
                     .is_on(beamcraft_engine::query::pick::SelectionClass::Grids)
@@ -1062,6 +1072,7 @@ impl App {
                             .as_ref()
                             .map_or([0.0; 3], |l| l.summary.origin_mm),
                         pos,
+                        shown,
                     )
                     .map(|grid| grid.id.clone());
             }
