@@ -288,7 +288,10 @@ pub fn lookup(
 /// window's switches (V11); a class that is off is never selected. With an active model view
 /// only what it shows can be picked: geometry clipped by its depth or work area, or of a
 /// hidden kind, never masks a visible part behind it (V12); the window's cut hides the same
-/// way (issue 569 item 2). No lookup follows: a caller adds its own.
+/// way (issue 569 item 2). `include_reference` lets the foreign display bodies of a received
+/// file take part: the read-only window's pick names them, the store window's never does
+/// (issue 614; R01 keeps them out of the engineering pick). No lookup follows: a caller adds
+/// its own.
 pub fn pick_id(
     snapshot: &ViewSnapshot,
     ray: &Ray,
@@ -296,6 +299,7 @@ pub fn pick_id(
     view: Option<&beamcraft_engine::views::ModelView>,
     hidden: Option<&std::collections::BTreeSet<beamcraft_engine::ElementId>>,
     cut: Option<&beamcraft_engine::view_clipping::Clipping>,
+    include_reference: bool,
 ) -> Result<Option<String>, ToolError> {
     let picked = match view {
         Some(view) => beamcraft_engine::views::pick_visible_except(
@@ -306,14 +310,20 @@ pub fn pick_id(
             selection,
             hidden.unwrap_or(&std::collections::BTreeSet::new()),
             cut,
+            include_reference,
         )
         .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string()))?
         .map(|hit| hit.element_id.to_string()),
-        None => {
-            beamcraft_engine::views::pick_kept(snapshot, ray.origin, ray.direction, selection, cut)
-                .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string()))?
-                .map(|hit| hit.element_id.to_string())
-        }
+        None => beamcraft_engine::views::pick_kept(
+            snapshot,
+            ray.origin,
+            ray.direction,
+            selection,
+            cut,
+            include_reference,
+        )
+        .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string()))?
+        .map(|hit| hit.element_id.to_string()),
     };
     Ok(picked)
 }
@@ -334,7 +344,7 @@ pub fn select(
     hidden: Option<&std::collections::BTreeSet<beamcraft_engine::ElementId>>,
     cut: Option<&beamcraft_engine::view_clipping::Clipping>,
 ) -> Result<Option<Selected>, ToolError> {
-    let Some(id) = pick_id(snapshot, ray, selection, view, hidden, cut)? else {
+    let Some(id) = pick_id(snapshot, ray, selection, view, hidden, cut, false)? else {
         return Ok(None);
     };
     let (info, details) = lookup(cli, store, &id, cancel, stats);

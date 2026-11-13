@@ -1674,6 +1674,8 @@ impl App {
             let spawned = std::thread::Builder::new()
                 .name("beamcraft-pick".into())
                 .spawn(move || {
+                    // The display pick of a read-only file: the foreign bodies take part
+                    // (issue 614), where the engineering pick keeps them out (R01).
                     let picked = command::pick_id(
                         &snapshot,
                         &ray,
@@ -1681,6 +1683,7 @@ impl App {
                         view.as_ref(),
                         overlay.as_ref().map(|o| o.hidden()),
                         cut.as_ref(),
+                        true,
                     );
                     let selected = picked.map(|picked| {
                         picked.map(|id| {
@@ -3903,6 +3906,7 @@ pub(crate) mod tests {
     use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
+    use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
@@ -8943,6 +8947,165 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_source_window_run_on_a_real_file_picks_a_body_and_names_it_from_the_reader() {
+        use std::path::Path;
+        use std::time::{Duration, Instant};
+        // The full path a user's click takes, with the real file and the real CLI processes:
+        // the refresh exports the display bundle (`export-view --source`), reads the body
+        // facts (`ifc-shapes`), keys them by the display ids, the click picks through the
+        // bounds the snapshot carries, and the panel names the body from the file itself.
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ifc/plate-hole.ifc");
+        let Some(mut app) = headless_source_at(&fixture, &cli) else {
+            return;
+        };
+        // The refresh of a real file: both CLI processes, the pin check between them.
+        let settled = {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                app.poll_reload();
+                if app.loaded.is_some() || Instant::now() > deadline {
+                    break Instant::now() <= deadline;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert!(settled, "the real source refresh never delivered a scene");
+        assert!(
+            app.error.is_none(),
+            "the real bundle was refused: {:?}",
+            app.error
+        );
+        assert!(
+            !app.foreign.is_empty(),
+            "the real body facts never loaded: {:?}",
+            app.foreign_note
+        );
+        // A click through the first body's own bounds, from above: the engine pick in this
+        // process, no store behind it.
+        let snapshot = Arc::clone(&app.loaded.as_ref().unwrap().snapshot);
+        let picked = snapshot.elements().first().unwrap().id;
+        let facts = app.foreign.get(&picked).cloned().unwrap();
+        let bounds = &snapshot.elements().first().unwrap().full.world_bounds;
+        // A quarter point of the bounds, not the middle: a hole can sit in the middle of a
+        // plate, and a straight ray through it would fall through.
+        let aim: [f64; 3] = std::array::from_fn(|axis| {
+            bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * 0.2
+        });
+        app.start_select(crate::edit::Ray {
+            origin: [aim[0], aim[1], aim[2] + 500.0],
+            direction: [0.0, 0.0, -1.0],
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.select_job.is_some() && Instant::now() < deadline {
+            app.poll_select();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.select_job.is_none(), "the real pick never settled");
+        let selected = app.editor.selected().unwrap();
+        assert_eq!(selected.id, picked.to_string());
+        assert_eq!(selected.name, facts.name.clone().unwrap());
+        // The panel draws what the file itself reports for this body: its Name, IFC entity,
+        // GlobalId and placed bounds, exactly as `ifc-shapes` listed them.
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.inspector(ui),
+        );
+        let mut output = output;
+        output.textures_delta.clear();
+        let drawn_with = |needle: &str| {
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(needle)))
+        };
+        assert!(drawn_with(&facts.entity), "the IFC entity {}", facts.entity);
+        if let Some(name) = &facts.name {
+            assert!(drawn_with(name), "the product name {name}");
+        }
+        if let Some(global_id) = &facts.global_id {
+            assert!(drawn_with(global_id), "the GlobalId {global_id}");
+        }
+        let max = facts.bounds[1];
+        assert!(
+            drawn_with(&format!("({:.1}, {:.1}, {:.1}) mm", max[0], max[1], max[2])),
+            "the placed bounds"
+        );
+        assert!(drawn_with("Read-only"));
+        output.drop_without_applying_deltas();
+        // Nothing was written beside the file, and no store was touched.
+        assert!(app.source.read_only());
+    }
+
+    /// A window on the received IFC file `file`, refreshes driven by the real `cli`, on a
+    /// scratch configuration. `None` on a machine without a usable GPU adapter, like
+    /// [`headless`].
+    fn headless_source_at(file: &Path, cli: &Path) -> Option<App> {
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP window test: no native wgpu adapter");
+                return None;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let renderer =
+            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        let mut cc = eframe::CreationContext::_new_kittest(egui::Context::default());
+        cc.wgpu_render_state = Some(egui_wgpu::RenderState {
+            adapter: gpu.adapter,
+            available_adapters: Vec::new(),
+            instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()),
+            device: gpu.device,
+            queue: gpu.queue,
+            target_format: format,
+            renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
+        });
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch =
+            std::env::temp_dir().join(format!("bc-source-real-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let source = Source {
+            store: file.to_path_buf(),
+            ifc_source: Some(file.to_path_buf()),
+            cli: cli.to_path_buf(),
+            workspace: None,
+            published: None,
+            samples: None,
+            actor: None,
+            environment: None,
+            author: None,
+            config_dir: Some(scratch),
+        };
+        let stats = Arc::new(crate::stats::Stats::default());
+        Some(App::new(&cc, source, stats).unwrap())
+    }
+
+    #[test]
     fn a_click_picks_a_body_and_names_it_from_the_file_s_facts() {
         use crate::source::ForeignBody;
         use std::collections::BTreeMap;
@@ -8977,10 +9140,13 @@ pub(crate) mod tests {
         app.foreign = Arc::new(facts);
         // A click through the first body's own bounds, from above.
         let bounds = &snapshot.elements().first().unwrap().full.world_bounds;
-        let center: [f64; 3] =
-            std::array::from_fn(|axis| (bounds.min[axis] + bounds.max[axis]) / 2.0);
+        // A quarter point of the bounds, not the middle: a hole can sit in the middle of a
+        // plate, and a straight ray through it would fall through.
+        let aim: [f64; 3] = std::array::from_fn(|axis| {
+            bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * 0.2
+        });
         app.start_select(crate::edit::Ray {
-            origin: [center[0], center[1], center[2] + 500.0],
+            origin: [aim[0], aim[1], aim[2] + 500.0],
             direction: [0.0, 0.0, -1.0],
         });
         for _ in 0..200 {

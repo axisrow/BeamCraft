@@ -1168,6 +1168,7 @@ impl App {
                     ray.origin,
                     ray.direction,
                     self.selection.filter(),
+                    false,
                 )
                 .map(|hit| hit.map(|part| part.element_id.to_string()))
                 .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string())),

@@ -1337,7 +1337,14 @@ pub fn surface_plane(
     use crate::query::feature::{FeatureGeometry, FeatureKind, lookup_feature};
     use crate::query::pick::{PickQuery, RayPick, pick};
     let hit = match view {
-        Some(view) => pick_visible(snapshot, view, origin, direction, SelectionFilter::ALL)?,
+        Some(view) => pick_visible(
+            snapshot,
+            view,
+            origin,
+            direction,
+            SelectionFilter::ALL,
+            false,
+        )?,
         None => {
             let mut query = RayPick::new(origin, direction, vec![FeatureKind::Face]);
             query.max_hits = 1;
@@ -1407,12 +1414,15 @@ pub fn surface_plane(
 
 /// The first face hit along a ray that the view shows: inside its depth slab and work area and
 /// of a visible kind. Clipped or hidden geometry in front never masks a visible hit behind it.
+/// `include_reference` lets foreign display bodies of a received file take part (a viewer's
+/// own display pick); the engineering pick keeps them out (R01).
 pub fn pick_visible(
     snapshot: &ViewSnapshot,
     view: &ModelView,
     origin: [f64; 3],
     direction: [f64; 3],
     selection: SelectionFilter,
+    include_reference: bool,
 ) -> Result<Option<Hit>, CommandError> {
     pick_visible_except(
         snapshot,
@@ -1422,13 +1432,17 @@ pub fn pick_visible(
         selection,
         &BTreeSet::new(),
         None,
+        include_reference,
     )
 }
 
 /// [`pick_visible`] that also passes through the elements in `hidden`: the ones a view's
 /// filter overrides hide, which the window evaluates. `cut` is the window's display cut (V15):
 /// a face hit outside its kept half-spaces is skipped like clipped geometry, so a click never
-/// selects what the cut hides (`None` keeps every hit).
+/// selects what the cut hides (`None` keeps every hit). `include_reference` lets foreign
+/// display bodies of a received file take part (a viewer's own display pick); the engineering
+/// pick keeps them out (R01).
+#[allow(clippy::too_many_arguments)]
 pub fn pick_visible_except(
     snapshot: &ViewSnapshot,
     view: &ModelView,
@@ -1437,6 +1451,7 @@ pub fn pick_visible_except(
     selection: SelectionFilter,
     hidden: &BTreeSet<ElementId>,
     cut: Option<&Clipping>,
+    include_reference: bool,
 ) -> Result<Option<Hit>, CommandError> {
     use crate::query::feature::FeatureKind;
     use crate::query::pick::{MAX_HITS, PickQuery, RayPick, pick};
@@ -1445,6 +1460,12 @@ pub fn pick_visible_except(
     let mut query = RayPick::new(origin, direction, vec![FeatureKind::Face]);
     query.max_hits = MAX_HITS;
     query.selection = selection;
+    query.include_reference = include_reference;
+    // A display pick of a received file catches both sides: the file's triangle winding is
+    // the writer's, and a viewer of a foreign file clicks the side it sees.
+    if include_reference {
+        query.include_backfaces = true;
+    }
     let hits = pick(snapshot, &PickQuery::Ray(query))
         .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
     if let Some(hit) = hits.hits.into_iter().find(|hit| {
@@ -1470,13 +1491,15 @@ pub fn pick_visible_except(
 /// The first face hit along a ray that `cut` keeps, where no [`ModelView`] limits the pick (the
 /// free 3D view): the same skip a window cut applies to the drawn fragments (V15), so picking
 /// sees what the picture shows. An invalid cut keeps every hit, like [`crate::view_clipping`]
-/// display of it.
+/// display of it. `include_reference` lets foreign display bodies of a received file take
+/// part (a viewer's own display pick); the engineering pick keeps them out (R01).
 pub fn pick_kept(
     snapshot: &ViewSnapshot,
     origin: [f64; 3],
     direction: [f64; 3],
     selection: SelectionFilter,
     cut: Option<&Clipping>,
+    include_reference: bool,
 ) -> Result<Option<Hit>, CommandError> {
     use crate::query::feature::FeatureKind;
     use crate::query::pick::{MAX_HITS, PickQuery, RayPick, pick};
@@ -1484,6 +1507,12 @@ pub fn pick_kept(
     let mut query = RayPick::new(origin, direction, vec![FeatureKind::Face]);
     query.max_hits = MAX_HITS;
     query.selection = selection;
+    query.include_reference = include_reference;
+    // A display pick of a received file catches both sides: the file's triangle winding is
+    // the writer's, and a viewer of a foreign file clicks the side it sees.
+    if include_reference {
+        query.include_backfaces = true;
+    }
     let hits = pick(snapshot, &PickQuery::Ray(query))
         .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
     let hit = hits
