@@ -237,6 +237,15 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         }
         _ => return Err(usage()),
     };
+    // Issue 616: a regular file is not a store root, and the CLI would reject the export
+    // only after the window is up. Failing here, before any window, keeps the launch from
+    // looking successful with the reason buried in the status bar; a `--source` file rides
+    // `ifc_source` and is exempt.
+    if ifc_source.is_none()
+        && let Some(rejected) = store.as_deref().and_then(source::file_store_root)
+    {
+        return Err(rejected);
+    }
     if map.contains_key("--metrics") {
         if map.contains_key("--perf-run")
             || map.contains_key("--screenshot")
