@@ -108,7 +108,9 @@ impl Form {
     }
 
     /// Draws the form's fields and buttons on the Export page; `outer_busy` disables them while
-    /// the window runs a command of its own.
+    /// the window runs a command of its own. `read_only` is a window on a received IFC file:
+    /// there is no store to export, so the form only offers the pair's other half, «Open
+    /// IFC…» (issue 614). Returns true when «Open IFC…» was clicked.
     fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -116,7 +118,9 @@ impl Form {
         store: &Path,
         stats: &Arc<crate::stats::Stats>,
         outer_busy: bool,
-    ) {
+        read_only: bool,
+    ) -> bool {
+        let mut open_clicked = false;
         self.poll();
         if self.busy() {
             ui.ctx()
@@ -127,18 +131,31 @@ impl Form {
         ui.add_space(12.0);
         ui.label(crate::theme::bold("IFC", 14.0));
         ui.label(
-            egui::RichText::new("Writes the model's accepted revision as an IFC4 STEP file.")
-                .small()
-                .color(palette.muted),
+            egui::RichText::new(if read_only {
+                "This window shows a received IFC file. Open another one read-only, or open a \
+                 model store to export it."
+            } else {
+                "Writes the model's accepted revision as an IFC4 STEP file."
+            })
+            .small()
+            .color(palette.muted),
         );
-        field(ui, "Output file", &mut self.path, 420.0);
-        ui.add(egui::Checkbox::new(
-            &mut self.overwrite,
-            "Replace an existing file",
-        ));
-        ui.add_space(8.0);
+        if !read_only {
+            field(ui, "Output file", &mut self.path, 420.0);
+            ui.add(egui::Checkbox::new(
+                &mut self.overwrite,
+                "Replace an existing file",
+            ));
+            ui.add_space(8.0);
+        }
         ui.horizontal(|ui| {
-            if crate::theme::button(ui, crate::theme::Kind::Primary, "Export IFC", !busy).clicked()
+            if crate::theme::button(ui, crate::theme::Kind::Secondary, "Open IFC…", !busy).clicked()
+            {
+                open_clicked = true;
+            }
+            if !read_only
+                && crate::theme::button(ui, crate::theme::Kind::Primary, "Export IFC", !busy)
+                    .clicked()
             {
                 self.start(cli, store, stats);
             }
@@ -162,6 +179,7 @@ impl Form {
             }
             None => {}
         }
+        open_clicked
     }
 }
 
@@ -243,7 +261,25 @@ impl App {
         let cli = self.source.cli.clone();
         let store = self.source.store.clone();
         let stats = Arc::clone(&self.stats);
-        self.menu_export.ui(ui, &cli, &store, &stats, outer_busy);
+        let read_only = self.source.read_only();
+        if self
+            .menu_export
+            .ui(ui, &cli, &store, &stats, outer_busy, read_only)
+            && let Some(start) = self
+                .source
+                .ifc_source
+                .clone()
+                .or_else(|| self.source.store.parent().map(Path::to_path_buf))
+        {
+            // «Open IFC…» (issue 614): the visible entry of the pair next to «Export IFC».
+            // The dialog is modal like the start page's folder dialog; a cancelled dialog
+            // changes nothing.
+            match crate::dialog::pick_file("Open an IFC file", Some(&start)) {
+                Ok(Some(file)) => self.open_source_request = Some(file),
+                Ok(None) => {}
+                Err(e) => self.menu_note = Some(Err(e.to_string())),
+            }
+        }
     }
 }
 

@@ -18,7 +18,7 @@ use beamcraft_engine::query::bundle::max_bundle_bytes;
 use beamcraft_engine::{Limits, Representation, SnapshotToken, ViewSnapshot};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::ElementId;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -186,6 +186,176 @@ pub fn load_source(cli: &Path, source: &Path, stats: &Stats) -> Result<ViewSnaps
         return Err(rejected_source(&output.stdout));
     }
     Ok(ViewSnapshot::from_bundle(&output.stdout, &limits)?)
+}
+
+/// What one foreign body of a received IFC file reports: the identity facts of the product
+/// it was read from, as `ifc-shapes` lists them. A read-only window shows these; nothing
+/// here is editable or written anywhere.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeignBody {
+    /// The IFC entity type of the product (`IfcPlate`).
+    pub entity: String,
+    /// The product's `IfcGloballyUniqueId`, when the file carries one.
+    pub global_id: Option<String>,
+    /// The product's `Name` label, when the file carries one.
+    pub name: Option<String>,
+    /// The placed bounds of the body, min then max, in millimetres.
+    pub bounds: [[f64; 3]; 2],
+}
+
+/// The body facts of one `ifc-shapes` reply: the source digest the bodies were read from and
+/// the bodies in the reader's order — the order the display ids are derived in
+/// ([`beamcraft_engine::scene::foreign_display_id`]), so `bodies[i]` is the body of the
+/// snapshot's ordinal-`i` element. A reply that does not decode, or a body with a missing
+/// entity or a non-finite bound, is an error; nothing is guessed.
+pub fn foreign_bodies(stdout: &[u8]) -> Result<(String, Vec<ForeignBody>), Error> {
+    let reply = beamcraft_json::decode(stdout.trim_ascii(), &beamcraft_json::Limits::DEFAULT)
+        .map_err(|_| Error::Cli("ifc-shapes returned an unreadable reply".into()))?;
+    let text = |value: &beamcraft_json::Json| value.string().ok().map(str::to_owned);
+    let digest = reply
+        .get("source")
+        .ok()
+        .and_then(|s| s.get("sha256").ok())
+        .and_then(text)
+        .ok_or_else(|| Error::Cli("ifc-shapes reply names no source digest".into()))?;
+    let listed = reply
+        .get("shapes")
+        .ok()
+        .and_then(|s| s.get("listed").ok())
+        .and_then(|l| l.array().ok())
+        .ok_or_else(|| Error::Cli("ifc-shapes reply lists no bodies".into()))?;
+    if listed.len() > 4096 {
+        return Err(Error::Cli("ifc-shapes reply lists too many bodies".into()));
+    }
+    let mut bodies = Vec::with_capacity(listed.len());
+    for body in listed {
+        let entity = body
+            .get("entity")
+            .ok()
+            .and_then(text)
+            .filter(|e| !e.is_empty())
+            .ok_or_else(|| Error::Cli("a listed body names no IFC entity".into()))?;
+        let bounds_value = body
+            .get("bounds")
+            .ok()
+            .ok_or_else(|| Error::Cli("a listed body carries no bounds".into()))?;
+        let axis = |key: &str| -> Option<[f64; 3]> {
+            let array = bounds_value.get(key).ok()?.array().ok()?;
+            if array.len() != 3 {
+                return None;
+            }
+            let mut out = [0.0; 3];
+            for (slot, item) in out.iter_mut().zip(array) {
+                *slot = item.float().ok().filter(|v| v.is_finite())?;
+            }
+            Some(out)
+        };
+        let bounds = [
+            axis("min")
+                .ok_or_else(|| Error::Cli("a listed body carries no finite bounds".into()))?,
+            axis("max")
+                .ok_or_else(|| Error::Cli("a listed body carries no finite bounds".into()))?,
+        ];
+        bodies.push(ForeignBody {
+            entity,
+            global_id: body.get("global_id").ok().and_then(text),
+            name: body.get("name").ok().and_then(text),
+            bounds,
+        });
+    }
+    Ok((digest, bodies))
+}
+
+/// What one refresh of a received IFC file read: the scene as far as it differs from what
+/// the window shows. A source file has no definitions, grids or store to query.
+fn reload_parts(
+    snapshot: ViewSnapshot,
+    known: &Known,
+    overlay: Option<&crate::colour_sets::Overlay>,
+) -> Result<Refreshed, Error> {
+    if known.token.as_ref() == Some(snapshot.token()) {
+        return Ok(Refreshed::Unchanged);
+    }
+    let scene =
+        Scene::from_snapshot_reusing(&snapshot, Representation::Full, &known.resident, overlay)?;
+    Ok(Refreshed::New(Box::new((snapshot, scene))))
+}
+
+/// The body facts of the snapshot the window is about to show: the reader's bodies keyed by
+/// the display id each became ([`beamcraft_engine::scene::foreign_display_id`]). A digest
+/// that does not match the snapshot's pin (the file changed between the two CLI reads) is
+/// refused, so the panel can never name a body from other bytes.
+pub fn foreign_by_id(
+    snapshot: &ViewSnapshot,
+    stdout: &[u8],
+) -> Result<BTreeMap<ElementId, ForeignBody>, String> {
+    let (digest, bodies) = foreign_bodies(stdout).map_err(|e| e.to_string())?;
+    let digest = digest
+        .parse::<ContentDigest>()
+        .map_err(|_| "the source digest is not a SHA-256".to_owned())?;
+    if digest != snapshot.pin().revision() {
+        return Err("the source file changed while it was being read".into());
+    }
+    let digest_bytes = digest.as_bytes();
+    let mut map = BTreeMap::new();
+    for (ordinal, body) in bodies.into_iter().enumerate() {
+        let Some(id) = beamcraft_engine::scene::foreign_display_id(digest_bytes, ordinal) else {
+            return Err("a display identity could not be derived".into());
+        };
+        map.insert(id, body);
+    }
+    Ok(map)
+}
+
+/// One refresh of a received IFC file (blocking; call it off the UI thread): the display
+/// bundle through [`load_source`], and — while the snapshot is new — the same file's body
+/// facts through `ifc-shapes`, so the properties panel can name what a click picked. Both
+/// reads are read-only, and the facts are keyed by the snapshot's own pin, so a file that
+/// changes between them is refused rather than mixed. `None` facts keep what the window
+/// already holds: the same snapshot again carries nothing new.
+pub fn reload_source(
+    cli: &Path,
+    source: &Path,
+    known: &Known,
+    overlay: Option<&crate::colour_sets::Overlay>,
+    stats: &Stats,
+) -> Reloaded {
+    let started = Instant::now();
+    let mut processes = 1;
+    let scene =
+        load_source(cli, source, stats).and_then(|snapshot| reload_parts(snapshot, known, overlay));
+    let foreign = match &scene {
+        Err(_) | Ok(Refreshed::Unchanged) => None,
+        Ok(Refreshed::New(new)) => {
+            processes += 1;
+            let (snapshot, _) = new.as_ref();
+            let args = [
+                "ifc-shapes".to_owned(),
+                "--source".into(),
+                source.to_string_lossy().into_owned(),
+            ];
+            Some(
+                command::run(cli, &args, command::DEADLINE, stats)
+                    .map_err(|e| export_error(e).to_string())
+                    .and_then(|out| {
+                        if out.code != Some(0) {
+                            return Err(rejected_source(&out.stdout).to_string());
+                        }
+                        foreign_by_id(snapshot, &out.stdout)
+                    }),
+            )
+        }
+    };
+    Reloaded {
+        scene,
+        definitions: Ok(Definitions::default()),
+        grids: Ok(crate::grid::GridScene::default()),
+        foreign,
+        timing: RefreshTiming {
+            processes,
+            total_ms: started.elapsed().as_secs_f64() * 1000.0,
+        },
+    }
 }
 
 /// A rejection is one JSON object: keep its stable code, its message and its diagnostics, so
@@ -418,6 +588,10 @@ pub struct Reloaded {
     pub definitions: Result<Definitions, ToolError>,
     /// Grid guides from the same pinned revision as the snapshot.
     pub grids: Result<crate::grid::GridScene, ToolError>,
+    /// The body facts of a received IFC file (`None`: nothing new — a store refresh, or the
+    /// same source snapshot again). `Err`: the facts could not be read; the window keeps its
+    /// picture and says why.
+    pub foreign: Option<Result<BTreeMap<ElementId, ForeignBody>, String>>,
     /// The CLI processes this refresh started and its wall time on the worker.
     pub timing: RefreshTiming,
 }
@@ -455,6 +629,7 @@ pub fn reload(
         scene,
         definitions,
         grids,
+        foreign: None,
         timing: RefreshTiming {
             processes,
             total_ms: started.elapsed().as_secs_f64() * 1000.0,
@@ -672,5 +847,75 @@ mod tests {
         // A bundle the engine refuses fails the scene alone.
         assert!(scene.is_err());
         assert!(definitions.is_ok());
+    }
+
+    /// An `ifc-shapes` reply with two listed bodies and the given digest, as the CLI prints it.
+    fn shapes_reply(digest: &str) -> Vec<u8> {
+        format!(
+            concat!(
+                r#"{{"outcome":"ifc_shapes_read","source":{{"bytes":420,"sha256":"{digest}"}},"#,
+                r#""declared_schema":{{"token":"IFC4","recognized":true}},"#,
+                r#""shapes":{{"count":2,"vertices":12,"triangles":8,"listed":["#,
+                r#"{{"instance":148,"entity":"IFCPLATE","global_id":"1Anr5VMOX0PO8jvHqZabcd","#,
+                r#""name":"Gusset","closed":true,"vertices":6,"triangles":4,"bounds":{{"min":[0.0,0.0,0.0],"max":[120.0,80.0,10.0]}}}},"#,
+                r#"{{"instance":201,"entity":"IFCBRACE","global_id":null,"name":null,"#,
+                r#""closed":true,"vertices":6,"triangles":4,"bounds":{{"min":[0.0,0.0,0.0],"max":[3000.0,0.0,80.0]}}}}"#,
+                r#"],"listed_count":2,"truncated":false}},"losses":[],"losses_truncated":false}}"#
+            ),
+            digest = digest
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_shapes_reply_decodes_into_bodies_in_reader_order() {
+        let digest = "ab".repeat(32);
+        let (read, bodies) = foreign_bodies(&shapes_reply(&digest)).unwrap();
+        assert_eq!(read, digest);
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies[0].entity, "IFCPLATE");
+        assert_eq!(bodies[0].name.as_deref(), Some("Gusset"));
+        assert_eq!(
+            bodies[0].global_id.as_deref(),
+            Some("1Anr5VMOX0PO8jvHqZabcd")
+        );
+        assert_eq!(bodies[0].bounds, [[0.0; 3], [120.0, 80.0, 10.0]]);
+        // A product without a name or GlobalId keeps them absent, never guessed.
+        assert_eq!(bodies[1].entity, "IFCBRACE");
+        assert_eq!(bodies[1].name, None);
+        assert_eq!(bodies[1].global_id, None);
+        // Unreadable replies are errors, never empty facts.
+        assert!(foreign_bodies(b"not json").is_err());
+        assert!(foreign_bodies(br#"{"outcome":"ifc_shapes_read"}"#).is_err());
+        let no_entity = String::from_utf8(shapes_reply(&digest))
+            .unwrap()
+            .replace("\"entity\":\"IFCPLATE\",", "\"entity\":\"\",");
+        assert!(foreign_bodies(no_entity.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn the_facts_are_keyed_by_the_display_ids_and_refuse_a_foreign_digest() {
+        use beamcraft_engine::{Limits, ViewPin, ViewSnapshot, synthetic::plate_scene};
+        use beamcraft_model::digest::ContentDigest;
+        let digest_bytes: [u8; 32] =
+            core::array::from_fn(|i| (i as u8).wrapping_mul(7).wrapping_add(3));
+        let digest = ContentDigest::from_bytes(digest_bytes);
+        let pin = ViewPin::new(digest, 1);
+        let snapshot =
+            ViewSnapshot::build(pin, plate_scene(2, false).unwrap(), &Limits::default()).unwrap();
+        let text = digest.to_string();
+        let (_, bodies) = foreign_bodies(&shapes_reply(&text)).unwrap();
+        let map = foreign_by_id(&snapshot, &shapes_reply(&text)).unwrap();
+        assert_eq!(map.len(), bodies.len());
+        // Body i is the snapshot element the engine's own derivation names: the same
+        // function the CLI bundle was built with.
+        for (ordinal, body) in bodies.iter().enumerate() {
+            let id = beamcraft_engine::scene::foreign_display_id(&digest_bytes, ordinal).unwrap();
+            assert_eq!(map.get(&id), Some(body));
+        }
+        // Facts of other bytes are refused instead of mixed into the window (issue 614).
+        let other = "cd".repeat(32);
+        let error = foreign_by_id(&snapshot, &shapes_reply(&other)).unwrap_err();
+        assert!(error.contains("changed while it was being read"), "{error}");
     }
 }

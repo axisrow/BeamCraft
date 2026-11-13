@@ -23,9 +23,9 @@ impl std::fmt::Display for DialogError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unavailable => f.write_str(
-                "no folder dialog is available here (install zenity or kdialog); type the path instead",
+                "no file or folder dialog is available here (install zenity or kdialog); type the path instead",
             ),
-            Self::Failed(why) => write!(f, "the folder dialog failed ({why})"),
+            Self::Failed(why) => write!(f, "the dialog failed ({why})"),
         }
     }
 }
@@ -44,20 +44,57 @@ pub fn pick_folder(title: &str, start: Option<&Path>) -> Result<Option<PathBuf>,
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
-        desktop_dialog(title, start)
+        desktop_dialog(title, start, FileChoice::Folder)
     }
 }
 
+/// Asks for one file (an IFC file, for the «Open IFC…» entry), starting in `start` when it
+/// exists. `Ok(None)` means the dialog was cancelled.
+pub fn pick_file(title: &str, start: Option<&Path>) -> Result<Option<PathBuf>, DialogError> {
+    let start = start.filter(|p| p.is_dir());
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        let mut dialog = rfd::FileDialog::new().set_title(title);
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        Ok(dialog.pick_file())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        desktop_dialog(title, start, FileChoice::File)
+    }
+}
+
+/// What the desktop's dialog program is asked to choose.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileChoice {
+    /// One existing file.
+    File,
+    /// One existing folder.
+    Folder,
+}
+
 #[cfg(not(any(windows, target_os = "macos")))]
-fn desktop_dialog(title: &str, start: Option<&Path>) -> Result<Option<PathBuf>, DialogError> {
+fn desktop_dialog(
+    title: &str,
+    start: Option<&Path>,
+    choice: FileChoice,
+) -> Result<Option<PathBuf>, DialogError> {
     use std::process::{Command, Stdio};
     let start = start.and_then(Path::to_str).unwrap_or("");
+    let folder = choice == FileChoice::Folder;
     let programs: [(&str, Vec<String>); 2] = [
         (
             "zenity",
             vec![
                 "--file-selection".into(),
-                "--directory".into(),
+                if folder {
+                    "--directory".into()
+                } else {
+                    "--file-filter=*.ifc | *.ifc".into()
+                },
                 format!("--title={title}"),
                 format!("--filename={start}/"),
             ],
@@ -67,7 +104,11 @@ fn desktop_dialog(title: &str, start: Option<&Path>) -> Result<Option<PathBuf>, 
             vec![
                 "--title".into(),
                 title.into(),
-                "--getexistingdirectory".into(),
+                if folder {
+                    "--getexistingdirectory".into()
+                } else {
+                    "--getopenfilename".into()
+                },
                 if start.is_empty() {
                     ".".into()
                 } else {

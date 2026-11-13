@@ -220,6 +220,10 @@ pub struct RayPick {
     pub include_backfaces: bool,
     /// The selection switches the query honours; the default is every switch on.
     pub selection: SelectionFilter,
+    /// Whether foreign display bodies (reference-kind elements of a received file) take part.
+    /// The engineering pick keeps them out (R01: foreign content is never engineering
+    /// picking); only a viewer's own display pick of a read-only file turns this on.
+    pub include_reference: bool,
 }
 
 impl RayPick {
@@ -234,6 +238,7 @@ impl RayPick {
             max_hits: DEFAULT_MAX_HITS,
             include_backfaces: false,
             selection: SelectionFilter::ALL,
+            include_reference: false,
         }
     }
 }
@@ -281,6 +286,14 @@ impl PickQuery {
         match self {
             Self::Ray(ray) => ray.selection,
             Self::Point(point) => point.selection,
+        }
+    }
+
+    /// Whether foreign display bodies take part (a ray flag; a point query never scans them).
+    pub const fn include_reference(&self) -> bool {
+        match self {
+            Self::Ray(ray) => ray.include_reference,
+            Self::Point(_) => false,
         }
     }
 }
@@ -1006,14 +1019,19 @@ pub fn pick(snapshot: &ViewSnapshot, query: &PickQuery) -> Result<PickResult, Vi
     let mut skipped = Vec::new();
     for entry in snapshot.elements() {
         // Foreign display geometry is never engineering picking (R01): a read-only reference
-        // stays in `skipped` even though it carries a display mesh.
-        if entry.kind == ElementKind::Reference {
+        // stays in `skipped` even though it carries a display mesh. A viewer's own display
+        // pick of a received file asks for them explicitly (`include_reference`), and the
+        // same mesh scan ([`mesh_hit`]) names the body.
+        let foreign = entry.kind == ElementKind::Reference;
+        if foreign && !query.include_reference() {
             skipped.push(entry.id);
             continue;
         }
         // A switch that is off takes the element out of the query: no hit, no refusal and no
         // `skipped` entry, because the query understood the element and chose not to select it.
-        if !query.selection().allows(entry.kind) {
+        // A foreign body has no selection class at all: with `include_reference` it scans
+        // whatever the switches say, because its display pick is the only way it is selected.
+        if !foreign && !query.selection().allows(entry.kind) {
             continue;
         }
         match BoxFeatures::world(snapshot, entry) {
@@ -1971,6 +1989,45 @@ mod tests {
             prism_mesh(),
         );
         ViewSnapshot::build(pin, vec![element], &Limits::default()).unwrap()
+    }
+
+    fn reference_scene() -> ViewSnapshot {
+        let pin = ViewPin::new(Sha256::digest(b"v04").unwrap(), 1);
+        let element = SceneElement::new(
+            ElementId::parse("01990000-0000-7000-8000-00000000face").unwrap(),
+            ElementKind::Reference,
+            Translation3::new(1000.0, 2000.0, 0.0).unwrap(),
+            prism_mesh(),
+        );
+        ViewSnapshot::build(pin, vec![element], &Limits::default()).unwrap()
+    }
+
+    #[test]
+    fn a_foreign_body_is_picked_only_when_the_query_asks_for_it() {
+        let s = reference_scene();
+        let (min, max) = bounds(&s, 0);
+        let above = [
+            (min[0] + max[0]) / 2.0,
+            (min[1] + max[1]) / 2.0,
+            max[2] + 50.0,
+        ];
+        let mut ray = RayPick::new(above, [0.0, 0.0, -1.0], vec![FeatureKind::Face]);
+        // The engineering pick keeps the foreign body out: it is named a skip, not a hit (R01).
+        let engineering = pick(&s, &PickQuery::Ray(ray.clone())).unwrap();
+        assert!(engineering.hits.is_empty());
+        assert_eq!(engineering.skipped, [s.elements()[0].id]);
+        // The display pick of a read-only file asks for it: the mesh names the body, an
+        // element-level hit with no FeatureId (foreign bodies carry no engineering faces).
+        ray.include_reference = true;
+        let display = pick(&s, &PickQuery::Ray(ray)).unwrap();
+        assert!(display.skipped.is_empty());
+        assert_eq!(display.hits.len(), 1);
+        let hit = &display.hits[0];
+        assert_eq!(hit.element_id, s.elements()[0].id);
+        assert_eq!(hit.feature_id, None);
+        assert_eq!(hit.feature_kind, FeatureKind::Face);
+        assert_eq!(hit.point_world_mm, [above[0], above[1], max[2]]);
+        assert_eq!(hit.t_mm, Some(50.0));
     }
 
     fn bounds(s: &ViewSnapshot, i: usize) -> ([f64; 3], [f64; 3]) {

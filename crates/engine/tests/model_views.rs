@@ -72,12 +72,13 @@ fn a_display_cut_hides_the_pick_like_the_picture() {
             SelectionFilter::ALL,
             &std::collections::BTreeSet::new(),
             cut,
+            false,
         )
         .unwrap()
         .is_some()
     };
     let kept = |cut: Option<&Clipping>| {
-        views::pick_kept(&snapshot, ray, down, SelectionFilter::ALL, cut)
+        views::pick_kept(&snapshot, ray, down, SelectionFilter::ALL, cut, false)
             .unwrap()
             .is_some()
     };
@@ -109,12 +110,12 @@ fn a_visible_pick_obeys_depth_and_hidden_kinds() {
     let ray = [(ax + bx) / 2.0, (ay + by) / 2.0, bz + 1000.0];
     let down = [0.0, 0.0, -1.0];
     let mut v = plan();
-    let hit = views::pick_visible(&snapshot, &v, ray, down, SelectionFilter::ALL).unwrap();
+    let hit = views::pick_visible(&snapshot, &v, ray, down, SelectionFilter::ALL, false).unwrap();
     assert!(hit.is_some());
     assert!(views::surface_plane(&snapshot, Some(&v), ray, down, None).is_ok());
     v.hidden_kinds = KindFilter::SHOW_ALL.hiding(ElementKind::Plate);
     assert!(
-        views::pick_visible(&snapshot, &v, ray, down, SelectionFilter::ALL)
+        views::pick_visible(&snapshot, &v, ray, down, SelectionFilter::ALL, false)
             .unwrap()
             .is_none()
     );
@@ -123,7 +124,7 @@ fn a_visible_pick_obeys_depth_and_hidden_kinds() {
     v.plane = WorkPlane::parallel("xy", bz + 500.0).unwrap();
     v.depth = Some([1.0, 1.0]);
     assert!(
-        views::pick_visible(&snapshot, &v, ray, down, SelectionFilter::ALL)
+        views::pick_visible(&snapshot, &v, ray, down, SelectionFilter::ALL, false)
             .unwrap()
             .is_none(),
         "the plate lies outside the thin slab"

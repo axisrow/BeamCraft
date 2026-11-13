@@ -11,7 +11,7 @@
 
 use crate::plate_cmd::invalid;
 use beamcraft_commands::source_file::read_file;
-use beamcraft_engine::scene::foreign_display_element;
+use beamcraft_engine::scene::{foreign_display_element, foreign_display_id};
 use beamcraft_engine::{ElementId, Limits, ViewPin, ViewSnapshot};
 use beamcraft_ifc::read::{self, MAX_INPUT_BYTES};
 use beamcraft_ifc::shapes;
@@ -115,17 +115,12 @@ pub fn build(bytes: &[u8]) -> Result<(Vec<u8>, Facts), &'static str> {
     Ok((bundle, facts))
 }
 
-/// A deterministic display identity of one body: the file digest mixed with the ordinal,
-/// in the engine's synthetic id shape, so the same body of the same bytes always carries
-/// the same id.
+/// A deterministic display identity of one body: the file digest mixed with the ordinal, in
+/// the engine's synthetic id shape, so the same body of the same bytes always carries the
+/// same id. The derivation lives in the engine ([`foreign_display_id`]), shared with every
+/// consumer that maps a picked id back to its body.
 fn element_id(digest_bytes: &[u8], ordinal: usize) -> Result<ElementId, &'static str> {
-    let mut mixed = 0u64;
-    for byte in digest_bytes.iter().take(6) {
-        mixed = (mixed << 8) | u64::from(*byte);
-    }
-    mixed ^= ordinal as u64;
-    ElementId::parse(&format!("01990000-0000-7000-8000-{mixed:012x}"))
-        .map_err(|_| "a display identity could not be derived")
+    foreign_display_id(digest_bytes, ordinal).ok_or("a display identity could not be derived")
 }
 
 #[cfg(test)]
