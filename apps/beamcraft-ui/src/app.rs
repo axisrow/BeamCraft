@@ -3910,6 +3910,21 @@ pub(crate) mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
+    /// The workspace's `beamcraft` CLI binary, found beside the running test binary through
+    /// any cargo build layout: cargo ≤1.99 hardlinks tests into `target/debug/deps`, so two
+    /// parents up held `target/debug/beamcraft`, while 1.100 keeps the canonical binaries in
+    /// the build script's `out` directory and the fixed two-parent walk stopped finding them.
+    /// Walks the ancestors instead and takes the first directory that carries the binary.
+    pub(crate) fn workspace_cli() -> std::path::PathBuf {
+        let cli = format!("beamcraft{}", std::env::consts::EXE_SUFFIX);
+        let exe = std::env::current_exe().unwrap();
+        exe.ancestors()
+            .find(|dir| dir.join(&cli).is_file())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| exe.parent().unwrap().to_path_buf())
+            .join(cli)
+    }
+
     /// The window state on the headless adapter, with no window and no CLI behind it: the
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
     /// saying so, without a native adapter. The counters are this test's own, so parallel tests
@@ -5349,13 +5364,7 @@ pub(crate) mod tests {
     fn interactive_plate_and_member_creation_use_real_commands_without_preview_steps() {
         let mut app =
             headless().expect("a software/native adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5541,13 +5550,7 @@ pub(crate) mod tests {
         // although the framing did not change; a Move keeps it. The workspace edit sits inside
         // the model's bounds, so the extents agree before and after the undo.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5782,13 +5785,7 @@ pub(crate) mod tests {
         // framed that remainder — the camera landed inside the model with two grid lines and a
         // hugely magnified element. The framing is the model's own; a hide is display state.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5957,13 +5954,7 @@ pub(crate) mod tests {
         // coloured siblings; R did not help. Every delivery of the catalogue set re-derives
         // the overlay from the snapshot's kinds.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6087,13 +6078,7 @@ pub(crate) mod tests {
     fn the_weld_ribbon_button_picks_two_parts_and_commits_the_cli_weld_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6371,13 +6356,7 @@ pub(crate) mod tests {
     fn the_bolt_ribbon_button_picks_parts_and_points_and_commits_the_cli_bolt_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6815,13 +6794,7 @@ pub(crate) mod tests {
     fn the_bolt_bench_loads_a_placed_group_and_updates_it_through_the_cli() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -7209,13 +7182,7 @@ pub(crate) mod tests {
     fn typed_length_and_o_create_a_spatial_plate_through_real_keyboard_events() {
         let mut app =
             headless().expect("a native/software adapter is required for construction input");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before input acceptance");
         let root = std::env::temp_dir().join(format!(
             "bc-length-{}-{}",
@@ -7454,13 +7421,7 @@ pub(crate) mod tests {
         use beamcraft_engine::query::{feature::element_edges, pick::SnapKind};
         let mut app =
             headless().expect("a native/software adapter is required for construction acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         let root = std::env::temp_dir().join(format!(
             "bc-bay-outline-{}-{}",
             std::process::id(),
@@ -7618,13 +7579,7 @@ pub(crate) mod tests {
         use beamcraft_engine::query::pick::SnapKind;
         let mut app =
             headless().expect("a native/software adapter is required for snap acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before snap acceptance");
         let root = std::env::temp_dir().join(format!(
             "bc-snaps-{}-{:?}",
@@ -7896,13 +7851,7 @@ pub(crate) mod tests {
     fn review_triangle_and_rectangle_finish_with_right_or_wheel_click_and_drags_do_not_finish() {
         use crate::tools::{Created, ToolError};
         let mut app = headless().expect("software/native graphics required for input acceptance");
-        let exe = std::env::current_exe().unwrap();
-        let cli = exe
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file());
         let root = std::env::temp_dir().join(format!(
             "bc-finish-{}-{:?}",
@@ -11827,13 +11776,7 @@ mod navigation_tests {
         use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
         use beamcraft_model::id::ElementId;
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::tests::workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before native tests");
         let root = std::env::temp_dir().join(format!(
             "bc-584-hidden-grid-{}-{}",
