@@ -313,8 +313,16 @@ impl App {
     /// item 3); a failure is a note. The window takes the merged book and makes it the new
     /// baseline, so the views it never touched follow the file from here on. Returns the names
     /// of the views the window changed that another process changed too: the merge kept the
-    /// other process's fields there.
+    /// other process's fields there. A source file keeps no views file beside it: the window
+    /// of a received IFC writes nothing, so the session's views stay in memory only (issue
+    /// 614).
     pub(super) fn persist_views(&mut self) -> Vec<String> {
+        if self.source.read_only() {
+            self.view_note(Ok(
+                "Views are kept in memory only: this window shows a read-only IFC file.".into(),
+            ));
+            return Vec::new();
+        }
         match crate::views::persist_merging(
             &self.source.store,
             &self.views.book,

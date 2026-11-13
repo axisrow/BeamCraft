@@ -38,6 +38,7 @@ use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_model::command::Placement;
 use session::settings::{self, CameraPreference, Settings};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,8 +53,12 @@ pub type PerfReport = Sender<(String, bool)>;
 /// Where the window reads its model from.
 #[derive(Debug, Clone)]
 pub struct Source {
-    /// The published store.
+    /// The published store. Unused while [`Source::ifc_source`] is set: a received IFC file
+    /// is not a store, and the read-only gates keep every store query away from this path.
     pub store: PathBuf,
+    /// The received IFC file the window shows instead of a store (`--source`): one read-only
+    /// display bundle, nothing written anywhere (issue 614).
+    pub ifc_source: Option<PathBuf>,
     /// The `beamcraft` CLI that exports the snapshot.
     pub cli: PathBuf,
     /// The personal workspace directory when the window was opened on one (`--workspace`): it is
@@ -75,6 +80,14 @@ pub struct Source {
     /// render-mode shortcuts are read from it, and the side-panel camera choice is read from
     /// and saved to its settings file.
     pub config_dir: Option<PathBuf>,
+}
+
+impl Source {
+    /// True when this window shows a received IFC file instead of a store: it writes nothing
+    /// and reads no store, so every editing command and store query stays off (issue 614).
+    pub fn read_only(&self) -> bool {
+        self.ifc_source.is_some()
+    }
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -114,12 +127,19 @@ pub struct App {
     reload_job: Option<Receiver<Reloaded>>,
     reload_queued: bool,
     /// The store watcher: one message per head change another process committed, so the view
-    /// refreshes without the `R` key. `None` when the watcher thread could not start.
+    /// refreshes without the `R` key. `None` when the watcher thread could not start. A
+    /// source file instead watches the file itself (see [`App::spawn_file_watch`]).
     store_watch: Option<Receiver<()>>,
     /// The watcher's shutdown handle: dropping it (with the window) ends the thread even
     /// when the store never changes again. Never read: its drop is the shutdown.
     #[expect(dead_code)]
     store_watch_shutdown: Option<Sender<()>>,
+    /// The IFC body facts of the loaded source snapshot (`ifc-shapes`), keyed by the display
+    /// id each body became; empty while no facts are loaded. Shared with the pick worker, so
+    /// a click can name the body it hit without a store (issue 614).
+    foreign: Arc<BTreeMap<ElementId, crate::source::ForeignBody>>,
+    /// Why the body facts of a source file are missing, when a refresh could not read them.
+    foreign_note: Option<String>,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
     /// The two-click 3D placement of the member tool (issue #134).
@@ -222,6 +242,9 @@ pub struct App {
     /// A model the window should switch to, set by the menu's New and Open; Shell reads it
     /// after the frame.
     pub(crate) open_request: Option<PathBuf>,
+    /// A received IFC file the window should switch to (the export panel's «Open IFC…»),
+    /// read-only; read before [`App::open_request`], so a plain path never wins over a file.
+    pub(crate) open_source_request: Option<PathBuf>,
     /// The read of the menu's Project page, running on a worker thread.
     project_job: Option<Receiver<Result<crate::library::ProjectFacts, String>>>,
     /// What the Project page shows: the project read from the store's head, or why it could not
@@ -769,6 +792,43 @@ fn spawn_watch(store: PathBuf) -> Option<(Receiver<()>, Sender<()>, std::thread:
     Some((rx, shutdown_tx, spawned))
 }
 
+/// The token of a source file: its length and modification time. Timestamps alone do not
+/// identify content, but the refresh re-reads the file's own digest, so a stale token only
+/// costs one CLI read that finds the same bytes.
+fn source_file_token(file: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let meta = std::fs::metadata(file).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+/// Watches a received IFC file and reports every change as one message, so the window says
+/// so and re-reads it instead of mixing heads (issue 614). The same shape as [`spawn_watch`].
+fn spawn_file_watch(
+    file: PathBuf,
+) -> Option<(Receiver<()>, Sender<()>, std::thread::JoinHandle<()>)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("beamcraft-source-watch".into())
+        .spawn(move || {
+            let mut seen = source_file_token(&file);
+            loop {
+                match shutdown_rx.recv_timeout(WATCH_INTERVAL) {
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let now = source_file_token(&file);
+                if now != seen {
+                    seen = now;
+                    if tx.send(()).is_err() {
+                        return; // the window is gone
+                    }
+                }
+            }
+        })
+        .ok()?;
+    Some((rx, shutdown_tx, spawned))
+}
+
 /// One resolved world point, for notes and hints.
 struct PointText([f64; 3]);
 impl std::fmt::Display for PointText {
@@ -980,7 +1040,19 @@ impl App {
             );
             (PerfRun::new(phases, header), report)
         });
-        let (store_watch, store_watch_shutdown) = match spawn_watch(source.store.clone()) {
+        // A source file is watched for its own changes, a store for its revisions; both
+        // deliver the same "refresh" message. `None` when the thread could not start: the
+        // `R` key keeps working either way.
+        let watched = if source.read_only() {
+            let file = source
+                .ifc_source
+                .clone()
+                .ok_or(Error::Input("a source window needs a file"))?;
+            spawn_file_watch(file)
+        } else {
+            spawn_watch(source.store.clone())
+        };
+        let (store_watch, store_watch_shutdown) = match watched {
             Some((rx, shutdown, handle)) => {
                 drop(handle);
                 (Some(rx), Some(shutdown))
@@ -988,14 +1060,17 @@ impl App {
             None => (None, None),
         };
         // The named-view sidecar is display state: a missing file is an empty book, and an
-        // unreadable one only notes, never blocks opening the model.
+        // unreadable one only notes, never blocks opening the model. A source file keeps no
+        // sidecar: its store path is a file, and nothing is written beside it (issue 614).
         let mut views = crate::views::Views::default();
-        match crate::views::load(&source.store) {
-            Ok(book) => {
-                views.baseline = book.clone();
-                views.book = book;
+        if !source.read_only() {
+            match crate::views::load(&source.store) {
+                Ok(book) => {
+                    views.baseline = book.clone();
+                    views.book = book;
+                }
+                Err(note) => views.note = Some(Err(note)),
             }
-            Err(note) => views.note = Some(Err(note)),
         }
         let (presets, presets_note) = crate::views::load_presets(source.config_dir.as_deref());
         views.presets = presets;
@@ -1032,6 +1107,7 @@ impl App {
             menu_models: crate::library::ModelPicker::new(),
             menu_export: export_panel::Form::new(),
             open_request: None,
+            open_source_request: None,
             project_job: None,
             project_facts: None,
             command_search: false,
@@ -1067,6 +1143,8 @@ impl App {
             reload_queued: false,
             store_watch,
             store_watch_shutdown,
+            foreign: Arc::new(BTreeMap::new()),
+            foreign_note: None,
             tool_note: None,
             refresh_error: None,
             editor: Editor::default(),
@@ -1139,9 +1217,25 @@ impl App {
         if self.other_command_running() {
             return None;
         }
+        // A received IFC file first: the read-only window it opens is the whole request.
+        if let Some(file) = self.open_source_request.take() {
+            return Some(Source {
+                store: file.clone(),
+                ifc_source: Some(file),
+                cli: self.source.cli.clone(),
+                workspace: None,
+                published: None,
+                samples: self.source.samples,
+                actor: None,
+                environment: self.source.environment.clone(),
+                author: self.source.author.clone(),
+                config_dir: self.source.config_dir.clone(),
+            });
+        }
         let store = self.open_request.take()?;
         Some(Source {
             store,
+            ifc_source: None,
             cli: self.source.cli.clone(),
             workspace: None,
             published: None,
@@ -1201,16 +1295,18 @@ impl App {
         });
         let (tx, rx) = std::sync::mpsc::channel();
         let stats = Arc::clone(&self.stats);
+        // A source file refreshes from the file itself; a store from the framed store export.
+        let source_file = self.source.ifc_source.clone();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(
-                    &cli,
-                    &store,
-                    &known,
-                    overlay.as_deref(),
-                    &stats,
-                ));
+                let reloaded = match &source_file {
+                    Some(file) => {
+                        source::reload_source(&cli, file, &known, overlay.as_deref(), &stats)
+                    }
+                    None => source::reload(&cli, &store, &known, overlay.as_deref(), &stats),
+                };
+                let _ = tx.send(reloaded);
             });
         match spawned {
             Ok(_) => {
@@ -1250,6 +1346,17 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        // The body facts of a source file ride only a new snapshot: the same snapshot again
+        // keeps the facts the window already holds, a failed read keeps the picture and says
+        // why (issue 614).
+        match reloaded.foreign {
+            Some(Ok(facts)) => self.foreign = Arc::new(facts),
+            Some(Err(why)) => {
+                self.foreign = Arc::new(BTreeMap::new());
+                self.foreign_note = Some(why);
+            }
+            None => {}
+        }
         let grids = reloaded.grids;
         let result = reloaded.scene.and_then(|refreshed| match refreshed {
             Refreshed::Unchanged => Ok(None),
@@ -1328,6 +1435,17 @@ impl App {
                 }
             }
             Ok(Some(loaded)) => {
+                // A source file whose bytes changed on disk reloaded to a new pin: the window
+                // says so instead of silently mixing heads (issue 614).
+                if self.source.read_only()
+                    && self.loaded.as_ref().is_some_and(|l| {
+                        l.snapshot.pin().revision() != loaded.snapshot.pin().revision()
+                    })
+                {
+                    self.edit_note = Some(Ok(
+                        "The source file changed on disk; the window re-read it.".into(),
+                    ));
+                }
                 // The scene may have come from a revision another process committed: take the
                 // views file's own changes with it (issue 569 item 3).
                 self.adopt_views_file();
@@ -1533,7 +1651,6 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
-        let stats = Arc::clone(&self.stats);
         let selection = self.selection.filter();
         // With an active model view only what it shows can be picked (V12).
         let view = self.views.active_view().cloned();
@@ -1544,6 +1661,59 @@ impl App {
             .map(|o| Arc::clone(&o.overlay));
         // The display cut hides in the picture, so it hides from the pick too (issue 569 item 2).
         let cut = self.cut.clone();
+        if self.source.ifc_source.is_some() {
+            // The pick runs in this process and names the body from the facts the window
+            // already holds: a source file has no store to look the element up in (issue
+            // 614). The panel shows what the file itself reports.
+            let foreign = Arc::clone(&self.foreign);
+            let spawned = std::thread::Builder::new()
+                .name("beamcraft-pick".into())
+                .spawn(move || {
+                    let picked = command::pick_id(
+                        &snapshot,
+                        &ray,
+                        selection,
+                        view.as_ref(),
+                        overlay.as_ref().map(|o| o.hidden()),
+                        cut.as_ref(),
+                    );
+                    let selected = picked.map(|picked| {
+                        picked.map(|id| {
+                            let facts = ElementId::parse(&id)
+                                .ok()
+                                .and_then(|eid| foreign.get(&eid).cloned());
+                            let element =
+                                snapshot.elements().iter().find(|e| e.id.to_string() == id);
+                            Selected {
+                                id: id.clone(),
+                                info: Ok(crate::edit::ElementInfo {
+                                    id: id.clone(),
+                                    kind: "reference".into(),
+                                    name: facts
+                                        .as_ref()
+                                        .and_then(|f| f.name.clone())
+                                        .unwrap_or_default(),
+                                    translation_mm: element
+                                        .map(|e| e.placement_mm)
+                                        .unwrap_or([0.0; 3]),
+                                    contour: None,
+                                }),
+                                details: Err(ToolError::local(
+                                    "FOREIGN_BODY",
+                                    "a received IFC file reports no editable properties",
+                                )),
+                            }
+                        })
+                    });
+                    let _ = tx.send(selected);
+                });
+            if spawned.is_err() {
+                self.select_job = None;
+                self.edit_note = Some(Err("the pick thread could not be started".into()));
+            }
+            return;
+        }
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
@@ -1600,9 +1770,14 @@ impl App {
         if !self.select_epoch.is_current(asked) {
             return;
         }
+        // A source file pick carries no detail reading (there is no store to read), so its
+        // missing details are not a failure: the panel shows the file's own facts.
+        let read_only = self.source.read_only();
         let failed = match &result {
             Ok(None) => false,
-            Ok(Some(selected)) => selected.info.is_err() || selected.details.is_err(),
+            Ok(Some(selected)) => {
+                selected.info.is_err() || (!read_only && selected.details.is_err())
+            }
             Err(_) => true,
         };
         if failed {
@@ -1679,6 +1854,13 @@ impl App {
     }
 
     fn start_edit(&mut self, direct: Option<EditKind>) {
+        if self.source.read_only() {
+            self.edit_note = Some(Err(
+                "Read-only: this window shows a received IFC file, there is nothing to edit."
+                    .into(),
+            ));
+            return;
+        }
         if self.other_command_running() {
             self.edit_note = Some(Err(
                 "another command is running; wait for it to finish.".into()
@@ -2045,6 +2227,92 @@ impl App {
         }
     }
 
+    /// The read-only properties of a picked body of a received IFC file: exactly what the
+    /// file itself reports — the product's name, IFC entity, GlobalId and placed bounds, from
+    /// the same `ifc-shapes` read the bundle came from (issue 614). Nothing is editable: the
+    /// window of a source file writes nowhere.
+    fn foreign_props_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = crate::theme::Palette::current(ui);
+        let Some(selected) = self
+            .editor
+            .selected()
+            .map(|s| (s.id.clone(), s.name.clone(), s.translation_mm))
+        else {
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(
+                egui::RichText::new(
+                    "Click a body of the file to see what it reports: its name, IFC entity, \
+                     GlobalId and bounds.",
+                )
+                .size(12.0)
+                .color(palette.muted),
+            );
+            return;
+        };
+        crate::kit::type_box(ui, crate::theme::Icon::Block, "IFC body");
+        if let Some(why) = &self.foreign_note {
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(egui::RichText::new(why).size(12.0).color(palette.muted));
+        }
+        let facts = ElementId::parse(&selected.0)
+            .ok()
+            .and_then(|id| self.foreign.get(&id).cloned());
+        crate::kit::section(ui, "part", "Identity", true, |ui| {
+            crate::kit::prop_row(ui, "Name", |ui| {
+                ui.label(match facts.as_ref().and_then(|f| f.name.as_deref()) {
+                    Some(name) if !name.is_empty() => name.to_owned(),
+                    _ => "the file carries no Name for this product".into(),
+                });
+            });
+            crate::kit::prop_row(ui, "Entity", |ui| {
+                ui.label(
+                    facts
+                        .as_ref()
+                        .map(|f| f.entity.clone())
+                        .unwrap_or_else(|| "unknown (not reported)".into()),
+                );
+            });
+            crate::kit::prop_row(ui, "GlobalId", |ui| {
+                ui.label(
+                    facts
+                        .as_ref()
+                        .and_then(|f| f.global_id.clone())
+                        .unwrap_or_else(|| "none".into()),
+                );
+            });
+            crate::kit::prop_row(ui, "Element", |ui| {
+                ui.label(selected.0.clone());
+            });
+        });
+        crate::kit::section(ui, "part", "Placement", true, |ui| {
+            crate::kit::prop_row(ui, "Position", |ui| {
+                ui.label(PointText(selected.2).to_string());
+            });
+        });
+        crate::kit::section(ui, "part", "Bounds", true, |ui| match facts.as_ref() {
+            Some(facts) => {
+                crate::kit::prop_row(ui, "Min", |ui| {
+                    ui.label(PointText(facts.bounds[0]).to_string());
+                });
+                crate::kit::prop_row(ui, "Max", |ui| {
+                    ui.label(PointText(facts.bounds[1]).to_string());
+                });
+            }
+            None => {
+                ui.label(egui::RichText::new("unknown (not reported)").color(palette.muted));
+            }
+        });
+        ui.add_space(crate::kit::SPACE_S);
+        ui.label(
+            egui::RichText::new(
+                "Read-only: this window shows a received IFC file. Nothing is edited, saved \
+                 or written anywhere.",
+            )
+            .size(11.0)
+            .color(palette.muted),
+        );
+    }
+
     /// The neutral note shown instead of an error for a selected kind the properties editor
     /// reads nothing from, or `None` when the selection is not such a kind.
     fn unsupported_kind_note(&self) -> Option<String> {
@@ -2056,6 +2324,10 @@ impl App {
     }
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
+        if self.source.read_only() {
+            self.foreign_props_panel(ui);
+            return;
+        }
         let Some(_id) = self.props.selected().map(str::to_owned) else {
             let palette = crate::theme::Palette::current(ui);
             ui.add_space(crate::kit::SPACE_S);
@@ -2610,6 +2882,16 @@ impl App {
                 Arc::new(derived),
             ));
             self.recolour();
+            return;
+        }
+        // A colour set of a store is evaluated against that store's head; a source file has
+        // no store, so only the built-in Catalogue applies to its bodies (issue 614).
+        if self.source.read_only() {
+            self.colour_note = Some(Err(format!(
+                "a received IFC file has no store to evaluate `{name}` against; only the \
+                 built-in `{}` set applies to its bodies",
+                crate::colour_sets::CATALOGUE_SET_NAME
+            )));
             return;
         }
         let Some(set) = self.colour_sets.find(name).cloned() else {
@@ -3655,6 +3937,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&config).unwrap();
         let source = Source {
             store: missing.clone(),
+            ifc_source: None,
             cli: missing,
             workspace: None,
             published: None,
@@ -3668,11 +3951,145 @@ pub(crate) mod tests {
         Some(App::new(&cc, source, stats).unwrap())
     }
 
+    /// A window on a received IFC file (`--source FILE`), with no CLI behind it and no real
+    /// file: the read-only mode the window of a source runs in (issue 614). `None` on a
+    /// machine without a usable GPU adapter, like [`headless`].
+    fn headless_source() -> Option<App> {
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP window test: no native wgpu adapter");
+                return None;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let renderer =
+            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        let mut cc = eframe::CreationContext::_new_kittest(egui::Context::default());
+        cc.wgpu_render_state = Some(egui_wgpu::RenderState {
+            adapter: gpu.adapter,
+            available_adapters: Vec::new(),
+            instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()),
+            device: gpu.device,
+            queue: gpu.queue,
+            target_format: format,
+            renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
+        });
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!(
+            "bc-window-source-test-{}-{nanos}",
+            std::process::id()
+        ));
+        let file = scratch.join("joint.ifc");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(&file, b"ISO-10303-21;").unwrap();
+        let source = Source {
+            store: file.clone(),
+            ifc_source: Some(file),
+            cli: scratch.join("no-cli"),
+            workspace: None,
+            published: None,
+            samples: None,
+            actor: None,
+            environment: None,
+            author: None,
+            config_dir: Some(scratch),
+        };
+        let stats = Arc::new(crate::stats::Stats::default());
+        Some(App::new(&cc, source, stats).unwrap())
+    }
+
     /// Shows `app` on its menu with text, as a user who opened the menu sees it: `App::ui` then
     /// draws the menu page and returns before the viewport.
     pub(crate) fn on_the_menu(app: &mut App) {
         app.text = true;
         app.menu_open = true;
+    }
+
+    #[test]
+    fn a_source_window_switches_only_between_display_benches() {
+        use super::workbench;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        assert!(app.source.read_only());
+        // Every bench whose forms write to the model refuses to switch.
+        for bench in [
+            workbench::Bench::Beam,
+            workbench::Bench::Column,
+            workbench::Bench::Plate,
+            workbench::Bench::Move,
+            workbench::Bench::Copy,
+            workbench::Bench::Delete,
+            workbench::Bench::Weld,
+            workbench::Bench::Bolt,
+            workbench::Bench::Grid,
+            workbench::Bench::Levels,
+            workbench::Bench::Annotations,
+        ] {
+            app.set_bench(bench);
+            assert_eq!(
+                app.bench,
+                workbench::Bench::Select,
+                "{bench:?} must not switch on a source window"
+            );
+            assert!(
+                app.edit_note
+                    .as_ref()
+                    .is_some_and(|note| matches!(note, Err(text) if text.contains("Read-only"))),
+                "{bench:?} must say the window is read-only"
+            );
+            app.edit_note = None;
+        }
+        // The display benches stay reachable.
+        for bench in [
+            workbench::Bench::View,
+            workbench::Bench::Colour,
+            workbench::Bench::CutPlane,
+        ] {
+            app.set_bench(bench);
+            assert_eq!(app.bench, bench, "{bench:?} is display-only");
+            app.set_bench(workbench::Bench::Select);
+        }
+        // An explicit edit (undo, delete) refuses the same way, before anything is sent.
+        app.start_edit(Some(crate::edit::EditKind::Undo));
+        assert!(
+            app.edit_note
+                .as_ref()
+                .is_some_and(|note| matches!(note, Err(text) if text.contains("Read-only")))
+        );
+        // A colour set of a store has nothing to be evaluated against.
+        app.start_colour("Some other set", false);
+        let Some(Err(text)) = &app.colour_note else {
+            panic!("expected a colour refusal, got {:?}", app.colour_note);
+        };
+        assert!(text.contains("no store"), "{text}");
+    }
+
+    #[test]
+    fn an_open_source_request_wins_and_opens_read_only() {
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        app.open_request = Some(std::path::PathBuf::from("/m/Model A"));
+        app.open_source_request = Some(std::path::PathBuf::from("/m/joint.ifc"));
+        let source = app.take_open_request().unwrap();
+        assert_eq!(
+            source.ifc_source.as_deref(),
+            Some(std::path::Path::new("/m/joint.ifc"))
+        );
+        assert!(source.read_only());
+        assert_eq!(source.workspace, None);
+        // Then the plain store request, untouched by the file one.
+        let source = app.take_open_request().unwrap();
+        assert_eq!(source.ifc_source, None);
+        assert_eq!(source.store, std::path::PathBuf::from("/m/Model A"));
+        assert!(!source.read_only());
+        assert!(app.take_open_request().is_none());
     }
 
     #[test]
@@ -4880,6 +5297,7 @@ pub(crate) mod tests {
             scene,
             definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
             grids: Ok(crate::grid::GridScene::default()),
+            foreign: None,
             timing: RefreshTiming::default(),
         }
     }
@@ -8465,6 +8883,151 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_click_picks_a_body_and_names_it_from_the_file_s_facts() {
+        use crate::source::ForeignBody;
+        use std::collections::BTreeMap;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        let pin = ViewPin::new(Sha256::digest(b"source-file").unwrap(), 1);
+        let snapshot = Arc::new(
+            ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap(),
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            full: scene.summary(),
+            uploaded,
+        });
+        let picked = snapshot.elements().first().unwrap().id;
+        let mut facts = BTreeMap::new();
+        facts.insert(
+            picked,
+            ForeignBody {
+                entity: "IFCPLATE".into(),
+                global_id: None,
+                name: Some("Gusset".into()),
+                bounds: [[0.0, 0.0, 0.0], [120.0, 80.0, 10.0]],
+            },
+        );
+        app.foreign = Arc::new(facts);
+        // A click through the first body's own bounds, from above.
+        let bounds = &snapshot.elements().first().unwrap().full.world_bounds;
+        let center: [f64; 3] =
+            std::array::from_fn(|axis| (bounds.min[axis] + bounds.max[axis]) / 2.0);
+        app.start_select(crate::edit::Ray {
+            origin: [center[0], center[1], center[2] + 500.0],
+            direction: [0.0, 0.0, -1.0],
+        });
+        for _ in 0..200 {
+            app.poll_select();
+            if app.select_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.select_job.is_none(), "the pick never settled");
+        let selected = app.editor.selected().unwrap();
+        assert_eq!(selected.id, picked.to_string());
+        assert_eq!(selected.name, "Gusset");
+        assert_eq!(selected.kind, "reference");
+        // The properties state stays unknown on purpose: a source file reports no editable
+        // properties, and the panel shows the file's own facts instead (covered above).
+        assert!(app.props.details().is_none());
+    }
+
+    #[test]
+    fn a_source_window_shows_the_file_s_own_facts_read_only() {
+        use crate::source::ForeignBody;
+        use std::collections::BTreeMap;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        // The scene and the facts a real refresh of a source file delivers: a snapshot, and
+        // the body facts keyed by the display id of its first element.
+        let pin = ViewPin::new(Sha256::digest(b"source-file").unwrap(), 1);
+        let snapshot = Arc::new(
+            ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap(),
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            full: scene.summary(),
+            uploaded,
+        });
+        let picked = snapshot.elements().first().unwrap().id;
+        let mut facts = BTreeMap::new();
+        facts.insert(
+            picked,
+            ForeignBody {
+                entity: "IFCPLATE".into(),
+                global_id: Some("1Anr5VMOX0PO8jvHqZabcd".into()),
+                name: Some("Gusset".into()),
+                bounds: [[0.0, 0.0, 0.0], [120.0, 80.0, 10.0]],
+            },
+        );
+        app.foreign = Arc::new(facts);
+        app.editor.select(crate::edit::ElementInfo {
+            id: picked.to_string(),
+            kind: "reference".into(),
+            name: "Gusset".into(),
+            translation_mm: [0.0; 3],
+            contour: None,
+        });
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.inspector(ui),
+        );
+        // Cleared before the asserts: a failing assert must not panic inside egui's
+        // texture cleanup (the frame is discarded either way).
+        let mut output = output;
+        output.textures_delta.clear();
+        let drawn = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label))
+        };
+        let drawn_with = |needle: &str| {
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(needle)))
+        };
+        // What the file itself reports, under its own labels.
+        assert!(drawn("Gusset"), "the product's Name");
+        assert!(drawn("IFCPLATE"), "the product's IFC entity");
+        assert!(drawn("1Anr5VMOX0PO8jvHqZabcd"), "the GlobalId");
+        assert!(drawn("(120.0, 80.0, 10.0) mm"), "the bounds maximum");
+        assert!(drawn_with("Read-only"), "the read-only statement");
+        // No editable field of the store panel may appear.
+        for absent in ["Thickness, mm", "Profile", "Material", "Level"] {
+            assert!(
+                !drawn(absent),
+                "{absent} must not be drawn for a foreign body"
+            );
+        }
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
     fn a_view_created_in_the_window_activates_and_never_changes_the_model() {
         use crate::views::Construction;
         let Some(mut app) = headless() else { return };
@@ -10041,6 +10604,7 @@ pub(crate) mod tests {
             Some(state),
             Source {
                 store: missing.clone(),
+                ifc_source: None,
                 cli: missing,
                 workspace: None,
                 published: None,

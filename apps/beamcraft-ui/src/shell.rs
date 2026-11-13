@@ -122,11 +122,46 @@ impl eframe::App for Shell {
             ui.disable();
         }
         let Some(store) = self.start.ui(ui) else {
+            // The start page's file picker chose a received IFC file: open it read-only, the
+            // same window `beamcraft-ui --source FILE` opens (issue 614).
+            if let Some(file) = self.start.take_open_ifc() {
+                let title = title_of(&file);
+                let source = Source {
+                    store: file.clone(),
+                    ifc_source: Some(file),
+                    cli: self.cli.clone(),
+                    workspace: None,
+                    published: None,
+                    samples: self.samples,
+                    actor: None,
+                    environment: self.start.environment().map(str::to_owned),
+                    author: self.start.author_name(),
+                    config_dir: self.start.config_dir().map(Path::to_path_buf),
+                };
+                match App::open(
+                    ui.ctx(),
+                    frame.wgpu_render_state(),
+                    source,
+                    None,
+                    Arc::clone(&self.stats),
+                ) {
+                    Ok(mut app) => {
+                        app.appearance = self.appearance.take();
+                        app.from_library = true;
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::Title(title));
+                        self.error = None;
+                        self.app = Some(app);
+                    }
+                    Err(e) => self.error = Some(format!("the file could not be opened: {e}")),
+                }
+            }
             return;
         };
         let title = title_of(&store);
         let source = Source {
             store,
+            ifc_source: None,
             cli: self.cli.clone(),
             workspace: None,
             published: None,

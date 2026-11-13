@@ -407,6 +407,20 @@ impl App {
         if self.other_command_running() {
             return;
         }
+        // A source window only reads: the display benches stay reachable, every bench whose
+        // forms write to the model does not switch (issue 614).
+        if self.source.read_only()
+            && !matches!(
+                bench,
+                Bench::Select | Bench::View | Bench::Colour | Bench::CutPlane
+            )
+        {
+            self.edit_note = Some(Err(
+                "Read-only: this window shows a received IFC file, there is nothing to edit."
+                    .into(),
+            ));
+            return;
+        }
         self.grid_line.click = None;
         self.tools.cancel();
         if bench != Bench::Select && self.grid_edit.take().is_some() {
@@ -539,9 +553,15 @@ impl App {
                     );
                     // Saving only while something writes; the read-only work (a catalogue
                     // read, the annotations list, a reload of what is already written) is
-                    // not saving and says so.
+                    // not saving and says so. A source file window writes nowhere at all.
                     let saving = self.writing_to_model();
-                    let state = if saving { "Saving…" } else { "Saved locally" };
+                    let (state, settled) = if self.source.read_only() {
+                        ("Read-only", false)
+                    } else if saving {
+                        ("Saving…", false)
+                    } else {
+                        ("Saved locally", true)
+                    };
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         theme::window_controls(ui);
                         if let Some(appearance) = &mut self.appearance {
@@ -556,10 +576,10 @@ impl App {
                         ui.painter().circle_filled(
                             dot.center(),
                             2.5,
-                            if saving {
-                                palette.muted
-                            } else {
+                            if settled {
                                 egui::Color32::from_rgb(0x36, 0x78, 0x55)
+                            } else {
+                                palette.muted
                             },
                         );
                         if self.publisher.target().is_ok()
@@ -691,7 +711,11 @@ impl App {
                 let bottom = ui.max_rect().bottom() + 4.0;
                 let grid_selected = self.grid_edit.is_some();
                 let selected = self.editor.selected().is_some() && !grid_selected;
-                let edits_free = !self.editor.busy() && !self.other_command_running();
+                let edits_free =
+                    !self.editor.busy() && !self.other_command_running() && !self.source.read_only();
+                // The benches a source window can reach: display-only ones. Everything that
+                // writes stays on its button, greyed out (issue 614).
+                let store_free = !self.source.read_only();
                 let has_workspace = self.source.workspace.is_some();
                 // Every viewport command needs a pane to act on.
                 let has_pane = self.views.active_pane().is_some();
@@ -750,10 +774,14 @@ impl App {
                         tool_button(ui, Icon::Brace, "Brace", false, false);
                     });
                     group(ui, "Connect", &mut |ui| {
-                        if tool_button(ui, Icon::Bolt, "Bolts", bench == Bench::Bolt, true).clicked() {
+                        if tool_button(ui, Icon::Bolt, "Bolts", bench == Bench::Bolt, store_free)
+                            .clicked()
+                        {
                             pick = Some(Bench::Bolt);
                         }
-                        if tool_button(ui, Icon::Weld, "Weld", bench == Bench::Weld, true).clicked() {
+                        if tool_button(ui, Icon::Weld, "Weld", bench == Bench::Weld, store_free)
+                            .clicked()
+                        {
                             pick = Some(Bench::Weld);
                         }
                     });
@@ -916,21 +944,31 @@ impl App {
                     }
                     if self.ribbon_tab == RibbonTab::Manage {
                         group(ui, "Grids", &mut |ui| {
-                            if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, true).clicked() {
+                            if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, store_free)
+                                .clicked()
+                            {
                                 pick = Some(Bench::Grid);
                             }
-                            if tool_button(ui, Icon::Table, "Levels", bench == Bench::Levels, true).clicked() {
+                            if tool_button(ui, Icon::Table, "Levels", bench == Bench::Levels, store_free)
+                                .clicked()
+                            {
                                 pick = Some(Bench::Levels);
                             }
-                            if tool_button(ui, Icon::Callout, "Annotations", bench == Bench::Annotations, true).clicked() {
+                            if tool_button(ui, Icon::Callout, "Annotations", bench == Bench::Annotations, store_free)
+                                .clicked()
+                            {
                                 pick = Some(Bench::Annotations);
                             }
                         });
                         group(ui, "Drawings", &mut |ui| {
-                            if tool_button(ui, Icon::Sheet, "Sheet editor", self.sheet_editor.open, true).clicked() {
+                            if tool_button(ui, Icon::Sheet, "Sheet editor", self.sheet_editor.open, store_free)
+                                .clicked()
+                            {
                                 self.sheet_editor.open = true;
                             }
-                            if tool_button(ui, Icon::Table, "Drawing document", self.drawing_manager.open, true).clicked() {
+                            if tool_button(ui, Icon::Table, "Drawing document", self.drawing_manager.open, store_free)
+                                .clicked()
+                            {
                                 self.drawing_manager.open = true;
                             }
                         });

@@ -290,6 +290,21 @@ pub fn reference_element(
     )))
 }
 
+/// The deterministic display identity of one body of a foreign source: the source digest's
+/// leading bytes mixed with the body's ordinal, in the engine's synthetic id shape. The same
+/// body of the same bytes always carries the same id, and every producer of a foreign display
+/// ([`foreign_display_element`]) derives its ids through this one function, so a consumer can
+/// map a picked id back to the body it was built from. `None` when the digest is too short to
+/// mix or no id in that shape can be parsed.
+pub fn foreign_display_id(digest: &[u8], ordinal: usize) -> Option<ElementId> {
+    let mut mixed = 0u64;
+    for byte in digest.iter().take(6) {
+        mixed = (mixed << 8) | u64::from(*byte);
+    }
+    mixed ^= u64::try_from(ordinal).ok()?;
+    ElementId::parse(&format!("01990000-0000-7000-8000-{mixed:012x}")).ok()
+}
+
 /// Combines a bounded display surface of a foreign source that no wrapper carries — for
 /// example a received IFC tessellation, already placed and converted to millimetres by its
 /// own reader — into one reference-kind display element. `translation_mm` stays the only
@@ -358,6 +373,33 @@ mod tests {
         let digest = Sha256::digest(&element.full.blob).ok().unwrap();
         assert_eq!(element.full.digest, digest);
         assert_eq!(element.full.vertices.len(), 3);
+    }
+
+    #[test]
+    fn a_display_identity_is_deterministic_distinct_and_parseable() {
+        let digest = [0xabu8, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78];
+        let first = foreign_display_id(&digest, 0).unwrap();
+        let second = foreign_display_id(&digest, 1).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(first, foreign_display_id(&digest, 0).unwrap());
+        // The derivation is invertible with the digest alone: an id's low block XOR the
+        // digest's leading bytes brings the ordinal back, so a viewer can map a picked id
+        // to its body without re-reading the source.
+        let digest_prefix = u64::from_be_bytes([
+            0, 0, digest[0], digest[1], digest[2], digest[3], digest[4], digest[5],
+        ]);
+        let low = |id: ElementId| {
+            let text = id.to_string();
+            u64::from_str_radix(&text[text.len() - 12..], 16)
+                .ok()
+                .unwrap()
+        };
+        assert_eq!(low(first) ^ digest_prefix, 0);
+        assert_eq!(low(second) ^ digest_prefix, 1);
+        // A digest shorter than the mixed width still derives (it zero-pads), a parse failure
+        // stays `None`.
+        assert!(foreign_display_id(&[1], 2).is_some());
+        assert!(foreign_display_id(&[], 0).is_some());
     }
 
     #[test]

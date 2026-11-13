@@ -283,28 +283,20 @@ pub fn lookup(
     }
 }
 
-/// Selects along `ray`: the engine's pick on `snapshot`, the snapshot the window shows, in this
-/// process, then [`lookup`] of the element it hit. `selection` carries the window's switches
-/// (V11); a class that is off is never selected. `cut` is the window's display cut (V15): what
-/// it hides is not picked. A click costs one CLI process and one inspection; `cancel` gives the
-/// lookup up.
-#[allow(clippy::too_many_arguments)]
-pub fn select(
-    cli: &Path,
-    store: &Path,
+/// Picks along `ray` on `snapshot`, the snapshot the window shows, in this process: the
+/// element id the engine's pick returned, or `None` for empty space. `selection` carries the
+/// window's switches (V11); a class that is off is never selected. With an active model view
+/// only what it shows can be picked: geometry clipped by its depth or work area, or of a
+/// hidden kind, never masks a visible part behind it (V12); the window's cut hides the same
+/// way (issue 569 item 2). No lookup follows: a caller adds its own.
+pub fn pick_id(
     snapshot: &ViewSnapshot,
     ray: &Ray,
-    cancel: &AtomicBool,
-    stats: &Stats,
     selection: SelectionFilter,
     view: Option<&beamcraft_engine::views::ModelView>,
     hidden: Option<&std::collections::BTreeSet<beamcraft_engine::ElementId>>,
     cut: Option<&beamcraft_engine::view_clipping::Clipping>,
-) -> Result<Option<Selected>, ToolError> {
-    // With an active model view only what it shows can be picked: geometry clipped by its depth
-    // or work area, or of a hidden kind, never masks a visible part behind it (V12); the
-    // window's cut hides the same way (issue 569 item 2). Without a view the same cut filter
-    // runs alone.
+) -> Result<Option<String>, ToolError> {
     let picked = match view {
         Some(view) => beamcraft_engine::views::pick_visible_except(
             snapshot,
@@ -323,7 +315,26 @@ pub fn select(
                 .map(|hit| hit.element_id.to_string())
         }
     };
-    let Some(id) = picked else {
+    Ok(picked)
+}
+
+/// Selects along `ray`: the engine's pick on `snapshot`, the snapshot the window shows, in this
+/// process, then [`lookup`] of the element it hit. A click costs one CLI process and one
+/// inspection; `cancel` gives the lookup up.
+#[allow(clippy::too_many_arguments)]
+pub fn select(
+    cli: &Path,
+    store: &Path,
+    snapshot: &ViewSnapshot,
+    ray: &Ray,
+    cancel: &AtomicBool,
+    stats: &Stats,
+    selection: SelectionFilter,
+    view: Option<&beamcraft_engine::views::ModelView>,
+    hidden: Option<&std::collections::BTreeSet<beamcraft_engine::ElementId>>,
+    cut: Option<&beamcraft_engine::view_clipping::Clipping>,
+) -> Result<Option<Selected>, ToolError> {
+    let Some(id) = pick_id(snapshot, ray, selection, view, hidden, cut)? else {
         return Ok(None);
     };
     let (info, details) = lookup(cli, store, &id, cancel, stats);
