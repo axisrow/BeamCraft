@@ -1999,8 +1999,15 @@ impl App {
                 }
                 self.close_view(id);
                 self.views.forget(&id);
-                if let Err(e) = self.views.book.remove(&id) {
-                    self.view_note(Err(e.to_string()));
+                match self.views.book.remove(&id) {
+                    Ok(_) => {
+                        // The preview's egui texture is freed only by `release`, not on drop;
+                        // the kept target leaves no other trace (upstream issue 855).
+                        if let Some((_, mut gone)) = self.views.previews.remove(&id) {
+                            gone.release(&self.state);
+                        }
+                    }
+                    Err(e) => self.view_note(Err(e.to_string())),
                 }
                 self.persist_views();
             }
@@ -4311,5 +4318,51 @@ mod tests {
         assert!(!file_elev.favorite, "{file_elev:?}");
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Deleting a view frees its kept preview (upstream issue 855): the browser delete removes
+    /// the target from the kept previews and releases its egui texture, instead of leaving both
+    /// alive until the preview cap evicts the slot.
+    #[test]
+    fn deleting_a_view_releases_its_preview_texture() {
+        let Some(mut app) = super::super::tests::headless() else {
+            return;
+        };
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000008550").unwrap();
+        app.views
+            .book
+            .insert(beamcraft_engine::views::ModelView::new(
+                id,
+                "Gone",
+                beamcraft_engine::work_plane::WorkPlane::default(),
+                3000.0,
+            ))
+            .unwrap();
+        let stats = crate::stats::Stats::default();
+        let mut target = crate::panes::RenderTarget::empty();
+        target
+            .resize(&app.state, 64, 64, Some(1), &stats)
+            .expect("the headless adapter builds the preview target");
+        let texture = target
+            .texture()
+            .expect("a built target holds its egui texture");
+        assert!(
+            app.state.renderer.read().texture(&texture).is_some(),
+            "the preview texture is registered before the delete"
+        );
+        app.views.previews.insert(id, (0, target));
+        app.browser_action(super::BrowserAction::ConfirmDelete(id));
+        assert!(
+            app.views.book.get(&id).is_none(),
+            "the view leaves the book"
+        );
+        assert!(
+            !app.views.previews.contains_key(&id),
+            "the view leaves no kept preview target"
+        );
+        assert!(
+            app.state.renderer.read().texture(&texture).is_none(),
+            "the deleted view's preview texture is freed"
+        );
     }
 }
