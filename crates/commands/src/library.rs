@@ -1674,4 +1674,163 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_shipped_australia_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/profiles-as-nzs-3679-1.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "australia-asnzs-3679-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 41);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("AS/NZS 3679.1:2016"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires) and the designation mass must be that
+            // area at 7850 kg/m3 within the rounding the published series uses. Three rows sit
+            // widest off because the assortment names carry masses rounded from an earlier
+            // re-measurement generation (310UB40.4 1.22 percent, 610UB101 1.03 percent,
+            // 200UB22.3 1.02 percent); the published pairs are taken as-is.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.013,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The UB and UC series exactly as AS/NZS 3679.1:2016 publishes them: 28 + 13
+        // designations, each carrying its published mass per metre. The older designation
+        // generation (150UB17.1, 200UB29.7, 250UB31.3, 460UB82.4, 360UB44.3, 310UC97.7,
+        // 150UC30.6) and the sizes no longer rolled (530UB72.4, 460UB61.2, 310UC107,
+        // 250UC66.9, 250UC80.5, 200UC41.7, the 350UC series) are not here.
+        let mut expected = vec![
+            "150UB14.0",
+            "150UB18.0",
+            "180UB16.1",
+            "180UB18.1",
+            "180UB22.2",
+            "200UB18.2",
+            "200UB22.3",
+            "200UB25.4",
+            "200UB29.8",
+            "250UB25.7",
+            "250UB31.4",
+            "250UB37.3",
+            "310UB32.0",
+            "310UB40.4",
+            "310UB46.2",
+            "360UB44.7",
+            "360UB50.7",
+            "360UB56.7",
+            "410UB53.7",
+            "410UB59.7",
+            "460UB67.1",
+            "460UB74.6",
+            "460UB82.1",
+            "530UB82.0",
+            "530UB92.4",
+            "610UB101",
+            "610UB113",
+            "610UB125",
+            "100UC14.8",
+            "150UC23.4",
+            "150UC30.0",
+            "150UC37.2",
+            "200UC46.2",
+            "200UC52.2",
+            "200UC59.5",
+            "250UC72.9",
+            "250UC89.5",
+            "310UC96.8",
+            "310UC118",
+            "310UC137",
+            "310UC158",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, spanning both series.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("610UB125", [611.6, 229.0, 11.9, 19.6, 14.0], 16000.0, 125.0);
+        spot("150UB14.0", [150.0, 75.0, 5.0, 7.0, 8.0], 1780.0, 14.0);
+        spot("310UC158", [327.2, 311.0, 15.7, 25.0, 16.5], 20100.0, 158.0);
+        spot("100UC14.8", [97.0, 99.0, 5.0, 7.0, 10.0], 1890.0, 14.8);
+        for absent in [
+            "150UB17.1",
+            "200UB29.7",
+            "250UB31.3",
+            "460UB82.4",
+            "360UB44.3",
+            "530UB72.4",
+            "460UB61.2",
+            "310UC97.7",
+            "150UC30.6",
+            "310UC107",
+            "250UC66.9",
+            "250UC80.5",
+            "200UC41.7",
+            "350UC153",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
 }
