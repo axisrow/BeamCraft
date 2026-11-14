@@ -587,5 +587,12 @@ mod tests {
             )),
             "the shipped regional russia environment reads"
         );
+        assert!(
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "australia"
+            )),
+            "the shipped regional australia environment reads"
+        );
     }
 }
