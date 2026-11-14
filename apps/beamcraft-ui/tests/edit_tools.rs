@@ -699,6 +699,52 @@ fn the_window_binary_refuses_a_store_and_a_workspace_together() {
     }
 }
 
+#[test]
+fn the_window_binary_refuses_a_file_store_root_before_any_window() {
+    // Issue 616: an IFC file handed to `--store` is a caller error. The launch must fail
+    // before any window opens — a window with an empty view and the reason buried in the
+    // status bar reads as a successful launch. A regular file is refused as
+    // INVALID_ARGUMENT with the `--source` hint, the CLI's own message.
+    let ui = env!("CARGO_BIN_EXE_beamcraft-ui");
+    let file = std::env::temp_dir().join(format!(
+        "beamcraft-file-store-{}-{}.ifc",
+        support::boot_nonce(),
+        std::process::id()
+    ));
+    std::fs::write(&file, b"ISO-10303-21;").unwrap();
+    let mut child = Command::new(ui)
+        .args(["--store", file.to_str().unwrap()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The fixed binary exits in milliseconds; the window of the broken one never exits, so
+    // a deadline with a kill keeps this red run bounded instead of hanging the suite.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let status = loop {
+        match child.try_wait().unwrap() {
+            Some(status) => break status,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                child.wait().unwrap();
+                panic!("--store FILE kept running: a window opened instead of failing fast");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
+    let out = child.wait_with_output().unwrap();
+    let body = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(status.code(), Some(2), "{body:?}");
+    assert!(body.contains("INVALID_ARGUMENT"), "{body:?}");
+    assert!(
+        body.contains("the store root is a file and not a store"),
+        "{body:?}"
+    );
+    // The `--source` exemption needs real IFC bytes, and the headless `--source --screenshot`
+    // render is covered end to end by the screenshot suite; the gate itself is unit-tested.
+    std::fs::remove_file(&file).unwrap();
+}
+
 /// The no-argument launch is what a double-clicked app bundle does: the default session
 /// bootstraps a published store, forks a per-user workspace, and a rerun changes nothing.
 #[test]
