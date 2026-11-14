@@ -1573,6 +1573,15 @@ impl App {
         self.menu_new.creating() || self.menu_models.opening()
     }
 
+    /// Whether the menu's Open entry works in this window: a model opened from the library may
+    /// switch to another one, and a received IFC file may switch to another file (issue 617); a
+    /// window opened by `--store` or `--workspace` has nothing to switch from.
+    pub(crate) fn menu_open_enabled(&self) -> bool {
+        !self.menu_busy()
+            && !self.other_command_running()
+            && (self.from_library || self.source.ifc_source.is_some())
+    }
+
     /// Esc and "‹ Back" in the menu: a sub-page returns to its section, a top-level page closes
     /// the menu and shows the model again. Nothing happens while `menu_busy`.
     pub(crate) fn menu_back(&mut self) {
@@ -1849,11 +1858,31 @@ impl App {
                         self.menu_new.show();
                     }
                     let open = MenuSection::Open;
-                    if menu_navigation(ui, Icon::Folder, "Open", self.menu_section == open, free)
-                        .clicked()
+                    if menu_navigation(
+                        ui,
+                        Icon::Folder,
+                        "Open",
+                        self.menu_section == open,
+                        self.menu_open_enabled(),
+                    )
+                    .clicked()
                     {
-                        self.menu_section = open;
-                        self.menu_models.refresh(self.source.config_dir.as_deref());
+                        if let Some(file) = self.source.ifc_source.as_ref() {
+                            // A source window has no model library behind it: Open asks for
+                            // another received IFC file with the same picker the start page
+                            // shows, and the choice replaces this window read-only — the
+                            // same switch the export panel's «Open IFC…» runs (issue 617).
+                            // A cancelled dialog changes nothing.
+                            let start = file.parent().filter(|dir| dir.is_dir());
+                            match crate::dialog::pick_file("Open an IFC file", start) {
+                                Ok(Some(chosen)) => self.open_source_request = Some(chosen),
+                                Ok(None) => {}
+                                Err(e) => self.menu_note = Some(Err(e.to_string())),
+                            }
+                        } else {
+                            self.menu_section = open;
+                            self.menu_models.refresh(self.source.config_dir.as_deref());
+                        }
                     }
                     menu_navigation(ui, Icon::Copy, "Save as", false, false);
                     if menu_navigation(ui, Icon::Folder, "Open model folder", false, idle).clicked()

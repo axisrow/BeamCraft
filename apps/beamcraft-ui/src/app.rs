@@ -4133,6 +4133,195 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn open_works_in_a_source_window_without_the_library() {
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        // The tooltip delay would hide the row's answer behind a timer no test run has.
+        ctx.all_styles_mut(|style| {
+            style.interaction.tooltip_delay = 0.0;
+            style.interaction.tooltip_grace_time = 0.0;
+        });
+        on_the_menu(&mut app);
+        assert!(app.menu_open_enabled());
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let open = labels.iter().find(|(l, _)| l == "Open").unwrap().1;
+        // Two hover frames, then read: an enabled entry draws no "Not available yet"
+        // under the pointer — the row is live, not the dead end of issue 617.
+        app_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(open)]);
+        let hovered = app_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(open)]);
+        assert!(
+            !hovered.iter().any(|(l, _)| l == "Not available yet"),
+            "the Open entry must not be disabled in a source window"
+        );
+        // The click itself cannot run here: it opens the same native picker the start page
+        // shows, and what the picker's chosen answer sets is driven end to end by
+        // `a_menu_open_in_a_source_window_replaces_the_file_read_only`.
+        // A store window without the library keeps the entry off, as before.
+        let Some(mut store) = headless() else {
+            return;
+        };
+        on_the_menu(&mut store);
+        store.from_library = false;
+        assert!(!store.menu_open_enabled());
+        store.from_library = true;
+        assert!(store.menu_open_enabled());
+    }
+
+    #[test]
+    fn a_menu_open_in_a_source_window_replaces_the_file_read_only() {
+        use std::time::{Duration, Instant};
+        // The path a Menu → Open click drives in a source window, over the real files and the
+        // real CLI (issue 617): the picker's choice becomes this window's open request, Shell
+        // replaces the window with the same construction `--source FILE` runs, and every fact
+        // the properties panel can name is the new file's own — the old file's are gone. The
+        // native picker dialog cannot be shown headlessly; the test sets what its chosen
+        // answer sets (`open_source_request`), the one line between the dialog and the switch.
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ifc/plate-hole.ifc");
+        // The file the picker chose: the same products renamed and one placement moved, so
+        // the bytes, the display ids and every fact (name, GlobalId, bounds) are its own, and
+        // no fact of the first file survives the switch.
+        let chosen_bytes = String::from_utf8(std::fs::read(&fixture).unwrap())
+            .unwrap()
+            .replace("'PL-A'", "'WEB-A'")
+            .replace("'PL-B'", "'WEB-B'")
+            .replace("'01cdlm001m080000000A01'", "'01cdlm001m080000000B01'")
+            .replace("'01cdlm001m080000000A02'", "'01cdlm001m080000000B02'")
+            .replace(
+                "#51=IFCCARTESIANPOINT((200.,0.,0.));",
+                "#51=IFCCARTESIANPOINT((500.,0.,0.));",
+            );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!(
+            "bc-menu-open-source-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let chosen = scratch.join("web-plates.ifc");
+        std::fs::write(&chosen, chosen_bytes.as_bytes()).unwrap();
+        let Some(mut app) = headless_source_at(&fixture, &cli) else {
+            let _ = std::fs::remove_dir_all(&scratch);
+            return;
+        };
+        on_the_menu(&mut app);
+        let old = app.texture_id().unwrap();
+        app.open_source_request = Some(chosen.clone());
+        // The request is consumed by Shell, the switch's only reader.
+        let ctx = egui::Context::default();
+        let state = app.render_state().clone();
+        let mut shell = crate::shell::Shell::new(
+            &eframe::CreationContext::_new_kittest(ctx.clone()),
+            cli.clone(),
+            app.source.config_dir.clone(),
+            None,
+            Arc::new(crate::stats::Stats::default()),
+        );
+        shell.app = Some(app);
+        let mut frame = eframe::Frame::_new_kittest();
+        frame.wgpu_render_state = Some(state.clone());
+        // One frame switches; the next frees the replaced window's textures.
+        let run = |shell: &mut crate::shell::Shell, frame: &mut eframe::Frame| {
+            ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| eframe::App::ui(shell, ui, frame),
+            );
+            output.drop_without_applying_deltas();
+        };
+        run(&mut shell, &mut frame);
+        // The next frame releases the replaced window: its textures are gone.
+        run(&mut shell, &mut frame);
+        assert!(
+            state.renderer.read().texture(&old).is_none(),
+            "the old file's picture is gone"
+        );
+        let next = shell.app.as_ref().unwrap();
+        // The switch is the `--source` construction: a fresh read-only window on the chosen
+        // file, its watcher armed, nothing of the menu it was opened from carried over.
+        assert!(next.from_library);
+        assert!(next.source.read_only());
+        assert_eq!(next.source.ifc_source.as_deref(), Some(chosen.as_path()));
+        assert!(!next.menu_open);
+        assert_eq!(next.open_source_request, None);
+        assert!(next.store_watch.is_some(), "the new file is watched");
+        // The new file's bundle loads through the real CLI.
+        let settled = {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                run(&mut shell, &mut frame);
+                let next = shell.app.as_ref().unwrap();
+                if next.loaded.is_some() || Instant::now() > deadline {
+                    break Instant::now() <= deadline;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert!(settled, "the chosen file's refresh never delivered a scene");
+        let next = shell.app.as_ref().unwrap();
+        assert!(
+            next.error.is_none(),
+            "the chosen file was refused: {:?}",
+            next.error
+        );
+        // The facts are the chosen file's own: the renamed products, their new GlobalIds and
+        // the moved placement — and not one fact of the first file.
+        assert!(
+            !next.foreign.is_empty(),
+            "the chosen file's facts never loaded: {:?}",
+            next.foreign_note
+        );
+        assert_eq!(next.foreign.len(), 2);
+        let names: Vec<_> = next
+            .foreign
+            .values()
+            .filter_map(|body| body.name.clone())
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"WEB-A".to_owned()) && names.contains(&"WEB-B".to_owned()));
+        for body in next.foreign.values() {
+            assert_eq!(body.entity, "IFCPLATE");
+            assert!(
+                body.global_id
+                    .as_deref()
+                    .is_some_and(|id| id.ends_with("B01") || id.ends_with("B02")),
+                "a GlobalId of the old file leaked: {:?}",
+                body.global_id
+            );
+        }
+        let moved = next
+            .foreign
+            .values()
+            .map(|body| body.bounds[0][0])
+            .any(|min_x| min_x == 500.0);
+        assert!(moved, "the moved plate kept the old placement");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
     fn an_applied_overlay_rebuilds_the_scene_and_leaves_the_snapshot_token() {
         let Some(mut app) = headless() else { return };
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);

@@ -17,7 +17,8 @@ use std::sync::Arc;
 pub struct Shell {
     appearance: Option<crate::appearance::Appearance>,
     start: StartPage,
-    app: Option<App>,
+    /// The open model window, if one was reached; the switch's tests read what replaced it.
+    pub(crate) app: Option<App>,
     /// The window replaced or left in the previous pass: the output of that pass may still paint
     /// its textures, so it is released and dropped at the start of the next pass, whose output
     /// replaces it (egui paints only the last pass of a frame).
