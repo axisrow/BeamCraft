@@ -89,11 +89,12 @@ fn cut_corner(corner: &str) -> bool {
     decimal(ordinal, 999).is_some() && (point_token(edge) || member_edge(edge))
 }
 
-/// Two faces of a member box in axis order, on different axes (`x0.y1`, `x1.z0`).
+/// A longitudinal edge of a member box: one `x` side face and one `y` side face, in that order
+/// (`x0.y1`). The member axis is local `z`, so a pair with `z0`/`z1` is a transverse edge of an
+/// end face, where a cap corner stays unnamed.
 fn member_edge(edge: &str) -> bool {
-    const SIDES: [&str; 6] = ["x0", "x1", "y0", "y1", "z0", "z1"];
     edge.split_once('.')
-        .is_some_and(|(a, b)| SIDES.contains(&a) && SIDES.contains(&b) && a.get(..1) < b.get(..1))
+        .is_some_and(|(a, b)| matches!(a, "x0" | "x1") && matches!(b, "y0" | "y1"))
 }
 
 /// The cap corner name of a vertex shared by exactly one cut cap and two faces of the member
@@ -123,30 +124,42 @@ fn cut_vertex_name(local: &[(&str, &str)], names: &[String]) -> Option<String> {
         axes.sort_unstable();
         axes.join(".")
     } else if *family == "profile" {
-        let (a, b) = (wall(a)?, wall(b)?);
-        if a.0 != b.0 {
-            return None;
-        }
-        let count = names
-            .iter()
-            .filter_map(|s| s.strip_prefix("profile:"))
-            .filter_map(wall)
-            .filter(|(c, _)| c == &a.0)
-            .map(|(_, k)| k + 1)
-            .max()?;
-        let point = if (a.1 + 1) % count == b.1 {
-            b.1
-        } else if (b.1 + 1) % count == a.1 {
-            a.1
-        } else {
-            return None;
-        };
-        contour_point(&a.0, point)
+        shared_point(family, &wall(a)?, &wall(b)?, names).flatten()?
     } else {
         return None;
     };
     let token = format!("v.p{cap}.{edge}");
     cut_corner(token.strip_prefix("v.")?).then(|| format!("cut:{token}"))
+}
+
+/// The contour point token shared by two walls `a` and `b` of one contour of `family`: the
+/// start of whichever wall follows the other. `Some(None)` when the walls are not adjacent on
+/// one contour; `None` when the face table holds no wall of that contour at all.
+fn shared_point(
+    family: &str,
+    a: &(String, usize),
+    b: &(String, usize),
+    names: &[String],
+) -> Option<Option<String>> {
+    if a.0 != b.0 {
+        return Some(None);
+    }
+    let count = names
+        .iter()
+        .filter_map(|s| s.split_once(':'))
+        .filter(|(f, _)| *f == family)
+        .filter_map(|(_, r)| wall(r))
+        .filter(|(c, _)| c == &a.0)
+        .map(|(_, k)| k + 1)
+        .max()?;
+    let point = if (a.1 + 1) % count == b.1 {
+        b.1
+    } else if (b.1 + 1) % count == a.1 {
+        a.1
+    } else {
+        return Some(None);
+    };
+    Some(Some(contour_point(&a.0, point)))
 }
 
 /// A contour wall's authored contour and starting point.
@@ -437,28 +450,10 @@ fn vertex_name(adjacent: &BTreeSet<usize>, names: &[String]) -> Option<Option<St
     let [a, b] = walls.as_slice() else {
         return Some(None);
     };
-    if a.0 != b.0 {
-        return Some(None);
-    }
-    let count = names
-        .iter()
-        .filter_map(|s| s.split_once(':'))
-        .filter(|(f, _)| *f == family)
-        .filter_map(|(_, r)| wall(r))
-        .filter(|(c, _)| c == &a.0)
-        .map(|(_, k)| k + 1)
-        .max()?;
-    let point = if (a.1 + 1) % count == b.1 {
-        b.1
-    } else if (b.1 + 1) % count == a.1 {
-        a.1
-    } else {
+    let Some(point) = shared_point(family, a, b, names)? else {
         return Some(None);
     };
-    Some(Some(format!(
-        "{family}:v.z{level}.{}",
-        contour_point(&a.0, point)
-    )))
+    Some(Some(format!("{family}:v.z{level}.{point}")))
 }
 
 fn edge_name(

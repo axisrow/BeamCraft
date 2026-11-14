@@ -20,7 +20,9 @@ exactly three faces: the cap `cut:f.p<n>` and two faces of the member itself who
 runs along the member and is crossed by the cut plane:
 
 - a box member (`fid1:…:member:*`): `fid1:<ElementId>:cut:v.p<n>.<a>.<b>`, where `<a>` and
-  `<b>` are the two member face roles without `f.`, written in axis order (`x0.y1`, `x1.z0`);
+  `<b>` are the two side face roles without `f.`, the `x` face first (`x0.y1`, `x1.y0`). The
+  member axis is local `z`, so the longitudinal edges are exactly the four `x`/`y` pairs; a pair
+  with `z0` or `z1` is an end-face edge and is not a cap corner name;
 - a profile member (`fid2:…:profile:*`): `fid1:<ElementId>:cut:v.p<n>.<t>`, where `<t>` is the
   contour point of the longitudinal edge, the same `o<k>` or `c<j>.<k>` token as
   `profile:e.v.<t>` and `profile:v.z0.<t>`.
@@ -54,8 +56,10 @@ as another vertex, so a draft over it cannot be published.
 ## Acceptance
 
 - Parsing: `cut:v.p<n>.<a>.<b>` and `cut:v.p<n>.<t>` are canonical; two faces on one axis, a
-  wrong axis order, a non-canonical decimal and an ordinal above 999 are refused.
+  pair with an end face (`z0`, `z1`), a wrong axis order, a non-canonical decimal and an
+  ordinal above 999 are refused.
 - A box member and an I-section member cut by a plane list their cap corners; each corner lies
-  on the longitudinal edge its name gives.
+  on the longitudinal edge its name gives. A bevel cut that leaves through the end face names
+  only the corners on longitudinal edges.
 - A drawing of a cut member anchored on an end vertex and a cap corner is created, measures the
   kept length, publishes and exports.

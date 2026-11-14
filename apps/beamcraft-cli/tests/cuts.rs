@@ -698,3 +698,63 @@ fn an_oblique_cut_names_each_cap_corner_on_its_own_profile_edge() {
         );
     }
 }
+
+#[test]
+fn a_bevel_leaving_through_the_end_face_names_only_longitudinal_corners() {
+    let f = Fixture::new();
+    let member = "01a00000-0000-7000-8000-0000000000f8";
+    let profile = {
+        let (_, reply) = f.run("define-profile", &["--width", "200", "--height", "300"]);
+        text(reply.get("definition").unwrap(), "digest")
+    };
+    let (code, beam) = f.run(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            member,
+        ],
+    );
+    assert_eq!(code, 0, "{beam:?}");
+    // The plane x + z = 5900 crosses the top at x = 5750 and leaves through the end face at
+    // z = -100, so the cap meets the end face on two transverse edges.
+    f.ok_cut(
+        member,
+        "01a00000-0000-7000-8000-0000000000f9",
+        &["--point", "5900,0,0", "--normal", "1,0,1"],
+    );
+    let (code, listed) = f.run("list-feature", &["--id", member]);
+    assert_eq!(code, 0, "{listed:?}");
+    let corners: Vec<String> = at(&listed, &["features"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|feature| text(feature, "feature_id"))
+        .filter(|id| id.contains(":cut:v."))
+        .collect();
+    // Only the two top longitudinal edges carry a cap corner; the cap's crossings of the end face
+    // stay unnamed.
+    assert_eq!(corners.len(), 2, "{corners:?}");
+    for id in &corners {
+        let edge = id.rsplit_once(":cut:v.p0.").unwrap().1;
+        assert!(
+            matches!(edge, "x0.y1" | "x1.y1" | "x0.y0" | "x1.y0"),
+            "{id}"
+        );
+        let (code, found) = f.run("lookup-feature", &["--feature-id", id]);
+        assert_eq!(code, 0, "{found:?}");
+        let p: Vec<f64> = at(&found, &["world", "position"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|c| c.float().unwrap())
+            .collect();
+        assert!((p[0] + p[2] - 5900.0).abs() <= 1e-6, "{id}: {p:?}");
+        assert!((p[2] - 150.0).abs() <= 1e-9, "{id}: {p:?}");
+    }
+}
