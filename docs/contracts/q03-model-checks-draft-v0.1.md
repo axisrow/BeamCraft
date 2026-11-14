@@ -59,10 +59,10 @@ Each planned check is classified by what kind of basis it may consume:
 | `PART_DEGENERATE` | geometric (completeness) | established degenerate geometry state, reported with its existing `geometry_reason`; unsupported geometry is not relabelled degenerate |
 | `QUANTITY_STALE` | geometric (completeness) | the existing quantity assessment reports stale stored volume or mass; the existing status and cause are reused, accepted stale snapshots distinguished from integrity failures |
 | `PART_UNCONNECTED` | owner constraint + geometric | a required connection declared in joint intent is absent for an element in the declared scope; no declared scope ⇒ not applicable |
-| `WELD_WITHOUT_CONTACT` | owner constraint or normative | gap at the validated local joint outside the permitted range; v0.1 checks it only against an explicit owner gap requirement — no normative permitted-gap rule is supported yet (section 3.3), so without one the check is `unknown`; unvalidated local attachment is `unknown` too |
+| `WELD_WITHOUT_CONTACT` | owner constraint or normative | gap at the validated local joint outside the permitted range; v0.1 checks it only against an explicit owner gap requirement — no normative permitted-gap rule is supported yet (section 3.3): a declared weld connection with neither a recorded gap requirement nor a supported rule is `unknown` (`no_supported_rule`), and with no declared connection to judge the check is `not_applicable`; unvalidated local attachment is `unknown` too |
 | `CONTACT_WITHOUT_CONNECTION` | owner constraint + geometric | a contact that declared joint intent requires to be connected has no such connection; contact alone never proves a weld is needed |
 | `CORNER_NOT_CUT` | owner constraint + geometric | a required corner cut is absent, undersized, or does not provide the recorded local clearance; v0.1 checks existence and size only against recorded requirements — no normative existence rule for this joint is supported (section 3.2) |
-| `CORNER_OVERCUT` | owner constraint | a cut exceeds an explicit recorded upper bound with the stated tolerance; no normative upper bound exists (section 3.2), so without a recorded bound the check is `unknown` or not applicable |
+| `CORNER_OVERCUT` | owner constraint | a cut exceeds an explicit recorded upper bound with the stated tolerance; no normative upper bound exists (section 3.2); with no recorded corner-cut requirement at all the check is `not_applicable`, and a recorded requirement with `upper_bound: none` is `unknown` (`no_recorded_upper_bound`) |
 
 A check requested but not in this table is `unknown` with reason `unsupported_rule`; it never
 enters the supported set and never reports pass or fail. Unverified rules stay unknown: that is
@@ -161,8 +161,10 @@ A **corner-cut requirement** (the sample's case) records:
 - `required_mm` — the required cut size (the sample: 10.0);
 - `tolerance_mm` — the stated tolerance on the comparison (section 7.3);
 - `upper_bound` — `none` or an explicit recorded maximum with its own tolerance. In v0.1 the
-  default is `none`: without it `CORNER_OVERCUT` has no basis and reports `unknown` when the
-  check is requested;
+  default is `none`: a requested `CORNER_OVERCUT` under `upper_bound: none` is `unknown` with
+  reason `no_recorded_upper_bound` — the requirement exists, so what is missing is a *basis*,
+  not a check; with no recorded corner-cut requirement at all it is `not_applicable`
+  (section 2.1);
 - `basis` — `{ source: "owner" }` and an optional note (the sample: "owner's requested corner
   cut for this joint"); never a normative citation, because none exists for this joint
   (section 3.2);
@@ -298,18 +300,24 @@ deterministic the distinction between contact, clearance and penetration for mod
 and it is reported with every result.
 
 **Near-threshold rule.** A comparison of a measured quantity `m` against a bound `b` (a
-requirement size, a permitted-gap end, the clash threshold) reports:
+requirement size, a permitted-gap end, the clash threshold) first forms the **acceptance
+region** from that bound and its recorded tolerance: a recorded `tolerance_mm` widens the band
+to `b ± tolerance_mm` (a required size accepts `|m − b| ≤ tolerance_mm`; a maximum accepts
+`m ≤ b + tolerance_mm`; no recorded tolerance leaves the bare bound `b` as the only edge). The
+uncertainty interval is `[m − δ, m + δ]`, where `δ = max(mesh_bound_of_measurement, t/2)` — the
+mesh approximation and half the contact tolerance together. Then:
 
-- pass/fail only when the interval `[m − δ, m + δ]` lies strictly on one side of `b`, where
-  `δ = max(mesh_bound_of_measurement, t/2)` — i.e. the mesh approximation and half the contact
-  tolerance cannot straddle the bound;
+- pass/fail only when the interval lies **strictly inside** the acceptance region or **strictly
+  outside** it — that is, `δ` is tested at the band edges of the acceptance region, and the
+  recorded `tolerance_mm` therefore widens what is accepted, not just what is reported;
 - `unknown` with reason `indeterminate` and the measured value reported, when the interval
-  straddles `b` — a near-threshold result never silently resolves to pass or fail, and its
-  resolution must not depend on artificial decomposition boundaries.
+  straddles a band edge — a near-threshold result never silently resolves to pass or fail, and
+  its resolution must not depend on artificial decomposition boundaries.
 
-The sample's tolerance on the 10 mm requirement is an explicit recorded `tolerance_mm`; the
-20 mm-cut acceptance case reports `CORNER_OVERCUT` with measured 20 mm and required 10 mm
-subject to that recorded tolerance.
+The sample's tolerance on the 10 mm requirement is an explicit recorded `tolerance_mm`: the
+acceptance region is `10 ± tolerance_mm`, so the 20 mm-cut acceptance case reports
+`CORNER_OVERCUT` with measured 20 mm and required 10 mm strictly outside the widened band —
+"subject to the recorded tolerance" in the literal sense of the rule above.
 
 ## 8. Findings and report semantics
 
