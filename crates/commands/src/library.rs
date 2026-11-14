@@ -2050,4 +2050,261 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_shipped_india_npb_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/profiles-is808-npb.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "india-is808-npb-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 70);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("IS 808:2021"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires; the worst row sits at 0.94 percent,
+            // an area column rounded to three significant digits) and the declared mass must
+            // match the closed-form area at 7850 kg/m3: the published masses are computed from
+            // unrounded geometry, so they follow the geometry and not the rounded printed area
+            // (worst observed 0.0144 kg/m).
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_geometry = parametric.exact_area_mm2() * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_geometry).abs() <= 0.05,
+                "{}: mass {mass} kg/m vs geometry-derived {mass_from_geometry}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The narrow parallel flange beam (NPB) series exactly as IS 808:2021 table 3
+        // publishes it: 70 rows, the assortment of IS 12778:2004 amalgamated into the
+        // 2021 edition. The designation mass is the 2021 printed value (the superseded
+        // IS 12778:2004 rounding of the same row, 36.52, is not here).
+        let mut expected = vec![
+            "NPB100x55x8.10",
+            "NPB120x60x10.37",
+            "NPB140x70x12.89",
+            "NPB160x80x15.77",
+            "NPB180x90x15.37",
+            "NPB180x90x18.80",
+            "NPB180x90x21.27",
+            "NPB200x100x18.43",
+            "NPB200x100x22.36",
+            "NPB200x100x25.09",
+            "NPB200x130x27.37",
+            "NPB200x130x31.56",
+            "NPB200x150x30.46",
+            "NPB200x165x35.69",
+            "NPB200x165x42.48",
+            "NPB200x165x48.00",
+            "NPB220x110x22.18",
+            "NPB220x110x26.20",
+            "NPB220x110x29.35",
+            "NPB240x120x26.15",
+            "NPB240x120x30.71",
+            "NPB240x120x34.32",
+            "NPB250x125x30.11",
+            "NPB250x150x34.08",
+            "NPB250x150x39.78",
+            "NPB250x150x46.48",
+            "NPB250x175x43.94",
+            "NPB270x135x30.73",
+            "NPB270x135x36.07",
+            "NPB270x135x42.26",
+            "NPB300x150x36.53",
+            "NPB300x150x42.24",
+            "NPB300x150x49.32",
+            "NPB300x165x39.88",
+            "NPB300x165x45.76",
+            "NPB300x165x53.46",
+            "NPB300x200x59.57",
+            "NPB300x200x66.75",
+            "NPB300x200x75.37",
+            "NPB330x160x42.97",
+            "NPB330x160x49.15",
+            "NPB330x160x57.01",
+            "NPB350x170x50.22",
+            "NPB350x170x57.10",
+            "NPB350x170x66.05",
+            "NPB350x250x79.18",
+            "NPB400x180x57.38",
+            "NPB400x180x66.31",
+            "NPB400x180x75.67",
+            "NPB400x200x67.28",
+            "NPB450x190x67.16",
+            "NPB450x190x77.58",
+            "NPB450x190x92.37",
+            "NPB500x200x107.32",
+            "NPB500x200x79.36",
+            "NPB500x200x90.69",
+            "NPB550x210x105.52",
+            "NPB550x210x122.52",
+            "NPB550x210x92.08",
+            "NPB600x220x107.57",
+            "NPB600x220x122.45",
+            "NPB600x220x154.47",
+            "NPB700x250x113.46",
+            "NPB700x250x128.41",
+            "NPB700x250x143.42",
+            "NPB700x250x153.87",
+            "NPB700x250x171.48",
+            "NPB750x270x145.29",
+            "NPB750x270x174.54",
+            "NPB750x270x202.49",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, including the deepest row with its
+        // production-technology root radius of 17 mm and the row whose 2021 area re-rounding
+        // differs from IS 12778:2004 by one final digit.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("NPB100x55x8.10", [100.0, 55.0, 4.1, 5.7, 7.0], 1030.0, 8.1);
+        spot(
+            "NPB300x150x42.24",
+            [300.0, 150.0, 7.1, 10.7, 15.0],
+            5380.0,
+            42.24,
+        );
+        spot(
+            "NPB400x200x67.28",
+            [400.0, 200.0, 8.0, 13.0, 21.0],
+            8570.0,
+            67.28,
+        );
+        spot(
+            "NPB750x270x202.49",
+            [770.0, 270.0, 15.6, 26.6, 17.0],
+            25700.0,
+            202.49,
+        );
+        // Independent cross-check against the shipped `europe` pack: seventeen NPB rows are the
+        // EN 10365 IPE sizes rolled under the Indian designation, and their dimensions, areas
+        // and masses must agree with that separately transcribed edition (within its printed
+        // rounding).
+        let europe = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/profiles-en-10365.usda"
+        ))
+        .unwrap();
+        let ipe_twins: Vec<(&str, &[f64], f64, f64)> = europe
+            .entries
+            .iter()
+            .filter_map(|e| match &e.record {
+                DefinitionRecord::SectionProfile {
+                    shape: SectionShape::Parametric(p),
+                    section,
+                } => Some((
+                    e.designation.as_str(),
+                    p.values(),
+                    section.area_mm2?,
+                    section.mass_per_meter_kg?,
+                )),
+                _ => None,
+            })
+            .collect();
+        let mut ipe_rows = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                continue;
+            };
+            let values = p.values();
+            if let Some((designation, _, twin_area, twin_mass)) = ipe_twins
+                .iter()
+                .find(|(_, twin_values, _, _)| *twin_values == values)
+            {
+                ipe_rows += 1;
+                assert!(
+                    (section.area_mm2.unwrap() - twin_area).abs() <= 100.0,
+                    "{} vs {designation}: area",
+                    entry.designation
+                );
+                // The europe pack rounds the heaviest sections to three significant digits
+                // (IPE550: 106 against the standard's 105.5, carried here as 105.52), so the
+                // mass agreement is 0.5 kg/m on those rows.
+                assert!(
+                    (section.mass_per_meter_kg.unwrap() - twin_mass).abs() <= 0.5,
+                    "{} vs {designation}: mass",
+                    entry.designation
+                );
+            }
+        }
+        // Seventeen, not eighteen: IPE 250 is not part of the shipped `europe` pack.
+        assert_eq!(
+            ipe_rows, 17,
+            "the IPE-exact NPB rows agree with the europe pack"
+        );
+        // The sloping-flange series of the same edition (MB/WB/SC, tables 1 and 5), the
+        // toe-radius channels (table 8), the angles and the bearing piles are not shipped.
+        for absent in [
+            "MB300",
+            "SC200",
+            "WB200",
+            "MCP75",
+            "ISA50x50x6",
+            "PBP200x43.85",
+            "NPB300x150x36.52",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
 }

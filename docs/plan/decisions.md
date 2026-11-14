@@ -598,6 +598,28 @@ commit and undo. Items/import, IFC certification, deferred collaboration, native
 acceptance and release publication are not added to this scope. No automatic merges.
 See [M5 CLI delivery](m5-cli-delivery.md) for dependencies and acceptance.
 
+## Q03 model checks: automatic geometry versus owner decisions (2026-11-15)
+
+For the `check-model` harness (design in issue #634, contract in
+[the Q03 draft](../contracts/q03-model-checks-draft-v0.1.md)), the boundary is fixed:
+
+- **The engine computes and reports; it does not decide or edit.** Checks recompute dependent
+  requirements from recorded inputs and the current model on every run, but never change cut
+  geometry. Whether cuts must follow dimension changes without an explicit modelling command
+  remains a separate, still-open owner decision; parametric connections stay deferred by
+  `ROADMAP.md`.
+- **The product does not invent dimensions.** Only dimensions explicitly required by the owner
+  are checkable inputs; the sample's 10 mm corner cut is such an input, independent of any weld
+  leg, and stays 10 mm until the owner changes it. A measured value never substitutes an
+  expected value.
+- **No normative rule ships unverified.** The normative research (SP 16.13330.2017 15.5.2 and
+  14.1.7/Table 38, EN 1993-1-8:2005 §6.2.6, AISC FAQ 8.2.4/8.3.4/8.3.6/8.3.8 over AWS D1.1
+  7.21.1, AISC Design Guide 1, retrievals in the contract) justifies no universal corner-cut
+  range and no automatic upper bound for this joint. `CORNER_OVERCUT` checks only against an
+  explicit recorded bound; weld adequacy stays `unknown` in v0.1; the supported rule set
+  contains no normative rule until a slice pins one with document, edition, clause, joint types,
+  required inputs and retrieval.
+
 ## Open questions
 
 | # | Question | Blocks |
