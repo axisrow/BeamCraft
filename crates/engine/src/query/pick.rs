@@ -1471,7 +1471,33 @@ fn snap_order(a: &SnapCandidate, b: &SnapCandidate) -> Ordering {
 ///
 /// Inputs follow the point form of [`pick`] (same codes and caps); `kinds` replaces `targets`.
 pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, ViewError> {
-    snap_bodies(snapshot, query, &SnapContext::default())
+    let mut result = snap_bodies(snapshot, query, &SnapContext::default())?;
+    clean_snap_points(&mut result);
+    Ok(result)
+}
+
+/// A snap coordinate within `EPS_PICK_MM` of a whole millimetre is rounding residue of the
+/// pick ray (a hit computed as `origin + t·direction` on an axis-aligned plane keeps a
+/// ±2⁻³⁹-scale error whose sign changes run to run, issue 611): clamp it to that value, so
+/// a stored point lies exactly where the model says and a negative zero never forms.
+/// Larger offsets pass unchanged.
+fn clean_snap_mm(x: f64) -> f64 {
+    let exact = x.round();
+    // `+ 0.0` folds a negative zero into a positive one, like `canonical`.
+    if (x - exact).abs() < EPS_PICK_MM {
+        exact + 0.0
+    } else {
+        x + 0.0
+    }
+}
+
+/// Cleans every candidate point of one result. Both snap entry points route their
+/// candidates through here, so no caller — window tools, engine consumers, tests —
+/// receives a coordinate that the pick ray rounded.
+fn clean_snap_points(result: &mut SnapResult) {
+    for candidate in &mut result.candidates {
+        candidate.point_world_mm = candidate.point_world_mm.map(clean_snap_mm);
+    }
 }
 
 fn snap_bodies(
@@ -1925,6 +1951,7 @@ pub fn snap_with_context(
         }
     }
     result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+    clean_snap_points(&mut result);
     Ok(result)
 }
 
@@ -2658,6 +2685,64 @@ mod tests {
                 SelectionFilter::parse_excluded(bad).unwrap_err().code(),
                 ViewCode::ArgumentInvalid,
                 "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_grid_crossing_snap_carries_no_pick_ray_height_residue() {
+        // Issue 611: with no work plane (a 3D view keeps the model's) the cursor is the pick
+        // ray's hit on the slab's top face at z = 0 — `origin + t·direction`, which keeps a
+        // ±2⁻³⁹-scale residue whose sign changes from run to run. The crossing snap adopted
+        // that height as its z. It must not: on the axis-aligned plane the snapped point lies
+        // exactly at 0, with no negative zero to leak into the saved model or a status line.
+        // The cursor heights are the two reported values and `-0.0`, which exact equality
+        // cannot tell from `0.0` — hence the ordered-bits comparison.
+        use beamcraft_model::grid::{Grid, GridFamily, RegularGridFamily};
+        let id = |n: u8| {
+            ElementId::parse(&format!("01990000-0000-7000-8000-0000000004{n:02x}")).unwrap()
+        };
+        let regular = |expression: &str, positions: &[f64], ids: &[u8], labels: &[&str]| {
+            GridFamily::Regular(RegularGridFamily {
+                expression: expression.into(),
+                axis_ids: ids.iter().map(|n| id(*n)).collect(),
+                labels: labels.iter().map(|l| (*l).to_owned()).collect(),
+                positions_mm: positions.to_vec(),
+                span_mm: [0.0, 12000.0],
+            })
+        };
+        let grid = Grid {
+            id: id(1),
+            name: "Main".into(),
+            u: regular("0,6000", &[0.0, 6000.0], &[2, 3], &["1", "2"]),
+            v: regular("0,5000", &[0.0, 5000.0], &[4, 5], &["A", "B"]),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+        };
+        let s = snapshot(1);
+        for z in [-1.8189894035458565e-12, 1.8189894035458565e-12, -0.0] {
+            let query = SnapQuery {
+                point_mm: [6000.0, 5000.0, z],
+                radius_mm: 10.0,
+                kinds: vec![SnapKind::GridIntersection],
+                max_hits: 16,
+            };
+            let context = SnapContext {
+                grids: std::slice::from_ref(&grid),
+                ..Default::default()
+            };
+            let result = snap_with_context(&s, &query, &context).unwrap();
+            assert_eq!(result.candidates.len(), 1, "cursor z = {z:?}");
+            let point = result.candidates[0].point_world_mm;
+            assert_eq!(
+                point,
+                [6000.0, 5000.0, 0.0],
+                "the 2/B crossing kept the cursor's height residue {z:?}"
+            );
+            assert_eq!(
+                point[2].total_cmp(&0.0),
+                Ordering::Equal,
+                "the height must be a positive zero, got {point:?}"
             );
         }
     }

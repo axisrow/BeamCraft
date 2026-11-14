@@ -834,7 +834,17 @@ struct PointText([f64; 3]);
 impl std::fmt::Display for PointText {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let [x, y, z] = self.0;
-        write!(f, "({x:.1}, {y:.1}, {z:.1}) mm")
+        // A residue that rounds to this decimal shows without its sign: `-0.0` reads as a
+        // defect (issue 611), and a tenth of a millimetre carries no sign of its own.
+        let axis = |v: f64| {
+            let shown = format!("{v:.1}");
+            if shown == "-0.0" {
+                "0.0".to_owned()
+            } else {
+                shown
+            }
+        };
+        write!(f, "({}, {}, {}) mm", axis(x), axis(y), axis(z))
     }
 }
 
@@ -12232,20 +12242,28 @@ mod navigation_tests {
                 start_mm: [-2000.0, 5000.0],
                 end_mm: [14000.0, 5000.0],
             }]),
-            v: GridFamily::Drawn(vec![DrawnGridLine {
-                axis_id: ElementId::parse("01990000-0000-7000-8000-000000004003").unwrap(),
-                label: "2".into(),
-                start_mm: [6000.0, -2000.0],
-                end_mm: [6000.0, 7000.0],
-            }]),
+            v: GridFamily::Drawn(vec![
+                DrawnGridLine {
+                    axis_id: ElementId::parse("01990000-0000-7000-8000-000000004003").unwrap(),
+                    label: "2".into(),
+                    start_mm: [6000.0, -2000.0],
+                    end_mm: [6000.0, 7000.0],
+                },
+                DrawnGridLine {
+                    axis_id: ElementId::parse("01990000-0000-7000-8000-000000004004").unwrap(),
+                    label: "3".into(),
+                    start_mm: [9000.0, -2000.0],
+                    end_mm: [9000.0, 7000.0],
+                },
+            ]),
         }];
         app.set_bench(super::workbench::Bench::Beam);
         for kind in SnapKind::ALL {
             app.selection
                 .set_snap(kind, kind == SnapKind::GridIntersection);
         }
-        // Snaps 2/B through the active pane's camera, as a click on the crossing does.
-        let snap_2b = |app: &mut App| {
+        // Aims a click at a world point through the active pane's camera.
+        let snap_ray = |app: &App, target: [f64; 3]| {
             let origin = app.view_origin();
             let view = app
                 .views
@@ -12254,10 +12272,9 @@ mod navigation_tests {
                 .camera
                 .view(app.aspect())
                 .unwrap();
-            let local = std::array::from_fn(|i| ([6000., 5000., 0.][i] - origin[i]) as f32);
+            let local = std::array::from_fn(|i| (target[i] - origin[i]) as f32);
             let [x, y, _] = view.project(local);
-            let ray = crate::edit::ray_through(&view, [x, y], origin).unwrap();
-            app.creation_hit(ray, false).unwrap()
+            crate::edit::ray_through(&view, [x, y], origin).unwrap()
         };
         // The double click on the 3D view in the browser.
         app.browser_action(super::view_panel::BrowserAction::Activate(show.id));
@@ -12266,7 +12283,10 @@ mod navigation_tests {
             app.tools.plane, None,
             "the 3D view keeps the model's work plane (world XY)"
         );
-        let (point, kind) = snap_2b(&mut app);
+        let (point, kind) = {
+            let ray = snap_ray(&app, [6000., 5000., 0.]);
+            app.creation_hit(ray, false).unwrap()
+        };
         assert_eq!(
             kind,
             Some(SnapKind::GridIntersection),
@@ -12279,6 +12299,95 @@ mod navigation_tests {
                 .all(|(a, b)| (a - b).abs() < 1.0),
             "the 3D view snaps 2/B on the grid, got {point:?}"
         );
+        // Issue 611: the cursor is the pick ray's hit on the slab's top face, so its z keeps
+        // a ±2⁻³⁹ residue whose sign changes run to run. The crossing snap adopted it, the
+        // saved beam carried it, and the status line printed `-0.0`. The snap must store the
+        // exact height, a positive zero.
+        assert_eq!(
+            point,
+            [6000.0, 5000.0, 0.0],
+            "the snapped 2/B crossing kept the pick's height residue: {point:?}"
+        );
+        assert_eq!(
+            point[2].total_cmp(&0.0),
+            std::cmp::Ordering::Equal,
+            "the stored height must be a positive zero, got {point:?}"
+        );
+        // The real clicks of the issue: start on 2/B, end on 3/B, the member committed to
+        // the store by the real command, its stored axis points inspected by the real CLI.
+        let out = std::process::Command::new(&cli)
+            .arg("define-profile")
+            .args(["--store", &store, "--width", "100", "--height", "200"])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let profile =
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        app.tools.member.profile = Some(
+            profile
+                .get("definition")
+                .unwrap()
+                .get("digest")
+                .unwrap()
+                .string()
+                .unwrap()
+                .into(),
+        );
+        let start_ray = snap_ray(&app, [6000., 5000., 0.]);
+        app.place_beam(start_ray);
+        assert!(
+            matches!(
+                &app.tool_note,
+                Some(Ok(note))
+                    if note == "Start (6000.0, 5000.0, 0.0) mm. Pick the end point."
+            ),
+            "the status line must read the exact start without a sign on zero: {:?}",
+            app.tool_note
+        );
+        let end_ray = snap_ray(&app, [9000., 5000., 0.]);
+        app.place_beam(end_ray);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.job.is_none(), "the member commit timed out");
+        assert!(app.last_commit_ok, "{:?}", app.tool_note);
+        let out = std::process::Command::new(&cli)
+            .arg("inspect-elements")
+            .args(["--store", &store])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let inspected =
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        let members = inspected.get("members").unwrap().array().unwrap();
+        assert_eq!(members.len(), 1);
+        let axis = members[0].get("axis_points_mm").unwrap().array().unwrap();
+        assert_eq!(axis.len(), 2, "{inspected:?}");
+        for (entry, expected) in axis
+            .iter()
+            .zip([[6000.0, 5000.0, 0.0], [9000.0, 5000.0, 0.0]])
+        {
+            let stored = std::array::from_fn(|i| entry.array().unwrap()[i].float().unwrap());
+            assert_eq!(
+                stored, expected,
+                "the stored axis point carries a height residue"
+            );
+            assert_eq!(
+                stored[2].total_cmp(&0.0),
+                std::cmp::Ordering::Equal,
+                "the stored height must be a positive zero, got {stored:?}"
+            );
+        }
         // The control: a plan still installs its plane, and snaps on it.
         let plan = view_named(&app, "Plan");
         app.browser_action(super::view_panel::BrowserAction::Activate(plan.id));
@@ -12287,7 +12396,10 @@ mod navigation_tests {
             Some(plan.plane),
             "a plan installs its plane"
         );
-        let (point, kind) = snap_2b(&mut app);
+        let (point, kind) = {
+            let ray = snap_ray(&app, [6000., 5000., 0.]);
+            app.creation_hit(ray, false).unwrap()
+        };
         assert_eq!(
             kind,
             Some(SnapKind::GridIntersection),
@@ -12299,6 +12411,26 @@ mod navigation_tests {
                 .zip([6000., 5000., 0.])
                 .all(|(a, b)| (a - b).abs() < 1.0),
             "the plan snaps 2/B on its plane, got {point:?}"
+        );
+    }
+
+    #[test]
+    fn a_point_text_never_prints_a_negative_zero() {
+        // Issue 611: the pick-ray residue -2⁻³⁹ mm, rounded to the status line's one
+        // decimal, printed as `-0.0`. Whatever rounds to that decimal shows without a
+        // sign; a genuinely negative tenth keeps its `-0.1`.
+        use super::PointText;
+        assert_eq!(
+            PointText([6000.0, 5000.0, -1.8189894035458565e-12]).to_string(),
+            "(6000.0, 5000.0, 0.0) mm"
+        );
+        assert_eq!(
+            PointText([0.0, -0.0, 0.04]).to_string(),
+            "(0.0, 0.0, 0.0) mm"
+        );
+        assert_eq!(
+            PointText([0.0, 0.0, -0.06]).to_string(),
+            "(0.0, 0.0, -0.1) mm"
         );
     }
 }
