@@ -302,29 +302,29 @@ def Scope "Library"
             string steel:profile:standard = "EN 10219-2:2006"
         }
 
-        def Scope "SHS300x300x8"
+        def Scope "SHS300x300x6"
         {
-            string steel:profile:designation = "SHS300x300x8"
+            string steel:profile:designation = "SHS300x300x6"
             token steel:profile:family = "rhs"
             double steel:profile:hMm = 300
             double steel:profile:bMm = 300
-            double steel:profile:tMm = 8
-            double steel:profile:rMm = 20
-            double steel:profile:areaMm2 = 9120
-            double steel:profile:massPerMeterKg = 71.6
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 6960
+            double steel:profile:massPerMeterKg = 54.7
             string steel:profile:standard = "EN 10219-2:2006"
         }
 
-        def Scope "SHS400x400x10"
+        def Scope "SHS350x350x10"
         {
-            string steel:profile:designation = "SHS400x400x10"
+            string steel:profile:designation = "SHS350x350x10"
             token steel:profile:family = "rhs"
-            double steel:profile:hMm = 400
-            double steel:profile:bMm = 400
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 350
             double steel:profile:tMm = 10
             double steel:profile:rMm = 25
-            double steel:profile:areaMm2 = 15300
-            double steel:profile:massPerMeterKg = 120
+            double steel:profile:areaMm2 = 13300
+            double steel:profile:massPerMeterKg = 104
             string steel:profile:standard = "EN 10219-2:2006"
         }
 
@@ -574,14 +574,14 @@ def Scope "Library"
             string steel:profile:standard = "EN 10219-2:2006"
         }
 
-        def Scope "CHS114_3x3_5"
+        def Scope "CHS114_3x4_0"
         {
-            string steel:profile:designation = "CHS114.3x3.5"
+            string steel:profile:designation = "CHS114.3x4.0"
             token steel:profile:family = "chs"
             double steel:profile:dMm = 114.3
-            double steel:profile:tMm = 3.5
-            double steel:profile:areaMm2 = 1220
-            double steel:profile:massPerMeterKg = 9.56
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 1390
+            double steel:profile:massPerMeterKg = 10.9
             string steel:profile:standard = "EN 10219-2:2006"
         }
 
