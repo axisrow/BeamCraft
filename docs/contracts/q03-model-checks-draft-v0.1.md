@@ -62,7 +62,7 @@ Each planned check is classified by what kind of basis it may consume:
 | `WELD_WITHOUT_CONTACT` | owner constraint or normative | gap at the validated local joint outside the permitted range; v0.1 checks it only against an explicit owner gap requirement — no normative permitted-gap rule is supported yet (section 3.3): a declared weld connection with neither a recorded gap requirement nor a supported rule is `unknown` (`no_supported_rule`), and with no declared connection to judge the check is `not_applicable`; unvalidated local attachment is `unknown` too |
 | `CONTACT_WITHOUT_CONNECTION` | owner constraint + geometric | a contact that declared joint intent requires to be connected has no such connection; contact alone never proves a weld is needed |
 | `CORNER_NOT_CUT` | owner constraint + geometric | a required corner cut is absent, undersized, or does not provide the recorded local clearance; v0.1 checks existence and size only against recorded requirements — no normative existence rule for this joint is supported (section 3.2) |
-| `CORNER_OVERCUT` | owner constraint | a cut exceeds an explicit recorded upper bound with the stated tolerance; no normative upper bound exists (section 3.2); with no recorded corner-cut requirement at all the check is `not_applicable`, and a recorded requirement with `upper_bound: none` is `unknown` (`no_recorded_upper_bound`) |
+| `CORNER_OVERCUT` | owner constraint | a cut exceeds the upper edge of the recorded requirement's acceptance band (section 7.3): the explicitly recorded size is itself the upper bound #634 allows, and a recorded standalone maximum tightens it; no normative upper bound exists (section 3.2); with no recorded corner-cut requirement at all the check is `not_applicable` |
 
 A check requested but not in this table is `unknown` with reason `unsupported_rule`; it never
 enters the supported set and never reports pass or fail. Unverified rules stay unknown: that is
@@ -160,11 +160,12 @@ A **corner-cut requirement** (the sample's case) records:
   from the final evaluated geometry (section 4.3);
 - `required_mm` — the required cut size (the sample: 10.0);
 - `tolerance_mm` — the stated tolerance on the comparison (section 7.3);
-- `upper_bound` — `none` or an explicit recorded maximum with its own tolerance. In v0.1 the
-  default is `none`: a requested `CORNER_OVERCUT` under `upper_bound: none` is `unknown` with
-  reason `no_recorded_upper_bound` — the requirement exists, so what is missing is a *basis*,
-  not a check; with no recorded corner-cut requirement at all it is `not_applicable`
-  (section 2.1);
+- `upper_bound` — `none` (the default) or an explicit recorded standalone maximum with its
+  own tolerance. The recorded `required_mm` already bounds the cut in both directions: its
+  acceptance band's upper edge (section 7.3) is the basis of `CORNER_OVERCUT` and its lower
+  edge the basis of `CORNER_NOT_CUT` — the owner's own recorded size is the upper bound, so
+  no separate and no normative maximum is needed or invented. A recorded `upper_bound`
+  replaces the band's upper edge when the owner states a standalone "no more than X" limit;
 - `basis` — `{ source: "owner" }` and an optional note (the sample: "owner's requested corner
   cut for this joint"); never a normative citation, because none exists for this joint
   (section 3.2);
@@ -315,9 +316,11 @@ mesh approximation and half the contact tolerance together. Then:
   its resolution must not depend on artificial decomposition boundaries.
 
 The sample's tolerance on the 10 mm requirement is an explicit recorded `tolerance_mm`: the
-acceptance region is `10 ± tolerance_mm`, so the 20 mm-cut acceptance case reports
-`CORNER_OVERCUT` with measured 20 mm and required 10 mm strictly outside the widened band —
-"subject to the recorded tolerance" in the literal sense of the rule above.
+acceptance region is `10 ± tolerance_mm`, and its upper edge is the overcut basis — the
+20 mm-cut acceptance case reports `CORNER_OVERCUT` with measured 20 mm and required 10 mm,
+strictly above the band and "subject to the recorded tolerance" in the literal sense of the
+rule above. The upper edge here is the owner's recorded size, not a derived or normative
+maximum (section 3.2); a recorded gap requirement's permitted ends are bounded the same way.
 
 ## 8. Findings and report semantics
 
@@ -436,7 +439,8 @@ The acceptance fixtures follow #634's acceptance list; what slice 1 adds is the 
   with the applicable `PART_CLASH`, connectivity and `CORNER_NOT_CUT` findings; a missing weld
   must not erase the independently recorded corner requirement;
 - a 20 mm cut against the recorded 10 mm requirement produces `CORNER_OVERCUT`, measured 20 mm,
-  required 10 mm, subject to the recorded tolerance — no fabricated normative maximum;
+  required 10 mm, subject to the recorded tolerance — the recorded size is the upper bound
+  (section 4.1): the fixture records no separate and no normative maximum;
 - a corrected, fully specified fixture passes all applicable checks within the supported scope;
   a requested weld-adequacy check stays `unknown` (`no_supported_rule`);
 - a weld elsewhere between the same parts does not trigger a corner violation; missing or
