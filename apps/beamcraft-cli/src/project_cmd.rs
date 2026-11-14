@@ -220,10 +220,15 @@ fn run(args: &[OsString]) -> Run<Json> {
                         Ok(seeded) => Some((seeded, *source)),
                         Err(mut error) => {
                             // The person did not type a settings-chosen environment id, so the
-                            // not-found refusal names where the choice came from.
-                            if *source == "settings" && error.code == ErrorCode::NotFound {
-                                error.message =
-                                    "the active environment of the settings is not among the built-in or user environments";
+                            // not-found refusal of the search itself names where the choice came
+                            // from. Deeper not-found refusals (a listed library file that is
+                            // gone, say) keep their own text: only the exact search refusal is
+                            // rewritten.
+                            if *source == "settings"
+                                && error.message
+                                    == "the environment is not among the built-in or user environments"
+                            {
+                                error.message = "the active environment of the settings is not among the built-in or user environments";
                             }
                             // The folder was made by this call, so a failed seeding removes it
                             // again and leaves nothing behind.

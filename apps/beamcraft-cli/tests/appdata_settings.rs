@@ -235,6 +235,24 @@ fn a_settings_environment_that_is_not_installed_refuses_without_a_folder() {
 }
 
 #[test]
+fn a_settings_environment_with_a_missing_library_keeps_the_accurate_refusal() {
+    let f = Fixture::new();
+    f.install_environment("acme", 300.0);
+    // The environment declares the library, but the library file is gone: this not-found is
+    // about the file, not about the choice, and keeps its own text.
+    fs::remove_file(f.shared.root.join("config/environments/acme/acme.usda")).unwrap();
+    let models = f.path("models");
+    let (code, body) = f.with_config(&["create-project", "--parent", &models, "--name", "Hollow"]);
+    assert_eq!(code, 2, "{body:?}");
+    assert_eq!(text(&body, "code"), "NOT_FOUND");
+    assert_eq!(
+        text(&body, "message"),
+        "the library file could not be opened"
+    );
+    assert!(!f.shared.root.join("models/Hollow").exists());
+}
+
+#[test]
 fn without_any_environment_choice_the_project_is_plain() {
     let f = Fixture::new();
     let config = f.shared.root.join("config");
@@ -311,8 +329,7 @@ fn an_environment_update_leaves_the_copies_projects_carry_alone() {
         (kg - expected_mass(300.0)).abs() < 0.001,
         "{kg} kg, the pinned copy answers"
     );
-    let old =
-        fs::read_to_string(Path::new(&store).join("environment/acme.usda")).unwrap();
+    let old = fs::read_to_string(Path::new(&store).join("environment/acme.usda")).unwrap();
     let new = fs::read_to_string(Path::new(&fresh_store).join("environment/acme.usda")).unwrap();
     assert_ne!(old, new, "the update reached the new project's copy only");
 }
