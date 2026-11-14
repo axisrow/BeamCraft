@@ -1576,7 +1576,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "russia-gost-26020-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -1595,7 +1595,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 55);
+        assert_eq!(library.entries.len(), 81);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -1615,8 +1615,9 @@ mod tests {
             // The closed-form area of the declared dimensions must match the declared catalogue
             // area (the D3 1 percent warning never fires) and the declared mass must be that
             // area at 7850 kg/m3 within the standard's one-decimal rounding. 40K3 and 70B2 sit
-            // 0.073 and 0.074 off because GOST itself truncated or rounded from unrounded
-            // geometry there; the published pairs are taken as-is.
+            // 0.073 and 0.074 off, and among the Ш rows 50Sh2, 50Sh4, 60Sh1, 70Sh3 and 70Sh4 sit
+            // 0.05..0.07 off, because GOST itself truncated or rounded from unrounded geometry
+            // there; the published pairs are taken as-is.
             assert!(
                 entry.record.declared_area_warning().is_none(),
                 "{}",
@@ -1632,16 +1633,19 @@ mod tests {
             );
             designations.push(entry.designation.clone());
         }
-        // The beam (B) and column (K) series exactly as GOST 26020-83 publishes them: 37 + 18
-        // designations. The designations that belong only to the newer GOST R 57837-2017 (30K4,
-        // 35K4, 50K1..50K5) and the unshipped wide-flange (Sh) and Д series are not here.
+        // The beam (B), wide-flange (Sh) and column (K) series exactly as GOST 26020-83 publishes
+        // them: 37 + 26 + 18 designations. The designations that belong only to the newer
+        // GOST R 57837-2017 (30K4, 35K4, 50K1..50K5, 80Sh1..100Sh5) and the unshipped Д series
+        // are not here.
         let mut expected = vec![
             "10B1", "12B1", "12B2", "14B1", "14B2", "16B1", "16B2", "18B1", "18B2", "20B1", "23B1",
             "26B1", "26B2", "30B1", "30B2", "35B1", "35B2", "40B1", "40B2", "45B1", "45B2", "50B1",
             "50B2", "55B1", "55B2", "60B1", "60B2", "70B1", "70B2", "80B1", "80B2", "90B1", "90B2",
-            "100B1", "100B2", "100B3", "100B4", "20K1", "20K2", "23K1", "23K2", "26K1", "26K2",
-            "26K3", "30K1", "30K2", "30K3", "35K1", "35K2", "35K3", "40K1", "40K2", "40K3", "40K4",
-            "40K5",
+            "100B1", "100B2", "100B3", "100B4", "20Sh1", "23Sh1", "26Sh1", "26Sh2", "30Sh1",
+            "30Sh2", "30Sh3", "35Sh1", "35Sh2", "35Sh3", "40Sh1", "40Sh2", "40Sh3", "50Sh1",
+            "50Sh2", "50Sh3", "50Sh4", "60Sh1", "60Sh2", "60Sh3", "60Sh4", "70Sh1", "70Sh2",
+            "70Sh3", "70Sh4", "70Sh5", "20K1", "20K2", "23K1", "23K2", "26K1", "26K2", "26K3",
+            "30K1", "30K2", "30K3", "35K1", "35K2", "35K3", "40K1", "40K2", "40K3", "40K4", "40K5",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -1662,10 +1666,13 @@ mod tests {
         };
         spot("30B1", [296.0, 140.0, 5.8, 8.5, 15.0], 4192.0, 32.9);
         spot("100B4", [1013.0, 320.0, 19.5, 32.5, 30.0], 40060.0, 314.5);
+        spot("20Sh1", [193.0, 150.0, 6.0, 9.0, 13.0], 3895.0, 30.6);
+        spot("30Sh1", [291.0, 200.0, 8.0, 11.0, 18.0], 6831.0, 53.6);
+        spot("70Sh5", [718.0, 320.0, 23.0, 36.5, 30.0], 38970.0, 305.9);
         spot("20K1", [195.0, 200.0, 6.5, 10.0, 13.0], 5282.0, 41.5);
         spot("40K5", [431.0, 400.0, 23.0, 35.5, 22.0], 37100.0, 291.2);
         for absent in [
-            "30K4", "35K4", "50K1", "20B2", "25B1", "30Sh1", "30Ш1", "24ДБ1",
+            "30K4", "35K4", "50K1", "20B2", "25B1", "80Sh1", "30Ш1", "24ДБ1",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,

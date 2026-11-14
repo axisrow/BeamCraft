@@ -71,19 +71,25 @@ fn num(json: &Json, path: &[&str]) -> f64 {
 #[test]
 fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     let f = Fixture::new();
-    let listed = f.ok(&["list-library", "--environment", ENVIRONMENT]);
+    let listed = f.ok(&[
+        "list-library",
+        "--environment",
+        ENVIRONMENT,
+        "--limit",
+        "81",
+    ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "russia");
-    assert_eq!(num(&listed, &["entry_count"]), 55.0);
+    assert_eq!(num(&listed, &["entry_count"]), 81.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let library = &at(&listed, &["libraries"]).array().unwrap()[0];
     let info = at(library, &["library"]);
     assert_eq!(text(info, "id"), "russia-gost-26020-profiles");
-    assert_eq!(text(info, "version"), "1");
+    assert_eq!(text(info, "version"), "2");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 55);
+    assert_eq!(entries.len(), 81);
     let b30_1 = entries
         .iter()
         .find(|e| text(e, "designation") == "30B1")
@@ -91,6 +97,12 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(b30_1, "library_id"), "russia-gost-26020-profiles");
     assert_eq!(num(b30_1, &["parameters_mm", "h"]), 296.0);
     assert_eq!(num(b30_1, &["parameters_mm", "tw"]), 5.8);
+    let sh30_1 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "30Sh1")
+        .unwrap();
+    assert_eq!(num(sh30_1, &["parameters_mm", "h"]), 291.0);
+    assert_eq!(num(sh30_1, &["parameters_mm", "b"]), 200.0);
 }
 
 #[test]
@@ -156,33 +168,58 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
     assert_eq!(num(&q, &["section_area_mm2"]), 21096.0);
     close(num(&q, &["mass", "kg"]), 993.6216, 1e-9);
 
+    // A wide-flange-series designation: 50Sh2, catalogue area 17660 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "8000,0,0",
+        "--end",
+        "14000,0,0",
+        "--profile",
+        "50Sh2",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 17660.0);
+    // 17660 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 831.786, 1e-9);
+
     // A designation the shipped series does not publish is refused, not silently substituted:
-    // 30K4 exists only in the newer GOST R 57837-2017, and the inclined-flange series of
-    // GOST 8239-89 are not shipped.
-    assert_eq!(
-        f.code(&[
-            "create-member",
-            "--store",
-            &store,
-            "--kind",
-            "beam",
-            "--start",
-            "0,0,0",
-            "--end",
-            "6000,0,0",
-            "--profile",
-            "30K4",
-            "--material",
-            "Steel"
-        ]),
-        "NOT_FOUND"
-    );
+    // 30K4 and 80Sh1 exist only in the newer GOST R 57837-2017, and the inclined-flange series
+    // of GOST 8239-89 are not shipped.
+    for absent in ["30K4", "80Sh1"] {
+        assert_eq!(
+            f.code(&[
+                "create-member",
+                "--store",
+                &store,
+                "--kind",
+                "beam",
+                "--start",
+                "0,0,0",
+                "--end",
+                "6000,0,0",
+                "--profile",
+                absent,
+                "--material",
+                "Steel"
+            ]),
+            "NOT_FOUND",
+            "{absent}"
+        );
+    }
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 2);
+    assert_eq!(members.len(), 3);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
