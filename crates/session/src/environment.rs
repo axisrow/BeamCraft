@@ -489,5 +489,12 @@ mod tests {
             )),
             "the base blank environment ships with the program"
         );
+        assert!(
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "europe"
+            )),
+            "the shipped regional europe environment reads"
+        );
     }
 }

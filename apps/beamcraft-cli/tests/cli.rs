@@ -41,6 +41,7 @@ mod drawing_codec;
 mod drawing_drafting;
 mod element_filters;
 mod environments;
+mod europe_environment;
 mod export_ifc;
 mod f04_cases;
 mod f06_cases;
