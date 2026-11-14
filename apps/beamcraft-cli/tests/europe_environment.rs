@@ -68,7 +68,13 @@ fn close(got: f64, want: f64, tolerance: f64) {
 fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     let f = Fixture::new();
     // The pack outgrew the default listing page (64), so the listing asks for one full page.
-    let listed = f.ok(&["list-library", "--environment", ENVIRONMENT, "--limit", "128"]);
+    let listed = f.ok(&[
+        "list-library",
+        "--environment",
+        ENVIRONMENT,
+        "--limit",
+        "128",
+    ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "europe");
     assert_eq!(num(&listed, &["entry_count"]), 69.0);
