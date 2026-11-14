@@ -68,7 +68,13 @@ fn close(got: f64, want: f64, tolerance: f64) {
 fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     let f = Fixture::new();
     // The environment now lists two profile libraries; --limit keeps every entry on one page.
-    let listed = f.ok(&["list-library", "--environment", ENVIRONMENT, "--limit", "256"]);
+    let listed = f.ok(&[
+        "list-library",
+        "--environment",
+        ENVIRONMENT,
+        "--limit",
+        "256",
+    ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "europe");
     assert_eq!(num(&listed, &["entry_count"]), 107.0);

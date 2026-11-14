@@ -73,7 +73,13 @@ fn num(json: &Json, path: &[&str]) -> f64 {
 #[test]
 fn the_europe_environment_lists_both_profile_libraries_and_their_hollow_rows() {
     let f = Fixture::new();
-    let listed = f.ok(&["list-library", "--environment", ENVIRONMENT, "--limit", "256"]);
+    let listed = f.ok(&[
+        "list-library",
+        "--environment",
+        ENVIRONMENT,
+        "--limit",
+        "256",
+    ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "europe");
     // The hot-rolled pack and the cold-formed hollow pack are both listed, in manifest order.
