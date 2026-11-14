@@ -20,7 +20,7 @@ use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_commands::edit::{UpdateRequest, UpdatedPart, update_element};
 use beamcraft_commands::history::{Direction, Step, step, timeline};
 use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
-use beamcraft_commands::library::{Lookup, open_lookup};
+use beamcraft_commands::library::{Lookup, load_environment, open_lookup};
 use beamcraft_commands::member::{
     CreateCurvedBeamRequest, CreateMemberRequest, CreatePolybeamRequest, create_curved_beam,
     create_member, create_polybeam,
@@ -5098,6 +5098,27 @@ fn project_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
         .to_str()
         .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
     open_lookup(None, Some(file), None).map(|(lookup, _)| Some(lookup))
+}
+
+/// The fastener resolver over the project's own environment copy, when the environment
+/// declares fastener libraries. A project whose environment has none keeps the explicit
+/// `--fastener-library` file requirement, exactly as before fastener libraries rode
+/// environments.
+pub(crate) fn project_fastener_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
+    let Some(store) = options.get("--store") else {
+        return Ok(None);
+    };
+    let Some(file) = project_environment_file(std::path::Path::new(store)) else {
+        return Ok(None);
+    };
+    let file = file
+        .to_str()
+        .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
+    let environment = load_environment(file)?;
+    if environment.fastener_sources.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(environment.fastener_lookup()))
 }
 
 /// Defines the profile `name` of the project's environment in the model and returns its digest;

@@ -403,20 +403,25 @@ fn run(args: &[OsString]) -> Run<Json> {
             .transpose()
     };
     let optional_flag = |key: &str| -> Run<Option<bool>> { given(key).map(boolean).transpose() };
-    // The definition travels by designation through one library file; the entry carries every
-    // value, so the model never needs the file again.
+    // The definition travels by designation: through the fastener libraries of the project's
+    // own environment copy (`create-project --environment`, BC-ENV-002), or through one
+    // `--fastener-library` file when the project has none or names it explicitly. The entry
+    // carries every value, so the model never needs the library file again.
     let library_definition = |options: &BTreeMap<&str, &str>| -> Run<DefinitionRecord> {
-        let path = options
-            .get("--fastener-library")
-            .ok_or_else(|| invalid("--fastener-library is required"))?;
         let designation = options
             .get("--designation")
             .ok_or_else(|| invalid("--designation is required"))?;
-        let library = load_fastener(path)?;
-        let lookup = Lookup::new(vec![Source {
-            path: (*path).to_owned(),
-            library,
-        }]);
+        let lookup = match options.get("--fastener-library") {
+            Some(path) => {
+                let library = load_fastener(path)?;
+                Lookup::new(vec![Source {
+                    path: (*path).to_owned(),
+                    library,
+                }])
+            }
+            None => crate::plate_cmd::project_fastener_lookup(options)?
+                .ok_or_else(|| invalid("--fastener-library is required"))?,
+        };
         let (_, entry) = lookup.find(designation)?;
         match &entry.record {
             record @ DefinitionRecord::Fastener { .. } => Ok(record.clone()),
@@ -578,7 +583,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         && !beamcraft_commands::bolt::op_accepted(&store, &context.op_id)?
     {
         return Err(invalid(
-            "--repin needs --fastener-library and --designation",
+            "--repin needs --designation (through the project environment or --fastener-library)",
         ));
     }
     let definition = match (&current, repin || from_library) {
@@ -592,7 +597,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         }
         (None, false) => {
             return Err(invalid(
-                "upgrading an A05 annotation group needs --fastener-library and --designation",
+                "upgrading an A05 annotation group needs --designation (through the project environment or --fastener-library)",
             ));
         }
     };

@@ -658,17 +658,71 @@ impl Lookup {
 pub struct Environment {
     /// The environment file's own declarations.
     pub info: EnvironmentInfo,
-    /// The listed libraries, strongest first.
+    /// The listed profile libraries, strongest first.
     pub sources: Vec<Source>,
+    /// The listed fastener libraries, strongest first (BC-ENV-002: bolts ride the same
+    /// environment as profiles).
+    pub fastener_sources: Vec<Source>,
+}
+
+impl Environment {
+    /// The resolver over the environment's fastener libraries, strongest first: the same
+    /// [`Lookup`] machinery that answers profile designations answers fastener ones. The two
+    /// namespaces stay separate; a profile library never answers a bolt lookup.
+    #[must_use]
+    pub fn fastener_lookup(&self) -> Lookup {
+        Lookup::new(self.fastener_sources.clone())
+    }
+}
+
+/// Admits one listed library of an environment: its provenance is declared (`bim:library:source`
+/// and `bim:library:licence`, empty is undeclared) and its `bim:library:id` is new among every
+/// library of the environment, profile or fastener. A single-file `--library` needs no
+/// provenance, so the rule lives here, at the environment's edge.
+fn admit_library(
+    sources: &mut Vec<Source>,
+    ids: &mut Vec<String>,
+    path: String,
+    library: Library,
+) -> Result<(), Refusal> {
+    if library.info.source.as_ref().is_none_or(String::is_empty) {
+        return Err(invalid(
+            "a library of the environment declares no bim:library:source",
+        ));
+    }
+    if library.info.licence.as_ref().is_none_or(String::is_empty) {
+        return Err(invalid(
+            "a library of the environment declares no bim:library:licence",
+        ));
+    }
+    if ids.contains(&library.info.id) {
+        return Err(invalid(
+            "two libraries of the environment have the same bim:library:id",
+        ));
+    }
+    ids.push(library.info.id.clone());
+    sources.push(Source { path, library });
+    Ok(())
+}
+
+/// Resolves one listed reference against the environment directory.
+fn resolve_reference(directory: &std::path::Path, reference: &str) -> Result<String, Refusal> {
+    let resolved = directory.join(reference);
+    resolved
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| invalid("an environment library path is not UTF-8"))
 }
 
 /// Loads an environment file and every library it lists, in order.
 ///
 /// Each listed path is resolved against the directory of the environment file and loaded with
-/// [`load`], so every library keeps its own bounds and admission. A library that cannot be
-/// loaded, or two listed libraries with the same `bim:library:id`, refuse the whole environment:
-/// a missing library would silently change which section a designation selects. The containment
-/// of a listed path is lexical; the files themselves are read like any `--library` file.
+/// [`load`] (profile libraries) or [`load_fastener`] (fastener libraries), so every library
+/// keeps its own bounds and admission. A library that cannot be loaded, one that declares no
+/// `source` or `licence`, or two listed libraries with the same `bim:library:id`, refuse the
+/// whole environment: a missing library would silently change which section or bolt a
+/// designation selects. The containment of a listed path is lexical; the files themselves are
+/// read like any `--library` file.
 pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     check_source_path(path).map_err(command)?;
     let bytes = read_file(path, MAX_ENVIRONMENT_BYTES).map_err(|code| match code {
@@ -684,25 +738,24 @@ pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
+    let mut ids: Vec<String> = Vec::new();
     let mut sources: Vec<Source> = Vec::with_capacity(info.libraries.len());
     for reference in &info.libraries {
-        let resolved = directory.join(reference);
-        let resolved = resolved
-            .to_str()
-            .ok_or_else(|| invalid("an environment library path is not UTF-8"))?
-            .to_owned();
+        let resolved = resolve_reference(&directory, reference)?;
         let library = load(&resolved)?;
-        if sources.iter().any(|s| s.library.info.id == library.info.id) {
-            return Err(invalid(
-                "two libraries of the environment have the same bim:library:id",
-            ));
-        }
-        sources.push(Source {
-            path: resolved,
-            library,
-        });
+        admit_library(&mut sources, &mut ids, resolved, library)?;
     }
-    Ok(Environment { info, sources })
+    let mut fastener_sources: Vec<Source> = Vec::with_capacity(info.fastener_libraries.len());
+    for reference in &info.fastener_libraries {
+        let resolved = resolve_reference(&directory, reference)?;
+        let library = load_fastener(&resolved)?;
+        admit_library(&mut fastener_sources, &mut ids, resolved, library)?;
+    }
+    Ok(Environment {
+        info,
+        sources,
+        fastener_sources,
+    })
 }
 
 /// The lookup that a command names: exactly one of a single `--library` file or an
@@ -1566,6 +1619,127 @@ mod tests {
                 "{absent} is not in the series"
             );
         }
+    }
+
+    #[test]
+    fn the_shipped_europe_environment_admits_its_fastener_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "europe");
+        assert_eq!(environment.info.fastener_libraries, ["din-fasteners.usda"]);
+        // The profile namespace is unchanged by the fastener listing.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.sources[0].library.entries.len(), 55);
+        // The DIN fastener set rides the same environment, admitted with declared provenance.
+        assert_eq!(environment.fastener_sources.len(), 1);
+        let bolts = &environment.fastener_sources[0];
+        assert_eq!(bolts.library.info.id, "beamcraft-din-fasteners");
+        assert_eq!(bolts.library.entries.len(), 3);
+        assert!(bolts.library.rejected.is_empty());
+        assert!(
+            bolts
+                .library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty())
+                && bolts
+                    .library
+                    .info
+                    .licence
+                    .as_deref()
+                    .is_some_and(|l| !l.is_empty()),
+            "the shipped fastener library declares its provenance"
+        );
+        // Bolt lookups ride the same resolver machinery, in their own namespace.
+        let lookup = environment.fastener_lookup();
+        let m12 = lookup.find("M12").unwrap().1;
+        assert!(
+            matches!(&m12.record, DefinitionRecord::Fastener { spec } if spec.nominal_diameter_mm == 12.0 && spec.lengths_mm.contains(&80.0))
+        );
+        // A designation the set does not publish is NOT_FOUND, never a near match.
+        for absent in ["M24", "M12x80", "m12"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_environment_library_without_provenance_is_refused() {
+        let dir =
+            std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| {
+            std::fs::write(dir.join(name), text).unwrap();
+        };
+        // A profile library whose licence is missing, and a fastener one whose source is.
+        let library = |id: &str, scope: &str, entry_body: &str, declared: &str| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"{id}\"{declared}\n    }}\n)\ndef Scope \"Library\" {{\n    def Scope \"{scope}\" {{\n{entry_body}\n    }}\n}}\n"
+            )
+        };
+        let profile = library(
+            "p",
+            "Profiles",
+            &entry("A", "P-1", I_BODY),
+            "\n        string \"bim:library:source\" = \"s\"",
+        );
+        let complete = library(
+            "pc",
+            "Profiles",
+            &entry("A", "P-1", I_BODY),
+            "\n        string \"bim:library:source\" = \"s\"\n        string \"bim:library:licence\" = \"MPL-2.0\"",
+        );
+        let fastener = library(
+            "f",
+            "Fasteners",
+            &fastener_entry("B", "F-1", BOLT_BODY),
+            "\n        string \"bim:library:licence\" = \"MPL-2.0\"",
+        );
+        write("profiles-nolicence.usda", &profile);
+        write("profiles-complete.usda", &complete);
+        write("fasteners-nosource.usda", &fastener);
+        let env = |profiles: &str, fasteners: Option<&str>| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}\n    }}\n)\n",
+                match fasteners {
+                    Some(name) => format!(
+                        "\n        string[] \"bim:environment:fastener-libraries\" = [\"{name}\"]"
+                    ),
+                    None => String::new(),
+                }
+            )
+        };
+        write(
+            "no-profile-licence.usda",
+            &env("profiles-nolicence.usda", None),
+        );
+        write(
+            "no-fastener-source.usda",
+            &env("profiles-complete.usda", Some("fasteners-nosource.usda")),
+        );
+        let refused =
+            load_environment(dir.join("no-profile-licence.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("licence"),
+            "the missing record is named: {refused:?}"
+        );
+        let refused =
+            load_environment(dir.join("no-fastener-source.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("source"),
+            "the fastener library's missing record is named: {refused:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

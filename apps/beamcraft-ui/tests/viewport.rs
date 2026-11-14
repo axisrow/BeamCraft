@@ -824,7 +824,7 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
     // standard 90 mm, so the pin reads the stack, not the box-conservative grip of defect B.
     let library = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/libraries/din-fasteners.usda"
+        "/../../environments/europe/din-fasteners.usda"
     );
     run(
         &cli,
@@ -980,7 +980,7 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
     );
     let library = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/libraries/din-fasteners.usda"
+        "/../../environments/europe/din-fasteners.usda"
     );
     run(
         &cli,

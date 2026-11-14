@@ -42,6 +42,7 @@ mod drawing_drafting;
 mod element_filters;
 mod environments;
 mod europe_environment;
+mod europe_fasteners;
 mod europe_hollow_environment;
 mod export_ifc;
 mod f04_cases;
