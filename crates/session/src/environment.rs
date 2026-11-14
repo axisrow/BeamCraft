@@ -27,6 +27,9 @@ use std::path::{Path, PathBuf};
 pub const ENVIRONMENT_FILE: &str = "environment.usda";
 /// Name of the folder of environments, next to the program and in the user's settings directory.
 pub const ENVIRONMENTS_DIR: &str = "environments";
+/// Name of the folder of the user's own libraries, in the user's settings directory beside its
+/// [`ENVIRONMENTS_DIR`].
+pub const LIBRARIES_DIR: &str = "libraries";
 /// Largest environment file, in bytes.
 pub const MAX_ENVIRONMENT_BYTES: usize = 1024 * 1024;
 /// Most libraries one environment may list; more is `LIMIT_EXCEEDED`.
@@ -232,6 +235,37 @@ pub fn environment_folders(
         folders.push((user.clone(), "user"));
     }
     (folders, user)
+}
+
+/// The folder of the user's own libraries: `libraries/` under the application data directory
+/// (`config_dir`, or the settings directory of the current user when `config_dir` is `None`),
+/// beside its [`ENVIRONMENTS_DIR`]. The folder is where a person keeps library files of their
+/// own; the programs never create or write it, and no lookup reads it yet — the user-owned
+/// layer above the environment of the Layering work will.
+#[must_use]
+pub fn libraries_dir(config_dir: Option<&Path>) -> Option<PathBuf> {
+    config_dir
+        .map(Path::to_path_buf)
+        .or_else(settings::default_dir)
+        .map(|dir| dir.join(LIBRARIES_DIR))
+}
+
+/// The file of the environment `id` among `folders`: the first ready one that no earlier
+/// environment of the same id shadows, the answer [`list_environments`] reports for it. `None`
+/// when no folder holds an environment of that id, or every one of that id is shadowed or
+/// refused.
+#[must_use]
+pub fn find_environment(folders: &[(PathBuf, &'static str)], id: &str) -> Option<PathBuf> {
+    list_environments(folders)
+        .into_iter()
+        .find_map(|entry| match entry.state {
+            EnvironmentState::Ready {
+                id: ready,
+                shadowed: false,
+                ..
+            } if ready == id => Some(entry.path),
+            _ => None,
+        })
 }
 
 /// The environments of the given folders (each `(folder, origin)`), in folder order and by folder
@@ -465,6 +499,60 @@ mod tests {
                 .filter(|e| matches!(e.state, EnvironmentState::Refused(_)))
                 .count(),
             1
+        );
+        let _ = fs::remove_dir_all(&builtin);
+        let _ = fs::remove_dir_all(&user);
+    }
+
+    #[test]
+    fn the_libraries_folder_sits_beside_the_environments_folder() {
+        let dir = scratch("libraries");
+        assert_eq!(
+            libraries_dir(Some(&dir)),
+            Some(dir.join(LIBRARIES_DIR)),
+            "libraries/ under the given application data directory"
+        );
+        assert_eq!(
+            libraries_dir(None),
+            settings::default_dir().map(|d| d.join(LIBRARIES_DIR))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_environment_answers_the_first_ready_one_of_its_id() {
+        let builtin = scratch("find-builtin");
+        let user = scratch("find-user");
+        put(&builtin, "one", &layer("shared", "[\"p.usda\"]"));
+        put(&user, "again", &layer("shared", "[\"p.usda\"]"));
+        put(&user, "other", &layer("other", "[\"p.usda\"]"));
+        put(&user, "broken", "not a layer");
+        let folders = [(builtin.clone(), "builtin"), (user.clone(), "user")];
+        let shared = find_environment(&folders, "shared");
+        assert!(
+            shared
+                .as_ref()
+                .is_some_and(|p| p.ends_with("one/environment.usda")),
+            "the first folder's environment answers: {shared:?}"
+        );
+        let other = find_environment(&folders, "other");
+        assert!(
+            other
+                .as_ref()
+                .is_some_and(|p| p.ends_with("other/environment.usda")),
+            "a later folder's own id is found: {other:?}"
+        );
+        assert!(shared.is_some_and(|p| p.is_file()) && other.is_some_and(|p| p.is_file()));
+        assert_eq!(
+            find_environment(&folders, "missing"),
+            None,
+            "no folder holds that id"
+        );
+        let user_only = [(user.clone(), "user")];
+        assert!(
+            find_environment(&user_only, "shared")
+                .is_some_and(|p| p.ends_with("again/environment.usda")),
+            "with the first folder gone the user's copy answers"
         );
         let _ = fs::remove_dir_all(&builtin);
         let _ = fs::remove_dir_all(&user);
