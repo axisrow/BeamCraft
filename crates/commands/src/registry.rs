@@ -1306,7 +1306,11 @@ pub const COMMANDS: &[Command] = &[
         "welds",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT")],
+        &[
+            req("--store", "ROOT"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Bolt,
@@ -1379,7 +1383,11 @@ pub const COMMANDS: &[Command] = &[
         "bolts",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT")],
+        &[
+            req("--store", "ROOT"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Fastener,
@@ -1690,7 +1698,12 @@ pub const COMMANDS: &[Command] = &[
         "list-grids",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT"), opt("--connection", "UUID")],
+        &[
+            req("--store", "ROOT"),
+            opt("--connection", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Grid,
@@ -2425,7 +2438,12 @@ pub const COMMANDS: &[Command] = &[
         "list-feature",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT"), req("--id", "UUID")],
+        &[
+            req("--store", "ROOT"),
+            req("--id", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Pick,

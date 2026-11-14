@@ -4199,6 +4199,19 @@ pub(crate) fn fit_page(
     }
 }
 
+/// The legacy full reply of a listing (no paging options given): returned as is when it fits
+/// the output budget, refused with the way out named when it does not — never truncated.
+pub(crate) fn whole_listing(reply: Json, message: &'static str) -> Run<Json> {
+    if reply.encode(&Limits::DEFAULT).is_err() {
+        return Err(Refusal {
+            rule_id: None,
+            code: ErrorCode::LimitExceeded,
+            message,
+        });
+    }
+    Ok(reply)
+}
+
 /// The plates that pin each material, in the order of `plates` (element-id order): the
 /// `used_by` list of `definitions`, built once instead of scanning every plate for every listed
 /// definition. Members are not listed, as before.
