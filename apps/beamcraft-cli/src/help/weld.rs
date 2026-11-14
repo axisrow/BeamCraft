@@ -13,6 +13,8 @@ pub(super) const HELP: &str = concat!(
     "towards two distinct plates, beams or columns, main part first; the parts are only ",
     "read; no default for size, location or side; --path derives the fillet solid along the ",
     "polyline and stores the symbol data, --all-around and --contour need --path); welds ",
-    "--store ROOT (verified head: welds, parts, properties, path length and volume). ",
+    "--store ROOT (verified head: welds, parts, properties, path length and volume; ",
+    "[--offset N --limit N] pages it in stored order, each page carrying weld_count, ",
+    "offset, page_size and next_offset, null on the last page). ",
     "delete-element refuses a welded part while the weld connects it and deletes a weld",
 );
