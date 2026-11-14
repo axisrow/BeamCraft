@@ -150,6 +150,27 @@ pub struct MemberForm {
 /// The column height the form starts with, in millimetres.
 pub const DEFAULT_COLUMN_HEIGHT: &str = "3000";
 
+impl MemberForm {
+    /// Points an untouched precise end at the kind's own default: a column's top straight
+    /// above its base at the form's height, a beam's end 1000 mm along X. A column started
+    /// with the beam's horizontal end, which the base-then-height hint contradicted (the 562
+    /// recheck). An end the user typed is kept.
+    pub fn default_end_for_kind(&mut self) {
+        let beam_end = ["1000", "0", "0"];
+        let column_end = ["0", "0", self.height.as_str()];
+        let untouched = self.start.iter().all(|v| v == "0")
+            && (self.end.iter().zip(beam_end).all(|(v, d)| v == d)
+                || self.end.iter().zip(column_end).all(|(v, d)| v == d));
+        if !untouched {
+            return;
+        }
+        self.end = match self.kind {
+            MemberKind::Column => ["0".into(), "0".into(), self.height.clone()],
+            MemberKind::Beam => beam_end.map(String::from),
+        };
+    }
+}
+
 impl Default for MemberForm {
     fn default() -> Self {
         Self {
@@ -1231,6 +1252,27 @@ impl Tools {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_column_starts_with_its_top_above_its_base() {
+        let mut form = MemberForm {
+            kind: MemberKind::Column,
+            ..MemberForm::default()
+        };
+        form.default_end_for_kind();
+        assert_eq!(
+            form.end,
+            ["0", "0", DEFAULT_COLUMN_HEIGHT].map(String::from)
+        );
+        form.kind = MemberKind::Beam;
+        form.default_end_for_kind();
+        assert_eq!(form.end, ["1000", "0", "0"].map(String::from));
+        // A typed end is the user's and stays.
+        form.end = ["5", "6", "7"].map(String::from);
+        form.kind = MemberKind::Column;
+        form.default_end_for_kind();
+        assert_eq!(form.end, ["5", "6", "7"].map(String::from));
+    }
 
     fn store() -> &'static Path {
         Path::new("S")

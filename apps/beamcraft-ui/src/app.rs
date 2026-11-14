@@ -656,6 +656,10 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
+/// The Level value of a part with no level: short enough for the narrow value cell, where
+/// "Not assigned" was cut to "Not assig…" (the 562 recheck).
+const LEVEL_NONE: &str = "None";
+
 /// The colour panel's note while a set picked in the list differs from the set shown: the
 /// legend below still describes the shown one.
 fn colour_pick_pending_text(shown: &str, pick: &str) -> String {
@@ -2510,7 +2514,7 @@ impl App {
                 }
                 crate::kit::section(ui, "part", "Placement", true, |ui| {
                     let level_label = self.props.form.level.as_ref().map_or_else(
-                        || "Not assigned".into(),
+                        || LEVEL_NONE.into(),
                         |id| level_choice_label(id, &details.levels),
                     );
                     mark(ui, self.props.form.level != base.level);
@@ -2520,11 +2524,7 @@ impl App {
                             .truncate()
                             .selected_text(level_label)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut self.props.form.level,
-                                    None,
-                                    "Not assigned",
-                                );
+                                ui.selectable_value(&mut self.props.form.level, None, LEVEL_NONE);
                                 for (id, _, _) in &details.levels {
                                     ui.selectable_value(
                                         &mut self.props.form.level,

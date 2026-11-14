@@ -460,11 +460,13 @@ impl App {
             Bench::Beam => {
                 self.tools.active = ToolKind::Member;
                 self.tools.member.kind = MemberKind::Beam;
+                self.tools.member.default_end_for_kind();
                 self.tools.use_preset("beam", None);
             }
             Bench::Column => {
                 self.tools.active = ToolKind::Member;
                 self.tools.member.kind = MemberKind::Column;
+                self.tools.member.default_end_for_kind();
                 self.tools.use_preset("column", None);
             }
             Bench::Move | Bench::Copy | Bench::Delete => {

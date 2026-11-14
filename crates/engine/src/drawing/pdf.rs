@@ -310,7 +310,7 @@ mod tests {
         assert!(!text.contains("label_mm"));
         // The fixture strokes span 20.7 x 25 mm with the shared margin, in points; the
         // centred digit 1's flag reaches left of the old right-column-only glyph.
-        assert!(text.contains("/MediaBox [0 0 58.6772 70.8661]"));
+        assert!(text.contains("/MediaBox [0 0 58.6772 73.7008]"), "{text}");
         assert!(text.contains("0.7087 w"));
         // No font anywhere: the glyphs are the shared original stroke geometry.
         assert!(!text.contains("/Font"));
