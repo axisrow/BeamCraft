@@ -67,23 +67,24 @@ fn close(got: f64, want: f64, tolerance: f64) {
 #[test]
 fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     let f = Fixture::new();
-    let listed = f.ok(&["list-library", "--environment", ENVIRONMENT]);
+    // The pack outgrew the default listing page (64), so the listing asks for one full page.
+    let listed = f.ok(&["list-library", "--environment", ENVIRONMENT, "--limit", "128"]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "europe");
-    assert_eq!(num(&listed, &["entry_count"]), 55.0);
+    assert_eq!(num(&listed, &["entry_count"]), 69.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let library = &at(&listed, &["libraries"]).array().unwrap()[0];
     let info = at(library, &["library"]);
     assert_eq!(text(info, "id"), "europe-en-10365-profiles");
     assert_eq!(
         text(info, "title"),
-        "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB)"
+        "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, UPE)"
     );
-    assert_eq!(text(info, "version"), "1");
+    assert_eq!(text(info, "version"), "2");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 55);
+    assert_eq!(entries.len(), 69);
     let ipe300 = entries
         .iter()
         .find(|e| text(e, "designation") == "IPE300")
@@ -91,6 +92,16 @@ fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(ipe300, "library_id"), "europe-en-10365-profiles");
     assert_eq!(num(ipe300, &["parameters_mm", "h"]), 300.0);
     assert_eq!(num(ipe300, &["parameters_mm", "tw"]), 7.1);
+    // The UPE channels ship as the pack's parallel-flange channel series.
+    let upe100 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "UPE100")
+        .unwrap();
+    assert_eq!(num(upe100, &["parameters_mm", "h"]), 100.0);
+    assert_eq!(num(upe100, &["parameters_mm", "b"]), 55.0);
+    assert_eq!(num(upe100, &["parameters_mm", "tw"]), 4.5);
+    assert_eq!(num(upe100, &["parameters_mm", "tf"]), 7.5);
+    assert_eq!(num(upe100, &["parameters_mm", "r"]), 10.0);
 }
 
 #[test]
@@ -156,31 +167,56 @@ fn a_project_created_with_the_europe_environment_resolves_its_designations() {
     assert_eq!(num(&q, &["section_area_mm2"]), 13350.0);
     close(num(&q, &["mass", "kg"]), 628.785, 1e-9);
 
-    // A designation the series does not publish is refused, not silently substituted.
-    assert_eq!(
-        f.code(&[
-            "create-member",
-            "--store",
-            &store,
-            "--kind",
-            "beam",
-            "--start",
-            "0,0,0",
-            "--end",
-            "6000,0,0",
-            "--profile",
-            "IPE250",
-            "--material",
-            "Steel"
-        ]),
-        "NOT_FOUND"
-    );
+    // A designation of the channel series: UPE100, catalogue area 1250 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "8000,0,0",
+        "--end",
+        "14000,0,0",
+        "--profile",
+        "UPE100",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 1250.0);
+    // 1250 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 58.875, 1e-9);
+
+    // A designation the series does not publish is refused, not silently substituted: no IPE 250
+    // and no UPE 250 exist (the channel sequence steps 240 to 270).
+    for absent_profile in ["IPE250", "UPE250"] {
+        assert_eq!(
+            f.code(&[
+                "create-member",
+                "--store",
+                &store,
+                "--kind",
+                "beam",
+                "--start",
+                "0,0,0",
+                "--end",
+                "6000,0,0",
+                "--profile",
+                absent_profile,
+                "--material",
+                "Steel"
+            ]),
+            "NOT_FOUND"
+        );
+    }
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 2);
+    assert_eq!(members.len(), 3);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
