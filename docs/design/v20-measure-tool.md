@@ -74,7 +74,7 @@ Named after `measure-reference`, per the F04 verb-first rule. One JSON object, e
   "outcome": "point_distance",
   "revision": { "…the verified head, as the other read-only commands print it…" },
   "from":  { "point_mm": [0.0, 0.0, 0.0], "feature_id": null },
-  "to":    { "point_mm": [3000.0, 0.0, 4000.0], "feature_id": "fid1:…:plate:v.p2" },
+  "to":    { "point_mm": [3000.0, 0.0, 4000.0], "feature_id": "fid1:…:plate:v.x1.y0.z1" },
   "delta_mm": [3000.0, 0.0, 4000.0],
   "distance_mm": 5000.0
 }
