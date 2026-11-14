@@ -55,7 +55,9 @@ fn printed(result: Result<Json, Refusal>) -> Vec<u8> {
     json.encode(&beamcraft_json::Limits::DEFAULT)
         .unwrap_or_else(|_| {
             // What `print_json` prints when a reply exceeds the encoder budget.
-            b"{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}\n".to_vec()
+            let mut line = crate::report::REPLY_OVER_BUDGET_LINE.as_bytes().to_vec();
+            line.push(b'\n');
+            line
         })
 }
 
