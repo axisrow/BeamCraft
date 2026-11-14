@@ -67,17 +67,17 @@ fn close(got: f64, want: f64, tolerance: f64) {
 #[test]
 fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     let f = Fixture::new();
-    // The pack outgrew the default listing page (64), so the listing asks for one full page.
+    // The environment now lists two profile libraries; --limit keeps every entry on one page.
     let listed = f.ok(&[
         "list-library",
         "--environment",
         ENVIRONMENT,
         "--limit",
-        "128",
+        "256",
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "europe");
-    assert_eq!(num(&listed, &["entry_count"]), 69.0);
+    assert_eq!(num(&listed, &["entry_count"]), 121.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let library = &at(&listed, &["libraries"]).array().unwrap()[0];
     let info = at(library, &["library"]);
@@ -90,7 +90,7 @@ fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 69);
+    assert_eq!(entries.len(), 121);
     let ipe300 = entries
         .iter()
         .find(|e| text(e, "designation") == "IPE300")
