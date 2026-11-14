@@ -11,12 +11,14 @@ saved setting.
 
 ## What changed
 
-* `environments/blank/` is the one built-in A07.3 environment and the base for other
-  environments. Its library has nineteen generic profiles (I, H, channel, angle, RHS, SHS, CHS,
-  bar and one cold-formed C). Every value is invented and rounded; none follows a standard or
-  catalogue (`AGENTS.md` 1.2). The start window prefers it when no environment is saved. These
-  profiles first shipped as a separate `starter` environment next to an empty `blank`; the two
-  were merged on 2026-11-01 so that the base environment is usable on its own.
+* `environments/blank/` is the built-in A07.3 base environment. Its library has nineteen generic
+  profiles (I, H, channel, angle, RHS, SHS, CHS, bar and one cold-formed C). Every value is
+  invented and rounded; none follows a standard or catalogue (`AGENTS.md` 1.2). The start window
+  prefers it when no environment is saved. These profiles first shipped as a separate `starter`
+  environment next to an empty `blank`; the two were merged on 2026-11-01 so that the base
+  environment is usable on its own. The first regional environment shipped beside it on
+  2026-11-14: `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal
+  dimensions (see `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or

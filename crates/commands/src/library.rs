@@ -1448,4 +1448,123 @@ mod tests {
             ErrorCode::PermissionDenied
         );
     }
+
+    #[test]
+    fn the_shipped_europe_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/profiles-en-10365.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "europe-en-10365-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 55);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("EN 10365:2022"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires) and the declared mass must be that
+            // area at the standard's 7850 kg/m3 within its published rounding.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() <= 0.55,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
+        // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270).
+        assert_eq!(
+            designations,
+            [
+                "HEA100", "HEA120", "HEA140", "HEA160", "HEA180", "HEA200", "HEA220", "HEA240",
+                "HEA260", "HEA280", "HEA300", "HEA320", "HEA340", "HEA360", "HEA400", "HEA450",
+                "HEA500", "HEA550", "HEA600", "HEB100", "HEB120", "HEB140", "HEB160", "HEB180",
+                "HEB200", "HEB220", "HEB240", "HEB260", "HEB280", "HEB300", "HEB320", "HEB340",
+                "HEB360", "HEB400", "HEB450", "HEB500", "HEB550", "HEB600", "IPE100", "IPE120",
+                "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
+                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600",
+            ]
+        );
+        // Spot checks against the transcribed values.
+        let ipe300 = library.entry("IPE300").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &ipe300.record
+        else {
+            panic!("IPE300 is not a parametric section");
+        };
+        assert_eq!(p.values(), [300.0, 150.0, 7.1, 10.7, 15.0]);
+        assert_eq!(section.area_mm2, Some(5381.0));
+        assert_eq!(section.mass_per_meter_kg, Some(42.2));
+        let hea340 = library.entry("HEA340").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hea340.record
+        else {
+            panic!("HEA340 is not a parametric section");
+        };
+        assert_eq!(p.values(), [330.0, 300.0, 9.5, 16.5, 27.0]);
+        assert_eq!(section.area_mm2, Some(13350.0));
+        assert_eq!(section.mass_per_meter_kg, Some(105.0));
+        let heb100 = library.entry("HEB100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &heb100.record
+        else {
+            panic!("HEB100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 100.0, 6.0, 10.0, 12.0]);
+        assert_eq!(section.area_mm2, Some(2600.0));
+        assert_eq!(section.mass_per_meter_kg, Some(20.4));
+        for absent in ["IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700"] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the series"
+            );
+        }
+    }
 }
