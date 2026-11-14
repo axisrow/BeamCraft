@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "india"
+        string "bim:environment:title" = "India (IS 808:2021)"
+        string[] "bim:environment:libraries" = ["profiles-is808-npb.usda"]
+    }
+)
