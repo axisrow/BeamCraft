@@ -135,7 +135,7 @@ remove-hole --store ROOT --id UUID --operation-id UUID [--op-id UUID] [--revisio
 read.
 
 ```text
-inspect-elements --store ROOT [--element UUID]
+inspect-elements --store ROOT [--element UUID] [--offset N] [--limit N]
 ```
 
 ## definitions

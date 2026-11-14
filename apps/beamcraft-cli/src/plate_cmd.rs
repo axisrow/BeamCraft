@@ -48,7 +48,7 @@ use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
 use session::Refusal;
 use session::pipeline::{ProjectClaim, RevisionSummary, claim_project, ensure_project};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use steel::engine::command::{Quantities, origin_rectangle_contour};
 use steel::engine::committed::MemberRecord;
@@ -551,7 +551,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
         "define-fastener" => DEFINE_FASTENER_OPTIONS,
-        "inspect-elements" => &["--store", "--element"],
+        "inspect-elements" => &["--store", "--element", "--offset", "--limit"],
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
@@ -628,7 +628,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
             define_command(&store, command, &options)
         }
         "definitions" => definitions_json(&inspect(&store)?, &options),
-        _ => Ok(inspection_json(&inspect(&store)?, element)?),
+        _ => inspect_elements_json(&inspect(&store)?, element, &options),
     }
 }
 
@@ -4800,8 +4800,91 @@ fn with_names(
 /// meshes), none when the revision does not hold it, and names it as `element_filter`; the
 /// counts still describe the whole revision. Without it the reply lists everything.
 pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) -> Run<Json> {
+    let mut reply = match only {
+        Some(id) => inspection_listing(inspection, Some(&BTreeSet::from([id])))?,
+        None => inspection_listing(inspection, None)?,
+    };
+    if let (Some(id), Json::Object(fields)) = (only, &mut reply) {
+        fields.insert("element_filter".into(), Json::text(id.to_string()));
+    }
+    Ok(reply)
+}
+
+/// The `inspect-elements` command: one element (`--element`), one page of elements
+/// (`--offset`/`--limit`) or the whole revision. The whole revision that does not fit the
+/// output budget is refused with the way out named, never truncated.
+fn inspect_elements_json(
+    inspection: &Inspection,
+    element: Option<ElementId>,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Json> {
+    let paged = options.contains_key("--offset") || options.contains_key("--limit");
+    if paged && element.is_some() {
+        return Err(invalid("--element and --offset/--limit cannot be combined"));
+    }
+    if paged {
+        return inspection_page_json(inspection, options);
+    }
+    let reply = inspection_json(inspection, element)?;
+    if element.is_none() && reply.encode(&Limits::DEFAULT).is_err() {
+        return Err(Refusal {
+            rule_id: None,
+            code: ErrorCode::LimitExceeded,
+            message: "the whole revision exceeds the output budget: page it with --offset and \
+                      --limit, or name one --element",
+        });
+    }
+    Ok(reply)
+}
+
+/// One page of the `inspect-elements` reply: the elements of the revision in element-id order
+/// (plates, members, grids and every other element of the snapshot), `--offset` first and at
+/// most `--limit` (64 by default, at most 256) of them, shrunk until the reply fits the output
+/// budget. Counts and levels describe the whole revision; `element_count`, `offset`,
+/// `page_size` and `next_offset` (null on the last page) frame the page.
+fn inspection_page_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let (offset, limit) = page_of(options)?;
+    let ids: Vec<ElementId> = inspection
+        .snapshot
+        .elements()
+        .iter()
+        .map(|e| e.id)
+        .chain(inspection.plates.iter().map(|p| p.authored.id))
+        .chain(inspection.unsupported_plates.iter().map(|p| p.authored.id))
+        .chain(inspection.members.iter().map(|m| m.authored.id))
+        .chain(inspection.grids.iter().map(|g| g.id))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let total = ids.len();
+    let available = total.saturating_sub(offset);
+    fit_page(available, limit, |count| {
+        let keep: BTreeSet<ElementId> = ids.iter().skip(offset).take(count).copied().collect();
+        let mut reply = inspection_listing(inspection, Some(&keep))?;
+        let next = offset.saturating_add(count);
+        if let Json::Object(fields) = &mut reply {
+            fields.insert("element_count".into(), Json::uint(total as u64));
+            fields.insert("offset".into(), Json::uint(offset as u64));
+            fields.insert("page_size".into(), Json::uint(keep.len() as u64));
+            fields.insert(
+                "next_offset".into(),
+                if next < total {
+                    Json::uint(next as u64)
+                } else {
+                    Json::Null
+                },
+            );
+        }
+        Ok(reply)
+    })
+}
+
+/// The `inspect-elements` reply keeping only the elements in `keep` in the lists (plates,
+/// members, grids, the snapshot's elements and their meshes); `None` keeps everything. The
+/// counts always describe the whole revision.
+fn inspection_listing(inspection: &Inspection, keep: Option<&BTreeSet<ElementId>>) -> Run<Json> {
     let snapshot = &inspection.snapshot;
-    let wanted = |id: ElementId| only.is_none_or(|o| o == id);
+    let wanted = |id: ElementId| keep.is_none_or(|k| k.contains(&id));
     let shown: Vec<_> = snapshot
         .elements()
         .iter()
@@ -4854,7 +4937,7 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
         .meshes()
         .iter()
         .filter(|m| {
-            only.is_none()
+            keep.is_none()
                 || shown.iter().any(|e| {
                     e.full.mesh_digest == m.digest() || e.simplified.mesh_digest == m.digest()
                 })
@@ -4911,7 +4994,7 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
             .unwrap_or("")
             .to_owned()
     });
-    let mut reply = Json::object([
+    let reply = Json::object([
         ("outcome", Json::text("plate_inspection")),
         ("revision", revision_json(&inspection.revision)),
         (
@@ -4930,7 +5013,7 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
                 &inspection
                     .grids
                     .iter()
-                    .filter(|g| only.is_none_or(|id| id == g.id))
+                    .filter(|g| wanted(g.id))
                     .cloned()
                     .collect::<Vec<_>>(),
             )?,
@@ -4970,9 +5053,6 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
             ]),
         ),
     ]);
-    if let (Some(id), Json::Object(fields)) = (only, &mut reply) {
-        fields.insert("element_filter".into(), Json::text(id.to_string()));
-    }
     Ok(reply)
 }
 

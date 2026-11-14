@@ -27,7 +27,7 @@ use crate::engine::transaction::PriorOp;
 use crate::kernel::StraightMember;
 use crate::kernel::section::{Representation, SectionFailure, SectionMember, section_member};
 use crate::kernel::straight_member;
-use crate::kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
+use crate::kernel::sweep::{PathCode, Sweep, SweepFailure, SweepPath, sweep};
 use crate::model::command::{
     CreatePolybeam, CreateStraightMember, CutRecord, MemberHoleRecord, MemberKind, SectionPlacement,
 };
@@ -438,6 +438,16 @@ fn map_sweep(failure: &SweepFailure) -> CommandError {
         SweepFailure::Section(_) | SweepFailure::Profile(_) => {
             ("profile", "section evaluation failed")
         }
+        SweepFailure::Path(PathCode::TooManyVertices) => (
+            "path_points_mm",
+            "the swept mesh would exceed the 4096-vertex budget of one member: a shorter arc, \
+             fewer path points or a section with fewer outline points fits",
+        ),
+        SweepFailure::Path(PathCode::DeviationUnreachable) => (
+            "path_points_mm",
+            "the 0.05 mm chord bound needs more than 1021 facets on this arc: split it into \
+             shorter arcs",
+        ),
         SweepFailure::Path(_) => ("path_points_mm", "polybeam path evaluation failed"),
         SweepFailure::Body(_) => ("geometry", "polybeam body certification failed"),
     };

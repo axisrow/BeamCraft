@@ -71,8 +71,14 @@ twice the section radius), which the facet choice uses directly. G05's
 edges per full turn `N` with `r * (TAU/N)^2 / 8 <= deviation`; the per-facet
 angle is `theta_f = theta / ceil(theta * N / TAU) <= TAU/N`, so every chord of the swept
 surface stays within `r_max * theta_f^2 / 8 <= chord_deviation_mm` of the true surface.
-The achieved bound is reported. If the bound is unreachable inside G05's segment cap, the
-call is refused (`PathCode::DeviationUnreachable`) rather than silently coarsened.
+The achieved bound is reported. G05's per-turn segment cap (1020) bounds closed profile
+curves; an arc spans only part of a turn, so when a large radius needs more edges per turn
+than that cap, the same rule (the least multiple of four per turn meeting the bound) continues
+past it, up to `MAX_ARC_EDGES_PER_TURN`. Arcs that G05 can facet keep exactly their previous
+facets. What bounds the work is the arc's own facet count (at most 1021) and the mesh budget
+below. If the bound is unreachable within them, the call is refused
+(`PathCode::DeviationUnreachable`, or `TooManyVertices` for the budget) rather than silently
+coarsened.
 
 ## 4. Volume: the analytic references
 

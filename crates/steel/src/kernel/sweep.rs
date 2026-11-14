@@ -35,6 +35,11 @@ use core::f64::consts::TAU;
 /// the mesh budget below multiplies the ring count by the section point count.
 pub const MAX_PATH_POINTS: usize = 4096;
 
+/// Largest edges-per-turn count an arc may use past G05's per-turn cap. The facet cap of one
+/// arc (1021) and the mesh budget bound the actual work; this only keeps the count finite and
+/// far inside exact `f64` integers.
+pub const MAX_ARC_EDGES_PER_TURN: f64 = 1_048_576.0;
+
 /// A vertex whose unit chords satisfy `|d1 x d2| <= 1e-9` has no geometric mitre
 /// (collinear continuation, or a fold-back within the same bound of 180 degrees): refused.
 pub const MIN_TURN_CROSS: f64 = 1e-9;
@@ -571,9 +576,16 @@ fn chord_arc(
         max_segments: 1020,
     };
     let radius_out = radius + 2.0 * section_radius;
-    let (per_turn, _) = choose_segments(radius_out, spec)
-        .map_err(|_| SweepFailure::Path(PathCode::DeviationUnreachable))?;
-    let step = TAU / f64::from(per_turn);
+    let per_turn = match choose_segments(radius_out, spec) {
+        Ok((per_turn, _)) => f64::from(per_turn),
+        // G05's per-turn cap bounds a closed profile curve, not a path arc that spans only
+        // part of a turn: a large radius needs more edges per turn than that cap, yet few
+        // facets over the arc itself. Continue the same rule (multiples of four per turn,
+        // `r * (TAU/N)^2 / 8 <= deviation`) past the cap; the facet cap below still bounds
+        // the work, and arcs that G05 can facet keep exactly their previous facets.
+        Err(_) => arc_edges_per_turn(radius_out, deviation)?,
+    };
+    let step = TAU / per_turn;
     let facets = (sweep / step).ceil().max(1.0);
     if !facets.is_finite() || facets > 1021.0 {
         return Err(SweepFailure::Path(PathCode::DeviationUnreachable));
@@ -605,6 +617,27 @@ fn chord_arc(
         deviation_bound_mm: Some(radius_out * facet_angle * facet_angle / 8.0),
         arc_length_mm: Some(radius * sweep),
     })
+}
+
+/// Edges per full turn for an arc whose radius needs more than G05's per-turn segment cap:
+/// the least multiple of four with `radius * (TAU/N)^2 / 8 <= deviation`. Refused as
+/// unreachable when that count is not finite or above [`MAX_ARC_EDGES_PER_TURN`].
+fn arc_edges_per_turn(radius: f64, deviation: f64) -> Result<f64, SweepFailure> {
+    let unreachable = || SweepFailure::Path(PathCode::DeviationUnreachable);
+    let least = TAU / (8.0 * deviation / radius).sqrt();
+    if !least.is_finite() || least > MAX_ARC_EDGES_PER_TURN {
+        return Err(unreachable());
+    }
+    let mut n = (least / 4.0).ceil() * 4.0;
+    // `least` is a rounded quotient: step up while the bound itself is not met.
+    for _ in 0..4 {
+        let step = TAU / n;
+        if radius * step * step / 8.0 <= deviation {
+            return Ok(n);
+        }
+        n += 4.0;
+    }
+    Err(unreachable())
 }
 
 /// Traverses the chords: chord floors and the total-length cap, the certified default
