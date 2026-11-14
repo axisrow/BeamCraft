@@ -70,7 +70,7 @@ fn designations(listed: &Json) -> Vec<String> {
 
 fn library(id: &str, entries: &[(&str, f64)]) -> String {
     let mut out = format!(
-        "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"{id}\"\n    }}\n)\ndef Scope \"Library\"\n{{\n    def Scope \"Profiles\"\n    {{\n"
+        "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"{id}\"\n        string \"bim:library:source\" = \"Contributor-original synthetic values for tests; no standard, catalogue or vendor data\"\n        string \"bim:library:licence\" = \"MPL-2.0\"\n    }}\n)\ndef Scope \"Library\"\n{{\n    def Scope \"Profiles\"\n    {{\n"
     );
     for (n, (designation, height)) in entries.iter().enumerate() {
         out.push_str(&format!(
@@ -774,6 +774,14 @@ fn an_added_entry_shows_through_an_environment_that_lists_the_library() {
         "400",
     ];
     f.ok(&args);
+    // A library written by add-library declares no provenance (only the environment demands
+    // it), so the team records it by hand before the environment lists the file.
+    let raw = fs::read_to_string(&lib).unwrap();
+    let declared = raw.replace(
+        "        string \"bim:library:id\" = \"team\"\n",
+        "        string \"bim:library:id\" = \"team\"\n        string \"bim:library:source\" = \"Contributor-original team values for tests\"\n        string \"bim:library:licence\" = \"MPL-2.0\"\n",
+    );
+    fs::write(&lib, declared).unwrap();
     let env = f.write("env.usda", &environment("\"libs/team.usda\""));
     let listed = f.ok(&["list-library", "--environment", &env]);
     assert_eq!(designations(&listed), ["TEAM-PLATE"]);

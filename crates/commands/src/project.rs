@@ -337,9 +337,10 @@ pub fn project_environment_file(dir: &Path) -> Option<PathBuf> {
     file.is_file().then_some(file)
 }
 
-/// Copies the environment `file`, the libraries it lists and its presets into the project at
-/// `dir` (`environment/`). The environment is read and admitted first, so a refused one writes
-/// nothing. Commands of the project then resolve profile names against this copy.
+/// Copies the environment `file`, the profile and fastener libraries it lists and its presets
+/// into the project at `dir` (`environment/`). The environment is read and admitted first, so a
+/// refused one writes nothing. Commands of the project then resolve profile and bolt
+/// designations against this copy.
 pub fn install_environment(dir: &Path, file: &Path) -> Result<(), Refusal> {
     let path = file
         .to_str()
@@ -359,6 +360,7 @@ pub fn install_environment(dir: &Path, file: &Path) -> Result<(), Refusal> {
         .info
         .libraries
         .iter()
+        .chain(&environment.info.fastener_libraries)
         .chain(&environment.info.presets)
     {
         let to = target.join(reference);

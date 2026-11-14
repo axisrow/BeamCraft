@@ -658,17 +658,71 @@ impl Lookup {
 pub struct Environment {
     /// The environment file's own declarations.
     pub info: EnvironmentInfo,
-    /// The listed libraries, strongest first.
+    /// The listed profile libraries, strongest first.
     pub sources: Vec<Source>,
+    /// The listed fastener libraries, strongest first (BC-ENV-002: bolts ride the same
+    /// environment as profiles).
+    pub fastener_sources: Vec<Source>,
+}
+
+impl Environment {
+    /// The resolver over the environment's fastener libraries, strongest first: the same
+    /// [`Lookup`] machinery that answers profile designations answers fastener ones. The two
+    /// namespaces stay separate; a profile library never answers a bolt lookup.
+    #[must_use]
+    pub fn fastener_lookup(&self) -> Lookup {
+        Lookup::new(self.fastener_sources.clone())
+    }
+}
+
+/// Admits one listed library of an environment: its provenance is declared (`bim:library:source`
+/// and `bim:library:licence`, empty is undeclared) and its `bim:library:id` is new among every
+/// library of the environment, profile or fastener. A single-file `--library` needs no
+/// provenance, so the rule lives here, at the environment's edge.
+fn admit_library(
+    sources: &mut Vec<Source>,
+    ids: &mut Vec<String>,
+    path: String,
+    library: Library,
+) -> Result<(), Refusal> {
+    if library.info.source.as_ref().is_none_or(String::is_empty) {
+        return Err(invalid(
+            "a library of the environment declares no bim:library:source",
+        ));
+    }
+    if library.info.licence.as_ref().is_none_or(String::is_empty) {
+        return Err(invalid(
+            "a library of the environment declares no bim:library:licence",
+        ));
+    }
+    if ids.contains(&library.info.id) {
+        return Err(invalid(
+            "two libraries of the environment have the same bim:library:id",
+        ));
+    }
+    ids.push(library.info.id.clone());
+    sources.push(Source { path, library });
+    Ok(())
+}
+
+/// Resolves one listed reference against the environment directory.
+fn resolve_reference(directory: &std::path::Path, reference: &str) -> Result<String, Refusal> {
+    let resolved = directory.join(reference);
+    resolved
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| invalid("an environment library path is not UTF-8"))
 }
 
 /// Loads an environment file and every library it lists, in order.
 ///
 /// Each listed path is resolved against the directory of the environment file and loaded with
-/// [`load`], so every library keeps its own bounds and admission. A library that cannot be
-/// loaded, or two listed libraries with the same `bim:library:id`, refuse the whole environment:
-/// a missing library would silently change which section a designation selects. The containment
-/// of a listed path is lexical; the files themselves are read like any `--library` file.
+/// [`load`] (profile libraries) or [`load_fastener`] (fastener libraries), so every library
+/// keeps its own bounds and admission. A library that cannot be loaded, one that declares no
+/// `source` or `licence`, or two listed libraries with the same `bim:library:id`, refuse the
+/// whole environment: a missing library would silently change which section or bolt a
+/// designation selects. The containment of a listed path is lexical; the files themselves are
+/// read like any `--library` file.
 pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     check_source_path(path).map_err(command)?;
     let bytes = read_file(path, MAX_ENVIRONMENT_BYTES).map_err(|code| match code {
@@ -684,25 +738,24 @@ pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
+    let mut ids: Vec<String> = Vec::new();
     let mut sources: Vec<Source> = Vec::with_capacity(info.libraries.len());
     for reference in &info.libraries {
-        let resolved = directory.join(reference);
-        let resolved = resolved
-            .to_str()
-            .ok_or_else(|| invalid("an environment library path is not UTF-8"))?
-            .to_owned();
+        let resolved = resolve_reference(&directory, reference)?;
         let library = load(&resolved)?;
-        if sources.iter().any(|s| s.library.info.id == library.info.id) {
-            return Err(invalid(
-                "two libraries of the environment have the same bim:library:id",
-            ));
-        }
-        sources.push(Source {
-            path: resolved,
-            library,
-        });
+        admit_library(&mut sources, &mut ids, resolved, library)?;
     }
-    Ok(Environment { info, sources })
+    let mut fastener_sources: Vec<Source> = Vec::with_capacity(info.fastener_libraries.len());
+    for reference in &info.fastener_libraries {
+        let resolved = resolve_reference(&directory, reference)?;
+        let library = load_fastener(&resolved)?;
+        admit_library(&mut fastener_sources, &mut ids, resolved, library)?;
+    }
+    Ok(Environment {
+        info,
+        sources,
+        fastener_sources,
+    })
 }
 
 /// The lookup that a command names: exactly one of a single `--library` file or an
@@ -1605,6 +1658,127 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_europe_environment_admits_its_fastener_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "europe");
+        assert_eq!(environment.info.fastener_libraries, ["din-fasteners.usda"]);
+        // The profile namespace is unchanged by the fastener listing.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.sources[0].library.entries.len(), 55);
+        // The DIN fastener set rides the same environment, admitted with declared provenance.
+        assert_eq!(environment.fastener_sources.len(), 1);
+        let bolts = &environment.fastener_sources[0];
+        assert_eq!(bolts.library.info.id, "beamcraft-din-fasteners");
+        assert_eq!(bolts.library.entries.len(), 3);
+        assert!(bolts.library.rejected.is_empty());
+        assert!(
+            bolts
+                .library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty())
+                && bolts
+                    .library
+                    .info
+                    .licence
+                    .as_deref()
+                    .is_some_and(|l| !l.is_empty()),
+            "the shipped fastener library declares its provenance"
+        );
+        // Bolt lookups ride the same resolver machinery, in their own namespace.
+        let lookup = environment.fastener_lookup();
+        let m12 = lookup.find("M12").unwrap().1;
+        assert!(
+            matches!(&m12.record, DefinitionRecord::Fastener { spec } if spec.nominal_diameter_mm == 12.0 && spec.lengths_mm.contains(&80.0))
+        );
+        // A designation the set does not publish is NOT_FOUND, never a near match.
+        for absent in ["M24", "M12x80", "m12"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_environment_library_without_provenance_is_refused() {
+        let dir =
+            std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| {
+            std::fs::write(dir.join(name), text).unwrap();
+        };
+        // A profile library whose licence is missing, and a fastener one whose source is.
+        let library = |id: &str, scope: &str, entry_body: &str, declared: &str| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"{id}\"{declared}\n    }}\n)\ndef Scope \"Library\" {{\n    def Scope \"{scope}\" {{\n{entry_body}\n    }}\n}}\n"
+            )
+        };
+        let profile = library(
+            "p",
+            "Profiles",
+            &entry("A", "P-1", I_BODY),
+            "\n        string \"bim:library:source\" = \"s\"",
+        );
+        let complete = library(
+            "pc",
+            "Profiles",
+            &entry("A", "P-1", I_BODY),
+            "\n        string \"bim:library:source\" = \"s\"\n        string \"bim:library:licence\" = \"MPL-2.0\"",
+        );
+        let fastener = library(
+            "f",
+            "Fasteners",
+            &fastener_entry("B", "F-1", BOLT_BODY),
+            "\n        string \"bim:library:licence\" = \"MPL-2.0\"",
+        );
+        write("profiles-nolicence.usda", &profile);
+        write("profiles-complete.usda", &complete);
+        write("fasteners-nosource.usda", &fastener);
+        let env = |profiles: &str, fasteners: Option<&str>| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}\n    }}\n)\n",
+                match fasteners {
+                    Some(name) => format!(
+                        "\n        string[] \"bim:environment:fastener-libraries\" = [\"{name}\"]"
+                    ),
+                    None => String::new(),
+                }
+            )
+        };
+        write(
+            "no-profile-licence.usda",
+            &env("profiles-nolicence.usda", None),
+        );
+        write(
+            "no-fastener-source.usda",
+            &env("profiles-complete.usda", Some("fasteners-nosource.usda")),
+        );
+        let refused =
+            load_environment(dir.join("no-profile-licence.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("licence"),
+            "the missing record is named: {refused:?}"
+        );
+        let refused =
+            load_environment(dir.join("no-fastener-source.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("source"),
+            "the fastener library's missing record is named: {refused:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_shipped_russia_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -1702,6 +1876,165 @@ mod tests {
         spot("40K5", [431.0, 400.0, 23.0, 35.5, 22.0], 37100.0, 291.2);
         for absent in [
             "30K4", "35K4", "50K1", "20B2", "25B1", "30Sh1", "30Ш1", "24ДБ1",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_australia_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/profiles-as-nzs-3679-1.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "australia-asnzs-3679-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 41);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("AS/NZS 3679.1:2016"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires) and the designation mass must be that
+            // area at 7850 kg/m3 within the rounding the published series uses. Three rows sit
+            // widest off because the assortment names carry masses rounded from an earlier
+            // re-measurement generation (310UB40.4 1.22 percent, 610UB101 1.03 percent,
+            // 200UB22.3 1.02 percent); the published pairs are taken as-is.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.013,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The UB and UC series exactly as AS/NZS 3679.1:2016 publishes them: 28 + 13
+        // designations, each carrying its published mass per metre. The older designation
+        // generation (150UB17.1, 200UB29.7, 250UB31.3, 460UB82.4, 360UB44.3, 310UC97.7,
+        // 150UC30.6) and the sizes no longer rolled (530UB72.4, 460UB61.2, 310UC107,
+        // 250UC66.9, 250UC80.5, 200UC41.7, the 350UC series) are not here.
+        let mut expected = vec![
+            "150UB14.0",
+            "150UB18.0",
+            "180UB16.1",
+            "180UB18.1",
+            "180UB22.2",
+            "200UB18.2",
+            "200UB22.3",
+            "200UB25.4",
+            "200UB29.8",
+            "250UB25.7",
+            "250UB31.4",
+            "250UB37.3",
+            "310UB32.0",
+            "310UB40.4",
+            "310UB46.2",
+            "360UB44.7",
+            "360UB50.7",
+            "360UB56.7",
+            "410UB53.7",
+            "410UB59.7",
+            "460UB67.1",
+            "460UB74.6",
+            "460UB82.1",
+            "530UB82.0",
+            "530UB92.4",
+            "610UB101",
+            "610UB113",
+            "610UB125",
+            "100UC14.8",
+            "150UC23.4",
+            "150UC30.0",
+            "150UC37.2",
+            "200UC46.2",
+            "200UC52.2",
+            "200UC59.5",
+            "250UC72.9",
+            "250UC89.5",
+            "310UC96.8",
+            "310UC118",
+            "310UC137",
+            "310UC158",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, spanning both series.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("610UB125", [611.6, 229.0, 11.9, 19.6, 14.0], 16000.0, 125.0);
+        spot("150UB14.0", [150.0, 75.0, 5.0, 7.0, 8.0], 1780.0, 14.0);
+        spot("310UC158", [327.2, 311.0, 15.7, 25.0, 16.5], 20100.0, 158.0);
+        spot("100UC14.8", [97.0, 99.0, 5.0, 7.0, 10.0], 1890.0, 14.8);
+        for absent in [
+            "150UB17.1",
+            "200UB29.7",
+            "250UB31.3",
+            "460UB82.4",
+            "360UB44.3",
+            "530UB72.4",
+            "460UB61.2",
+            "310UC97.7",
+            "150UC30.6",
+            "310UC107",
+            "250UC66.9",
+            "250UC80.5",
+            "200UC41.7",
+            "350UC153",
+            "IPE300",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
