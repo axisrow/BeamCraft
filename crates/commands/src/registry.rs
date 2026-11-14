@@ -1322,7 +1322,7 @@ pub const COMMANDS: &[Command] = &[
             req("--store", "ROOT"),
             req("--name", "TEXT"),
             req("--parts", "UUID,UUID,..."),
-            req("--fastener-library", "FILE"),
+            opt("--fastener-library", "FILE"),
             req("--designation", "TEXT"),
             req("--point1", "X,Y,Z"),
             req("--point2", "X,Y,Z"),

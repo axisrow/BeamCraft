@@ -33,11 +33,13 @@ beamcraft definitions --store ROOT
 - `assets/libraries/synthetic-fasteners.usda` — three contributor-original synthetic entries
   (`SYN-BOLT-12x50`, `SYN-BOLT-16x70-BARE`, `SYN-SCREW-10x30`) covering a washered bolt, a bare
   bolt and a screw with `hole_mode = none`; every value invented.
-- `assets/libraries/din-fasteners.usda` — the one European DIN set of the amendment: `M12`,
+- `environments/europe/din-fasteners.usda` — the one European DIN set of the amendment: `M12`,
   `M16`, `M20` hex bolts with their nuts (DIN EN ISO 4032 dimensions) and washers (DIN EN ISO
   7089), clearances from the EN 1090-2 standard hole series (13/18/22 mm holes), entered as our
   own data. Which standards make the first set was open (O-B2a); this set is recorded in
-  `ATTRIBUTION.md` and can be replaced without touching a mechanism.
+  `ATTRIBUTION.md` and can be replaced without touching a mechanism. Since BC-ENV-002 (#635)
+  the file lives in the `europe` environment and is listed by its
+  `bim:environment:fastener-libraries`.
 
 ## Decisions
 

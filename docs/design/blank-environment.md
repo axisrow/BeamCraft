@@ -18,7 +18,8 @@ saved setting.
   environment next to an empty `blank`; the two were merged on 2026-11-01 so that the base
   environment is usable on its own. Regional environments ship beside it since 2026-11-14:
   `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions, and
-  `environments/russia/` holds the GOST 26020-83 parallel-flange beam (Б) and column (К) series
+  `environments/russia/` holds the GOST 26020-83 parallel-flange beam (Б) and column (К) series,
+  and `environments/australia/` (2026-11-15) holds the AS/NZS 3679.1:2016 UB and UC series
   (see `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two

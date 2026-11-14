@@ -1,0 +1,594 @@
+#usda 1.0
+(
+    doc = "BeamCraft Australia environment: hot-rolled universal beams (UB) and universal columns (UC) of AS/NZS 3679.1:2016. The nominal dimensions, areas and masses are the published values, re-entered by hand as our own data; no text or table is copied. A designation carries the mass per metre the series publishes (for example 530UB92.4). Reference data for modelling; it is not a substitute for the standard itself."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "australia-asnzs-3679-profiles"
+        string "bim:library:title" = "Australia hot-rolled sections (AS/NZS 3679.1: UB, UC)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Dimensional facts of AS/NZS 3679.1:2016 (UB and UC series) re-entered by hand as our own data; cross-checked between the InfraBuild catalogue, 9th edition 2019 (infrabuild.com) and the Easysteel Steel Book 2025 (easysteel.co.nz); no table copied"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "UB_610UB125"
+        {
+            string steel:profile:designation = "610UB125"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 611.6
+            double steel:profile:bMm = 229
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 19.6
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 16000
+            double steel:profile:massPerMeterKg = 125
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_610UB113"
+        {
+            string steel:profile:designation = "610UB113"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 607
+            double steel:profile:bMm = 228
+            double steel:profile:twMm = 11.2
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 14500
+            double steel:profile:massPerMeterKg = 113
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_610UB101"
+        {
+            string steel:profile:designation = "610UB101"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 602
+            double steel:profile:bMm = 228
+            double steel:profile:twMm = 10.6
+            double steel:profile:tfMm = 14.8
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 13000
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_530UB92_4"
+        {
+            string steel:profile:designation = "530UB92.4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 533
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 10.2
+            double steel:profile:tfMm = 15.6
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 11800
+            double steel:profile:massPerMeterKg = 92.4
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_530UB82_0"
+        {
+            string steel:profile:designation = "530UB82.0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 528.2
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 9.6
+            double steel:profile:tfMm = 13.2
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_460UB82_1"
+        {
+            string steel:profile:designation = "460UB82.1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 460.4
+            double steel:profile:bMm = 191
+            double steel:profile:twMm = 9.9
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82.1
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_460UB74_6"
+        {
+            string steel:profile:designation = "460UB74.6"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 457.4
+            double steel:profile:bMm = 190
+            double steel:profile:twMm = 9.1
+            double steel:profile:tfMm = 14.5
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 9520
+            double steel:profile:massPerMeterKg = 74.6
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_460UB67_1"
+        {
+            string steel:profile:designation = "460UB67.1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 453.8
+            double steel:profile:bMm = 190
+            double steel:profile:twMm = 8.5
+            double steel:profile:tfMm = 12.7
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 8580
+            double steel:profile:massPerMeterKg = 67.1
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_410UB59_7"
+        {
+            string steel:profile:designation = "410UB59.7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 406.4
+            double steel:profile:bMm = 178
+            double steel:profile:twMm = 7.8
+            double steel:profile:tfMm = 12.8
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 7640
+            double steel:profile:massPerMeterKg = 59.7
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_410UB53_7"
+        {
+            string steel:profile:designation = "410UB53.7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 402.6
+            double steel:profile:bMm = 178
+            double steel:profile:twMm = 7.6
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 6890
+            double steel:profile:massPerMeterKg = 53.7
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_360UB56_7"
+        {
+            string steel:profile:designation = "360UB56.7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 358.6
+            double steel:profile:bMm = 172
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 13
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 7240
+            double steel:profile:massPerMeterKg = 56.7
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_360UB50_7"
+        {
+            string steel:profile:designation = "360UB50.7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 355.6
+            double steel:profile:bMm = 171
+            double steel:profile:twMm = 7.3
+            double steel:profile:tfMm = 11.5
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 6470
+            double steel:profile:massPerMeterKg = 50.7
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_360UB44_7"
+        {
+            string steel:profile:designation = "360UB44.7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 352
+            double steel:profile:bMm = 171
+            double steel:profile:twMm = 6.9
+            double steel:profile:tfMm = 9.7
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 5720
+            double steel:profile:massPerMeterKg = 44.7
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_310UB46_2"
+        {
+            string steel:profile:designation = "310UB46.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 307.2
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 6.7
+            double steel:profile:tfMm = 11.8
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 5930
+            double steel:profile:massPerMeterKg = 46.2
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_310UB40_4"
+        {
+            string steel:profile:designation = "310UB40.4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 304
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 10.2
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 5210
+            double steel:profile:massPerMeterKg = 40.4
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_310UB32_0"
+        {
+            string steel:profile:designation = "310UB32.0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 298
+            double steel:profile:bMm = 149
+            double steel:profile:twMm = 5.5
+            double steel:profile:tfMm = 8
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 4080
+            double steel:profile:massPerMeterKg = 32
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_250UB37_3"
+        {
+            string steel:profile:designation = "250UB37.3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 256.2
+            double steel:profile:bMm = 146
+            double steel:profile:twMm = 6.4
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 4750
+            double steel:profile:massPerMeterKg = 37.3
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_250UB31_4"
+        {
+            string steel:profile:designation = "250UB31.4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 251.6
+            double steel:profile:bMm = 146
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 8.6
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 4010
+            double steel:profile:massPerMeterKg = 31.4
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_250UB25_7"
+        {
+            string steel:profile:designation = "250UB25.7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 248
+            double steel:profile:bMm = 124
+            double steel:profile:twMm = 5
+            double steel:profile:tfMm = 8
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3270
+            double steel:profile:massPerMeterKg = 25.7
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_200UB29_8"
+        {
+            string steel:profile:designation = "200UB29.8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 207
+            double steel:profile:bMm = 134
+            double steel:profile:twMm = 6.3
+            double steel:profile:tfMm = 9.6
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 3820
+            double steel:profile:massPerMeterKg = 29.8
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_200UB25_4"
+        {
+            string steel:profile:designation = "200UB25.4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 203.2
+            double steel:profile:bMm = 133
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 7.8
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 3230
+            double steel:profile:massPerMeterKg = 25.4
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_200UB22_3"
+        {
+            string steel:profile:designation = "200UB22.3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 201.6
+            double steel:profile:bMm = 133
+            double steel:profile:twMm = 5
+            double steel:profile:tfMm = 7
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 2870
+            double steel:profile:massPerMeterKg = 22.3
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_200UB18_2"
+        {
+            string steel:profile:designation = "200UB18.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 198
+            double steel:profile:bMm = 99
+            double steel:profile:twMm = 4.5
+            double steel:profile:tfMm = 7
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2320
+            double steel:profile:massPerMeterKg = 18.2
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_180UB22_2"
+        {
+            string steel:profile:designation = "180UB22.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 179
+            double steel:profile:bMm = 90
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 2820
+            double steel:profile:massPerMeterKg = 22.2
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_180UB18_1"
+        {
+            string steel:profile:designation = "180UB18.1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 90
+            double steel:profile:twMm = 5
+            double steel:profile:tfMm = 8
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 2300
+            double steel:profile:massPerMeterKg = 18.1
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_180UB16_1"
+        {
+            string steel:profile:designation = "180UB16.1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 173
+            double steel:profile:bMm = 90
+            double steel:profile:twMm = 4.5
+            double steel:profile:tfMm = 7
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 2040
+            double steel:profile:massPerMeterKg = 16.1
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_150UB18_0"
+        {
+            string steel:profile:designation = "150UB18.0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 155
+            double steel:profile:bMm = 75
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 9.5
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 2300
+            double steel:profile:massPerMeterKg = 18
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UB_150UB14_0"
+        {
+            string steel:profile:designation = "150UB14.0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 75
+            double steel:profile:twMm = 5
+            double steel:profile:tfMm = 7
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1780
+            double steel:profile:massPerMeterKg = 14
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_310UC158"
+        {
+            string steel:profile:designation = "310UC158"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 327.2
+            double steel:profile:bMm = 311
+            double steel:profile:twMm = 15.7
+            double steel:profile:tfMm = 25
+            double steel:profile:rMm = 16.5
+            double steel:profile:areaMm2 = 20100
+            double steel:profile:massPerMeterKg = 158
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_310UC137"
+        {
+            string steel:profile:designation = "310UC137"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 320.6
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 13.8
+            double steel:profile:tfMm = 21.7
+            double steel:profile:rMm = 16.5
+            double steel:profile:areaMm2 = 17500
+            double steel:profile:massPerMeterKg = 137
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_310UC118"
+        {
+            string steel:profile:designation = "310UC118"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 314.6
+            double steel:profile:bMm = 307
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 18.7
+            double steel:profile:rMm = 16.5
+            double steel:profile:areaMm2 = 15000
+            double steel:profile:massPerMeterKg = 118
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_310UC96_8"
+        {
+            string steel:profile:designation = "310UC96.8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 308
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 9.9
+            double steel:profile:tfMm = 15.4
+            double steel:profile:rMm = 16.5
+            double steel:profile:areaMm2 = 12400
+            double steel:profile:massPerMeterKg = 96.8
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_250UC89_5"
+        {
+            string steel:profile:designation = "250UC89.5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 260
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 11400
+            double steel:profile:massPerMeterKg = 89.5
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_250UC72_9"
+        {
+            string steel:profile:designation = "250UC72.9"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 253.8
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 8.6
+            double steel:profile:tfMm = 14.2
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 9320
+            double steel:profile:massPerMeterKg = 72.9
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_200UC59_5"
+        {
+            string steel:profile:designation = "200UC59.5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 209.8
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9.3
+            double steel:profile:tfMm = 14.2
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 7620
+            double steel:profile:massPerMeterKg = 59.5
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_200UC52_2"
+        {
+            string steel:profile:designation = "200UC52.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 206.4
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 12.5
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 6660
+            double steel:profile:massPerMeterKg = 52.2
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_200UC46_2"
+        {
+            string steel:profile:designation = "200UC46.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 203.4
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 7.3
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 11.4
+            double steel:profile:areaMm2 = 5900
+            double steel:profile:massPerMeterKg = 46.2
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_150UC37_2"
+        {
+            string steel:profile:designation = "150UC37.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 161.8
+            double steel:profile:bMm = 154
+            double steel:profile:twMm = 8.1
+            double steel:profile:tfMm = 11.5
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 4730
+            double steel:profile:massPerMeterKg = 37.2
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_150UC30_0"
+        {
+            string steel:profile:designation = "150UC30.0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 157.6
+            double steel:profile:bMm = 153
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 9.4
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 3860
+            double steel:profile:massPerMeterKg = 30
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_150UC23_4"
+        {
+            string steel:profile:designation = "150UC23.4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 152.4
+            double steel:profile:bMm = 152
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 6.8
+            double steel:profile:rMm = 8.9
+            double steel:profile:areaMm2 = 2980
+            double steel:profile:massPerMeterKg = 23.4
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+        def Scope "UC_100UC14_8"
+        {
+            string steel:profile:designation = "100UC14.8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 97
+            double steel:profile:bMm = 99
+            double steel:profile:twMm = 5
+            double steel:profile:tfMm = 7
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1890
+            double steel:profile:massPerMeterKg = 14.8
+            string steel:profile:standard = "AS/NZS 3679.1:2016"
+        }
+
+    }
+}
