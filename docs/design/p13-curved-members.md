@@ -38,8 +38,10 @@ The mesh is G12's certified sweep with a requested **0.05 mm path-surface chord 
 polygon outline; it does not claim that the original section's own rounded corners have
 that same bound. `axis_length_mm` reports the true path length. Geometry consumers use
 the certified mesh; its faceted volume is checked separately against analytical references.
-The existing radius, dimension, mesh-vertex/triangle and segment caps remain enforced;
-an unreachable deviation is refused, never silently coarsened. No cross-platform byte
+The existing radius, dimension and mesh-vertex/triangle caps remain enforced, and an arc has
+at most 1021 facets; G05's per-turn profile-curve cap no longer limits the radius (a 30 m
+arc is built at 0.05 mm when its facets fit the mesh budget). An unreachable deviation is
+refused, never silently coarsened, and the refusal names the facet or mesh budget it hit. No cross-platform byte
 identity is claimed for trigonometric functions.
 
 ## Storage, history and compatibility

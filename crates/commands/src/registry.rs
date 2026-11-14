@@ -430,7 +430,12 @@ pub const COMMANDS: &[Command] = &[
         "inspect-elements",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT"), opt("--element", "UUID")],
+        &[
+            req("--store", "ROOT"),
+            opt("--element", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Plate,

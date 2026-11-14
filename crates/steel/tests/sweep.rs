@@ -174,6 +174,64 @@ fn a_quarter_arc_matches_the_pappus_volume_within_the_stated_deviation() {
 }
 
 #[test]
+fn a_large_radius_arc_keeps_the_stated_deviation_past_the_per_turn_cap() {
+    // A 50 m radius needs about 2240 edges per full turn for 0.05 mm, more than G05's
+    // per-turn cap of 1020, yet this 11.5 degree arc needs only about 70 facets. It used to be
+    // refused as unreachable; it now sweeps at the same bound.
+    let radius = 50_000.0_f64;
+    let half = 0.1_f64;
+    let r = run(
+        SweepPath::Arc {
+            start: p(radius * (-half).cos(), radius * (-half).sin(), 0.0),
+            on: p(radius, 0.0, 0.0),
+            end: p(radius * half.cos(), radius * half.sin(), 0.0),
+        },
+        square(200.0),
+        0.05,
+    );
+    let bound = r.chord_deviation_bound_mm().unwrap();
+    assert!(bound > 0.0 && bound <= 0.05, "{bound}");
+    let theta = 2.0 * half;
+    let n = f64::from(r.segment_count());
+    // The facets are the fewest the bound allows at the outermost fibre radius
+    // R + 2 * r_s (r_s = 100 * sqrt(2) for the square), within one multiple-of-four step
+    // of the per-turn count.
+    let outer = radius + 2.0 * 100.0 * 2.0_f64.sqrt();
+    let least = (theta / (8.0 * 0.05 / outer).sqrt()).ceil();
+    assert!(n >= least && n <= least + 1.0, "{n} facets, least {least}");
+    let area = 40000.0_f64;
+    close(
+        volume(&r),
+        area * 2.0 * n * radius * (theta / (2.0 * n)).sin(),
+        1e-9,
+    );
+}
+
+#[test]
+fn an_arc_within_the_per_turn_cap_keeps_its_facets() {
+    // The quarter arc of radius 1000 at 0.1 mm: G05 picks the per-turn count as before
+    // (the least multiple of four with r (TAU/N)^2 / 8 <= 0.1 at r = 1000 + 200 sqrt(2)),
+    // so existing arcs keep their meshes.
+    let r2 = 2.0_f64.sqrt();
+    let r = run(
+        SweepPath::Arc {
+            start: p(1000.0, 0.0, 0.0),
+            on: p(1000.0 / r2, 1000.0 / r2, 0.0),
+            end: p(0.0, 1000.0, 0.0),
+        },
+        square(200.0),
+        0.1,
+    );
+    let outer = 1000.0 + 200.0 * r2;
+    let mut per_turn = 8.0_f64;
+    while outer * (2.0 * PI / per_turn).powi(2) / 8.0 > 0.1 {
+        per_turn += 4.0;
+    }
+    let expected = (PI / 2.0 / (2.0 * PI / per_turn)).ceil();
+    assert_eq!(f64::from(r.segment_count()), expected);
+}
+
+#[test]
 fn polyline_sweep_bytes_are_reproducible() {
     let path = SweepPath::Polyline(vec![
         p(0.0, 0.0, 0.0),
