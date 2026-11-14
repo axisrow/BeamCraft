@@ -2058,6 +2058,67 @@ mod tests {
     }
 
     #[test]
+    fn a_lesser_grip_ray_past_a_gap_still_carries_the_washer() {
+        // The furthest material end over every ring ray, not the best-grip ray: a stem grips
+        // the axis 100 mm deep while the +X ring ray crosses a 10 mm plate, a 140 mm gap and
+        // a flange ending at 160. That ray's grip (20) loses to the stem's (100), so a
+        // best-grip pick would seat the nut stack at 100 and float the washer off the flange;
+        // the far face is the flange at 160. The flange spans y in [-5, 5] so only the +X ray
+        // reaches it, and the 9.375 mm ring radius puts the 45-degree rays in the plate but
+        // past the flange.
+        let fastener = crate::model::fastener::FastenerSpec {
+            designation: Some("M12".into()),
+            standard: None,
+            grade: None,
+            display_name: None,
+            kind: FastenerKind::Bolt,
+            head_kind: crate::model::fastener::HeadKind::Hex,
+            nominal_diameter_mm: 12.0,
+            head_across_flats_mm: 18.0,
+            head_height_mm: 7.5,
+            nut_across_flats_mm: Some(18.0),
+            nut_height_mm: Some(9.0),
+            washer: Some(crate::model::fastener::WasherSpec {
+                outer_diameter_mm: 24.0,
+                inner_diameter_mm: 13.0,
+                thickness_mm: 2.0,
+            }),
+            hole_clearance_mm: 1.5,
+            lengths_mm: vec![200.0],
+            thread_protrusion_mm: 3.0,
+            washer_under_head: true,
+            washer_under_nut: true,
+            hole_mode: crate::model::fastener::HoleMode::None,
+            mass_each_kg: None,
+        };
+        fastener.validate().unwrap();
+        let placed = BoltGroupPlaced {
+            x: [1.0, 0.0, 0.0],
+            y: [0.0, 1.0, 0.0],
+            z: [0.0, 0.0, 1.0],
+            bearings_mm: vec![[0.0, 0.0, 0.0]],
+            spacings_mm: Vec::new(),
+            length_mm: 200.0,
+            washer_under_head: true,
+            washer_under_nut: true,
+        };
+        // One part: the stem under the whole ring, the plate at the bearing and the flange
+        // past the gap on the +X side only.
+        let mut part = Faces::new();
+        part.extend(box_faces([-5.0, -5.0, 0.0], [5.0, 5.0, 100.0]));
+        part.extend(box_faces([6.0, -15.0, 0.0], [14.0, 15.0, 10.0]));
+        part.extend(box_faces([6.0, -5.0, 150.0], [14.0, 5.0, 160.0]));
+        let mut bounds = BTreeMap::new();
+        bounds.insert(id(5), [[-5.0, -15.0, 0.0], [14.0, 15.0, 160.0]]);
+        let mut faces = BTreeMap::new();
+        faces.insert(id(5), part);
+        let far = far_faces(&placed, &fastener, 1.5, &[id(5)], &bounds, &faces);
+        assert_eq!(far.len(), 1);
+        let first = far.first().copied().flatten().unwrap();
+        assert!((first - 160.0).abs() < 1e-6, "{far:?}");
+    }
+
+    #[test]
     fn a_rotated_knee_brace_requires_its_face_grip_not_its_box_grip() {
         // The brace's conservative box reaches 48.9 mm along the shank where its solid grips
         // 36.5 mm (from the bearing inside it to the far face), so the requirement is
