@@ -85,7 +85,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--all-around",
             "--contour",
         ],
-        "welds" => &["--store"],
+        "welds" => &["--store", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 40 {
@@ -110,10 +110,48 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store = RevisionStore::new(blobs);
     let _claim = crate::plate_cmd::check_project_option(&store, &options)?;
     if *command == "welds" {
-        return Ok(Json::object([
-            ("outcome", Json::text("welds")),
-            ("welds", views_json(&welds(&store)?)),
-        ]));
+        let weld_views = welds(&store)?;
+        let weld_total = weld_views.len();
+        let paged = options.contains_key("--offset") || options.contains_key("--limit");
+        if !paged {
+            return crate::plate_cmd::whole_listing(
+                Json::object([
+                    ("outcome", Json::text("welds")),
+                    ("welds", views_json(&weld_views)),
+                ]),
+                "the whole weld listing exceeds the output budget: page it with --offset and --limit",
+            );
+        }
+        let (offset, limit) = crate::plate_cmd::page_of(&options)?;
+        let available = weld_total.saturating_sub(offset);
+        return crate::plate_cmd::fit_page(available, limit, |count| {
+            let next = offset.saturating_add(count);
+            Ok(Json::object([
+                ("outcome", Json::text("welds")),
+                ("weld_count", Json::uint(weld_total as u64)),
+                ("offset", Json::uint(offset as u64)),
+                ("page_size", Json::uint(count as u64)),
+                (
+                    "next_offset",
+                    if next < weld_total {
+                        Json::uint(next as u64)
+                    } else {
+                        Json::Null
+                    },
+                ),
+                (
+                    "welds",
+                    Json::Array(
+                        weld_views
+                            .iter()
+                            .skip(offset)
+                            .take(count)
+                            .map(weld_entry)
+                            .collect(),
+                    ),
+                ),
+            ]))
+        });
     }
     let given = |key: &str| options.get(key).copied();
     let required = |key: &str, missing: &'static str| given(key).ok_or_else(|| invalid(missing));
@@ -207,54 +245,47 @@ fn run(args: &[OsString]) -> Run<Json> {
 }
 
 fn views_json(views: &[WeldView]) -> Json {
-    Json::Array(
-        views
-            .iter()
-            .map(|v| {
-                let mut fields = vec![
-                    ("id", Json::text(v.id.to_string())),
-                    ("name", Json::text(v.name.clone())),
-                    ("main", Json::text(v.main.to_string())),
-                    ("secondary", Json::text(v.secondary.to_string())),
-                    ("type", Json::text(v.spec.weld_type.as_token())),
-                    ("size_mm", Json::text(v.spec.size_mm.to_string())),
-                    ("location", Json::text(v.spec.location.as_token())),
-                    ("side", Json::text(v.spec.side.as_token())),
-                ];
-                match &v.solid {
-                    None => fields.push(("path_mm", Json::Null)),
-                    Some(solid) => {
-                        fields.push((
-                            "path_mm",
-                            Json::Array(
-                                solid
-                                    .geometry
-                                    .path_mm
-                                    .iter()
-                                    .map(|p| {
-                                        Json::Array(
-                                            p.iter().map(|c| Json::text(c.to_string())).collect(),
-                                        )
-                                    })
-                                    .collect(),
-                            ),
-                        ));
-                        fields.push(("all_around", Json::Bool(solid.geometry.symbol.all_around)));
-                        fields.push((
-                            "contour",
-                            Json::text(solid.geometry.symbol.contour.as_token()),
-                        ));
-                        fields.push(("length_mm", Json::text(solid.length_mm.to_string())));
-                        fields.push(("volume_mm3", Json::text(solid.volume_mm3.to_string())));
-                    }
-                }
-                Json::Object(
-                    fields
-                        .into_iter()
-                        .map(|(k, v)| (k.to_string(), v))
+    Json::Array(views.iter().map(weld_entry).collect())
+}
+
+fn weld_entry(v: &WeldView) -> Json {
+    let mut fields = vec![
+        ("id", Json::text(v.id.to_string())),
+        ("name", Json::text(v.name.clone())),
+        ("main", Json::text(v.main.to_string())),
+        ("secondary", Json::text(v.secondary.to_string())),
+        ("type", Json::text(v.spec.weld_type.as_token())),
+        ("size_mm", Json::text(v.spec.size_mm.to_string())),
+        ("location", Json::text(v.spec.location.as_token())),
+        ("side", Json::text(v.spec.side.as_token())),
+    ];
+    match &v.solid {
+        None => fields.push(("path_mm", Json::Null)),
+        Some(solid) => {
+            fields.push((
+                "path_mm",
+                Json::Array(
+                    solid
+                        .geometry
+                        .path_mm
+                        .iter()
+                        .map(|p| Json::Array(p.iter().map(|c| Json::text(c.to_string())).collect()))
                         .collect(),
-                )
-            })
+                ),
+            ));
+            fields.push(("all_around", Json::Bool(solid.geometry.symbol.all_around)));
+            fields.push((
+                "contour",
+                Json::text(solid.geometry.symbol.contour.as_token()),
+            ));
+            fields.push(("length_mm", Json::text(solid.length_mm.to_string())));
+            fields.push(("volume_mm3", Json::text(solid.volume_mm3.to_string())));
+        }
+    }
+    Json::Object(
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
             .collect(),
     )
 }
