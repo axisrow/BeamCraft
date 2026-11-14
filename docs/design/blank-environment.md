@@ -17,7 +17,9 @@ saved setting.
   prefers it when no environment is saved. These profiles first shipped as a separate `starter`
   environment next to an empty `blank`; the two were merged on 2026-11-01 so that the base
   environment is usable on its own. Regional environments ship beside it since 2026-11-14:
-  `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions,
+  `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions and,
+  since 2026-11-15, a second profile library with the EN 10219-2:2006 cold-formed hollow
+  sections (SHS, RHS and CHS common sizes, validated against the hollow closed-form area),
   `environments/russia/` holds the GOST 26020-83 parallel-flange beam (Б), wide-flange (Ш) and
   column (К) series; `environments/australia/` (2026-11-15) holds the AS/NZS 3679.1:2016 UB
   and UC series, and `environments/india/` holds the IS 808:2021 narrow (NPB) and wide (WPB,
