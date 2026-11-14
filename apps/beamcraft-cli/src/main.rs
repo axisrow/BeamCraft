@@ -280,7 +280,7 @@ fn print_json(json: &Json, exit: u8) -> std::process::ExitCode {
             }
         }
         Err(_) => {
-            println!("{{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}}");
+            println!("{}", report::REPLY_OVER_BUDGET_LINE);
             return std::process::ExitCode::from(2);
         }
     }

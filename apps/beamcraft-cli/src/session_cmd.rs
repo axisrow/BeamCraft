@@ -563,7 +563,8 @@ fn print_json(json: &Json) -> Result<(), ()> {
         }
         Err(_) => {
             let mut out = std::io::stdout().lock();
-            out.write_all(b"{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}\n")
+            out.write_all(crate::report::REPLY_OVER_BUDGET_LINE.as_bytes())
+                .and_then(|()| out.write_all(b"\n"))
                 .and_then(|()| out.flush())
                 .map_err(|_| ())
         }

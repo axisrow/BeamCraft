@@ -9,6 +9,12 @@ use session::Refusal;
 
 type Run<T> = Result<T, Refusal>;
 
+/// What a print site writes instead of a reply that does not fit the shared JSON encoder
+/// budgets (1 MiB of text, 65 536 tokens of scratch): the `code` any other refusal carries
+/// plus one message naming the budget, so the client learns why the reply is empty. One
+/// constant keeps the one-process, session and framed replies identical.
+pub(crate) const REPLY_OVER_BUDGET_LINE: &str = "{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\",\"message\":\"the reply exceeds the output budget\"}";
+
 /// The shared result shape of the store commands: the JSON object and the exit code (0 success,
 /// 2 rejection, 3 backend unavailable, 4 outcome unknown).
 pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
@@ -101,5 +107,23 @@ mod tests {
     fn success_is_returned_without_an_envelope() {
         let value = Json::object([("outcome", Json::text("command-specific success"))]);
         assert_eq!(report(Ok(value.clone())), (value, 0));
+    }
+
+    #[test]
+    fn a_reply_over_the_encoder_budget_refuses_with_a_message() {
+        // One byte over the 1 MiB text budget already fails to encode; the fallback line that
+        // replaces such a reply decodes and names the budget instead of leaving a bare code.
+        let oversized = Json::text("x".repeat(beamcraft_json::Limits::DEFAULT.bytes + 1));
+        assert!(oversized.encode(&beamcraft_json::Limits::DEFAULT).is_err());
+        let decoded = beamcraft_json::decode(
+            REPLY_OVER_BUDGET_LINE.as_bytes(),
+            &beamcraft_json::Limits::DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(decoded.get("code").unwrap(), &Json::text("LIMIT_EXCEEDED"));
+        assert_eq!(
+            decoded.get("message").unwrap(),
+            &Json::text("the reply exceeds the output budget")
+        );
     }
 }
