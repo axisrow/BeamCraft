@@ -2454,4 +2454,196 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_shipped_india_wpb_280_900_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/profiles-is808-wpb-280-900.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "india-is808-wpb-280-900-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 69);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("IS 808:2021"),
+                "{}",
+                entry.designation
+            );
+            // Same discipline as the two shallower libraries: the closed-form area never trips
+            // the D3 1 percent warning and every declared mass follows the closed-form geometry
+            // at 7850 kg/m3.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_geometry = parametric.exact_area_mm2() * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_geometry).abs() <= 0.05,
+                "{}: mass {mass} kg/m vs geometry-derived {mass_from_geometry}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The wide parallel flange beam (WPB) series of IS 808:2021 table 4, depths 280 to
+        // 900: 69 rows. Four rows carry a corrected mass: the 2021 print contradicts the same
+        // row's printed area column, printed rz/ry and the closed form of the printed
+        // dimensions, while IS 12778:2004's printed mass matches the closed form; the
+        // designation uses that corrected mass (WPB360x300x83.69 against the printed 91.04,
+        // WPB360x300x112.06 against 125.81, WPB360x300x141.80 against 163.00, and
+        // WPB340x300x247.92 against 290.64). The unresolved WPB280x280x284.13 row is absent:
+        // the 2021 text layer carries it but it is not visible in the printed and rendered
+        // table and its text-layer web thickness contradicts IS 12778:2004 (10.5 against
+        // 105.0), so it stays out pending the official printed text.
+        let mut expected = vec![
+            "WPB280x280x188.54",
+            "WPB280x280x61.26",
+            "WPB280x280x76.36",
+            "WPB300x300x100.85",
+            "WPB300x300x117.03",
+            "WPB300x300x237.92",
+            "WPB300x300x69.80",
+            "WPB300x300x88.34",
+            "WPB320x300x126.66",
+            "WPB320x300x244.97",
+            "WPB320x300x74.25",
+            "WPB320x300x97.64",
+            "WPB340x300x104.78",
+            "WPB340x300x134.16",
+            "WPB340x300x247.92",
+            "WPB340x300x78.90",
+            "WPB360x300x112.06",
+            "WPB360x300x141.80",
+            "WPB360x300x250.27",
+            "WPB360x300x83.69",
+            "WPB360x370x136.21",
+            "WPB360x370x150.87",
+            "WPB360x370x165.35",
+            "WPB360x370x182.02",
+            "WPB360x370x197.66",
+            "WPB400x300x124.81",
+            "WPB400x300x155.26",
+            "WPB400x300x255.74",
+            "WPB400x300x92.40",
+            "WPB400x400x191.11",
+            "WPB400x400x219.67",
+            "WPB400x400x239.62",
+            "WPB450x300x139.76",
+            "WPB450x300x171.12",
+            "WPB450x300x263.33",
+            "WPB450x300x99.75",
+            "WPB500x300x107.46",
+            "WPB500x300x129.78",
+            "WPB500x300x155.08",
+            "WPB500x300x187.34",
+            "WPB500x300x270.28",
+            "WPB550x300x119.99",
+            "WPB550x300x166.24",
+            "WPB550x300x199.44",
+            "WPB550x300x278.19",
+            "WPB600x300x128.79",
+            "WPB600x300x177.78",
+            "WPB600x300x211.92",
+            "WPB600x300x285.48",
+            "WPB650x300x137.98",
+            "WPB650x300x189.69",
+            "WPB650x300x224.78",
+            "WPB650x300x293.39",
+            "WPB700x300x149.89",
+            "WPB700x300x204.48",
+            "WPB700x300x240.51",
+            "WPB700x300x300.68",
+            "WPB800x300x171.52",
+            "WPB800x300x179.90",
+            "WPB800x300x224.38",
+            "WPB800x300x262.34",
+            "WPB800x300x317.36",
+            "WPB850x300x195.74",
+            "WPB850x300x214.25",
+            "WPB850x300x230.56",
+            "WPB850x300x253.69",
+            "WPB900x300x198.01",
+            "WPB900x300x251.62",
+            "WPB900x300x291.46",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "WPB280x280x61.26",
+            [264.0, 280.0, 7.0, 10.0, 24.0],
+            7800.0,
+            61.26,
+        );
+        spot(
+            "WPB360x300x141.80",
+            [360.0, 300.0, 12.5, 22.5, 27.0],
+            18000.0,
+            141.8,
+        );
+        spot(
+            "WPB900x300x291.46",
+            [900.0, 300.0, 18.5, 35.0, 30.0],
+            37100.0,
+            291.46,
+        );
+        for absent in [
+            "WPB360x300x163.00",
+            "WPB360x300x91.04",
+            "WPB360x300x125.81",
+            "WPB340x300x290.64",
+            "WPB280x280x284.13",
+            "MB300",
+            "SC200",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
 }

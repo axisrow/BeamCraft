@@ -1,0 +1,985 @@
+#usda 1.0
+(
+    doc = "BeamCraft India environment: hot-rolled I beams with parallel flanges of the wide parallel flange beam (WPB) series of IS 808:2021 (table 4, the assortment of IS 12778:2004 amalgamated into the 2021 edition). The nominal dimensions, areas and masses are the published values of the public standard, re-entered by hand as our own data; no text or table is copied. Designations keep the published depth x width x mass form without spaces. Reference data for modelling; it is not a substitute for the standard itself."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "india-is808-wpb-280-900-profiles"
+        string "bim:library:title" = "India hot-rolled sections (IS 808:2021: wide parallel flange beams, depths 280 to 900)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Dimensional facts of IS 808:2021 (wide parallel flange beam (WPB) series, table 4) re-entered by hand as our own data; no table copied; cross-checked against the printed IS 808:2021 text and the independent edition IS 12778:2004; retrieved 2026-11-15"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "WPB280x280x61_26"
+        {
+            string steel:profile:designation = "WPB280x280x61.26"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 264
+            double steel:profile:bMm = 280
+            double steel:profile:twMm = 7
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 7800
+            double steel:profile:massPerMeterKg = 61.26
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB280x280x76_36"
+        {
+            string steel:profile:designation = "WPB280x280x76.36"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 270
+            double steel:profile:bMm = 280
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 13
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 9720
+            double steel:profile:massPerMeterKg = 76.36
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB280x280x188_54"
+        {
+            string steel:profile:designation = "WPB280x280x188.54"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 288
+            double steel:profile:twMm = 18.5
+            double steel:profile:tfMm = 33
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 24000
+            double steel:profile:massPerMeterKg = 188.54
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB300x300x69_80"
+        {
+            string steel:profile:designation = "WPB300x300x69.80"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 283
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 7.5
+            double steel:profile:tfMm = 10.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 8890
+            double steel:profile:massPerMeterKg = 69.8
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB300x300x88_34"
+        {
+            string steel:profile:designation = "WPB300x300x88.34"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 290
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 8.5
+            double steel:profile:tfMm = 14
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 11200
+            double steel:profile:massPerMeterKg = 88.34
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB300x300x100_85"
+        {
+            string steel:profile:designation = "WPB300x300x100.85"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 294
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 12800
+            double steel:profile:massPerMeterKg = 100.85
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB300x300x117_03"
+        {
+            string steel:profile:designation = "WPB300x300x117.03"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 19
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 14900
+            double steel:profile:massPerMeterKg = 117.03
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB300x300x237_92"
+        {
+            string steel:profile:designation = "WPB300x300x237.92"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 340
+            double steel:profile:bMm = 310
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 39
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 30300
+            double steel:profile:massPerMeterKg = 237.92
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB320x300x74_25"
+        {
+            string steel:profile:designation = "WPB320x300x74.25"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 301
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 9450
+            double steel:profile:massPerMeterKg = 74.25
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB320x300x97_64"
+        {
+            string steel:profile:designation = "WPB320x300x97.64"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 12400
+            double steel:profile:massPerMeterKg = 97.64
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB320x300x126_66"
+        {
+            string steel:profile:designation = "WPB320x300x126.66"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 320
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11.5
+            double steel:profile:tfMm = 20.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 16100
+            double steel:profile:massPerMeterKg = 126.66
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB320x300x244_97"
+        {
+            string steel:profile:designation = "WPB320x300x244.97"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 359
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 31200
+            double steel:profile:massPerMeterKg = 244.97
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB340x300x78_90"
+        {
+            string steel:profile:designation = "WPB340x300x78.90"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 320
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 8.5
+            double steel:profile:tfMm = 11.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 10000
+            double steel:profile:massPerMeterKg = 78.9
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB340x300x104_78"
+        {
+            string steel:profile:designation = "WPB340x300x104.78"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 330
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 9.5
+            double steel:profile:tfMm = 16.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 13300
+            double steel:profile:massPerMeterKg = 104.78
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB340x300x134_16"
+        {
+            string steel:profile:designation = "WPB340x300x134.16"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 340
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 12
+            double steel:profile:tfMm = 21.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 17000
+            double steel:profile:massPerMeterKg = 134.16
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB340x300x247_92"
+        {
+            string steel:profile:designation = "WPB340x300x247.92"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 377
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 31500
+            double steel:profile:massPerMeterKg = 247.92
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x300x83_69"
+        {
+            string steel:profile:designation = "WPB360x300x83.69"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 339
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 12
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 10600
+            double steel:profile:massPerMeterKg = 83.69
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x300x112_06"
+        {
+            string steel:profile:designation = "WPB360x300x112.06"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 17.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 14200
+            double steel:profile:massPerMeterKg = 112.06
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x300x141_80"
+        {
+            string steel:profile:designation = "WPB360x300x141.80"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 12.5
+            double steel:profile:tfMm = 22.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 18000
+            double steel:profile:massPerMeterKg = 141.8
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x300x250_27"
+        {
+            string steel:profile:designation = "WPB360x300x250.27"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 395
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 31800
+            double steel:profile:massPerMeterKg = 250.27
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x370x136_21"
+        {
+            string steel:profile:designation = "WPB360x370x136.21"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 369
+            double steel:profile:twMm = 11.2
+            double steel:profile:tfMm = 17.8
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 17300
+            double steel:profile:massPerMeterKg = 136.21
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x370x150_87"
+        {
+            string steel:profile:designation = "WPB360x370x150.87"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 370
+            double steel:profile:twMm = 12.3
+            double steel:profile:tfMm = 19.8
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 19200
+            double steel:profile:massPerMeterKg = 150.87
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x370x165_35"
+        {
+            string steel:profile:designation = "WPB360x370x165.35"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 364
+            double steel:profile:bMm = 371
+            double steel:profile:twMm = 13.3
+            double steel:profile:tfMm = 21.8
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 21000
+            double steel:profile:massPerMeterKg = 165.35
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x370x182_02"
+        {
+            string steel:profile:designation = "WPB360x370x182.02"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 368
+            double steel:profile:bMm = 373
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 23.8
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 23100
+            double steel:profile:massPerMeterKg = 182.02
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB360x370x197_66"
+        {
+            string steel:profile:designation = "WPB360x370x197.66"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 372
+            double steel:profile:bMm = 374
+            double steel:profile:twMm = 16.4
+            double steel:profile:tfMm = 25.8
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 25100
+            double steel:profile:massPerMeterKg = 197.66
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB400x300x92_40"
+        {
+            string steel:profile:designation = "WPB400x300x92.40"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 378
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 9.5
+            double steel:profile:tfMm = 13
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 11700
+            double steel:profile:massPerMeterKg = 92.4
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB400x300x124_81"
+        {
+            string steel:profile:designation = "WPB400x300x124.81"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 390
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 19
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 15800
+            double steel:profile:massPerMeterKg = 124.81
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB400x300x155_26"
+        {
+            string steel:profile:designation = "WPB400x300x155.26"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 13.5
+            double steel:profile:tfMm = 24
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 19700
+            double steel:profile:massPerMeterKg = 155.26
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB400x300x255_74"
+        {
+            string steel:profile:designation = "WPB400x300x255.74"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 432
+            double steel:profile:bMm = 307
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 32500
+            double steel:profile:massPerMeterKg = 255.74
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB400x400x191_11"
+        {
+            string steel:profile:designation = "WPB400x400x191.11"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 368
+            double steel:profile:bMm = 391
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 24.2
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 24300
+            double steel:profile:massPerMeterKg = 191.11
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB400x400x219_67"
+        {
+            string steel:profile:designation = "WPB400x400x219.67"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 375
+            double steel:profile:bMm = 394
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 27.7
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 27900
+            double steel:profile:massPerMeterKg = 219.67
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB400x400x239_62"
+        {
+            string steel:profile:designation = "WPB400x400x239.62"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 380
+            double steel:profile:bMm = 395
+            double steel:profile:twMm = 18.9
+            double steel:profile:tfMm = 30.2
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 30500
+            double steel:profile:massPerMeterKg = 239.62
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB450x300x99_75"
+        {
+            string steel:profile:designation = "WPB450x300x99.75"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 425
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 12700
+            double steel:profile:massPerMeterKg = 99.75
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB450x300x139_76"
+        {
+            string steel:profile:designation = "WPB450x300x139.76"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 440
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11.5
+            double steel:profile:tfMm = 21
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 17800
+            double steel:profile:massPerMeterKg = 139.76
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB450x300x171_12"
+        {
+            string steel:profile:designation = "WPB450x300x171.12"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 450
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 26
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 21700
+            double steel:profile:massPerMeterKg = 171.12
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB450x300x263_33"
+        {
+            string steel:profile:designation = "WPB450x300x263.33"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 478
+            double steel:profile:bMm = 307
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 33500
+            double steel:profile:massPerMeterKg = 263.33
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB500x300x107_46"
+        {
+            string steel:profile:designation = "WPB500x300x107.46"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 472
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 14
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 13600
+            double steel:profile:massPerMeterKg = 107.46
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB500x300x129_78"
+        {
+            string steel:profile:designation = "WPB500x300x129.78"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 480
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11.5
+            double steel:profile:tfMm = 18
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 16500
+            double steel:profile:massPerMeterKg = 129.78
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB500x300x155_08"
+        {
+            string steel:profile:designation = "WPB500x300x155.08"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 490
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 12
+            double steel:profile:tfMm = 23
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 19700
+            double steel:profile:massPerMeterKg = 155.08
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB500x300x187_34"
+        {
+            string steel:profile:designation = "WPB500x300x187.34"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 500
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 28
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 23800
+            double steel:profile:massPerMeterKg = 187.34
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB500x300x270_28"
+        {
+            string steel:profile:designation = "WPB500x300x270.28"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 524
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 34400
+            double steel:profile:massPerMeterKg = 270.28
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB550x300x119_99"
+        {
+            string steel:profile:designation = "WPB550x300x119.99"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 522
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11.5
+            double steel:profile:tfMm = 15
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 15200
+            double steel:profile:massPerMeterKg = 119.99
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB550x300x166_24"
+        {
+            string steel:profile:designation = "WPB550x300x166.24"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 540
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 12.5
+            double steel:profile:tfMm = 24
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 21100
+            double steel:profile:massPerMeterKg = 166.24
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB550x300x199_44"
+        {
+            string steel:profile:designation = "WPB550x300x199.44"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 550
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 29
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 25400
+            double steel:profile:massPerMeterKg = 199.44
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB550x300x278_19"
+        {
+            string steel:profile:designation = "WPB550x300x278.19"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 572
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 35400
+            double steel:profile:massPerMeterKg = 278.19
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB600x300x128_79"
+        {
+            string steel:profile:designation = "WPB600x300x128.79"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 571
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 12
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 16400
+            double steel:profile:massPerMeterKg = 128.79
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB600x300x177_78"
+        {
+            string steel:profile:designation = "WPB600x300x177.78"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 590
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 25
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 22600
+            double steel:profile:massPerMeterKg = 177.78
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB600x300x211_92"
+        {
+            string steel:profile:designation = "WPB600x300x211.92"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 600
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 15.5
+            double steel:profile:tfMm = 30
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 26900
+            double steel:profile:massPerMeterKg = 211.92
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB600x300x285_48"
+        {
+            string steel:profile:designation = "WPB600x300x285.48"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 620
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 36300
+            double steel:profile:massPerMeterKg = 285.48
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB650x300x137_98"
+        {
+            string steel:profile:designation = "WPB650x300x137.98"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 620
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 12.5
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 17500
+            double steel:profile:massPerMeterKg = 137.98
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB650x300x189_69"
+        {
+            string steel:profile:designation = "WPB650x300x189.69"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 640
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 13.5
+            double steel:profile:tfMm = 26
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 24100
+            double steel:profile:massPerMeterKg = 189.69
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB650x300x224_78"
+        {
+            string steel:profile:designation = "WPB650x300x224.78"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 650
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 28600
+            double steel:profile:massPerMeterKg = 224.78
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB650x300x293_39"
+        {
+            string steel:profile:designation = "WPB650x300x293.39"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 668
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 37300
+            double steel:profile:massPerMeterKg = 293.39
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB700x300x149_89"
+        {
+            string steel:profile:designation = "WPB700x300x149.89"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 670
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 17
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 19000
+            double steel:profile:massPerMeterKg = 149.89
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB700x300x204_48"
+        {
+            string steel:profile:designation = "WPB700x300x204.48"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 690
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 27
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 26000
+            double steel:profile:massPerMeterKg = 204.48
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB700x300x240_51"
+        {
+            string steel:profile:designation = "WPB700x300x240.51"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 700
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 32
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 30600
+            double steel:profile:massPerMeterKg = 240.51
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB700x300x300_68"
+        {
+            string steel:profile:designation = "WPB700x300x300.68"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 716
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 38300
+            double steel:profile:massPerMeterKg = 300.68
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB800x300x171_52"
+        {
+            string steel:profile:designation = "WPB800x300x171.52"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 770
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 18
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 21800
+            double steel:profile:massPerMeterKg = 171.52
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB800x300x224_38"
+        {
+            string steel:profile:designation = "WPB800x300x224.38"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 790
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 28
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28500
+            double steel:profile:massPerMeterKg = 224.38
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB800x300x262_34"
+        {
+            string steel:profile:designation = "WPB800x300x262.34"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 800
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 17.5
+            double steel:profile:tfMm = 33
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33400
+            double steel:profile:massPerMeterKg = 262.34
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB800x300x317_36"
+        {
+            string steel:profile:designation = "WPB800x300x317.36"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 814
+            double steel:profile:bMm = 303
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40400
+            double steel:profile:massPerMeterKg = 317.36
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB800x300x179_90"
+        {
+            string steel:profile:designation = "WPB800x300x179.90"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 835
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 18.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22900
+            double steel:profile:massPerMeterKg = 179.9
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB850x300x195_74"
+        {
+            string steel:profile:designation = "WPB850x300x195.74"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 840
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 14.7
+            double steel:profile:tfMm = 21.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24900
+            double steel:profile:massPerMeterKg = 195.74
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB850x300x214_25"
+        {
+            string steel:profile:designation = "WPB850x300x214.25"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 846
+            double steel:profile:bMm = 293
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 24.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27200
+            double steel:profile:massPerMeterKg = 214.25
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB850x300x230_56"
+        {
+            string steel:profile:designation = "WPB850x300x230.56"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 851
+            double steel:profile:bMm = 294
+            double steel:profile:twMm = 16.1
+            double steel:profile:tfMm = 26.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 29300
+            double steel:profile:massPerMeterKg = 230.56
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB850x300x253_69"
+        {
+            string steel:profile:designation = "WPB850x300x253.69"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 859
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 30.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32300
+            double steel:profile:massPerMeterKg = 253.69
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB900x300x198_01"
+        {
+            string steel:profile:designation = "WPB900x300x198.01"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 870
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 20
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25200
+            double steel:profile:massPerMeterKg = 198.01
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB900x300x251_62"
+        {
+            string steel:profile:designation = "WPB900x300x251.62"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 890
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 30
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32000
+            double steel:profile:massPerMeterKg = 251.62
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WPB900x300x291_46"
+        {
+            string steel:profile:designation = "WPB900x300x291.46"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 900
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 18.5
+            double steel:profile:tfMm = 35
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 37100
+            double steel:profile:massPerMeterKg = 291.46
+            string steel:profile:standard = "IS 808:2021"
+        }
+    }
+}

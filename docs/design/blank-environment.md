@@ -20,8 +20,8 @@ saved setting.
   `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions,
   `environments/russia/` holds the GOST 26020-83 parallel-flange beam (Б), wide-flange (Ш) and
   column (К) series; `environments/australia/` (2026-11-15) holds the AS/NZS 3679.1:2016 UB
-  and UC series, and `environments/india/` holds the IS 808:2021 narrow (NPB) and wide (WPB,
-  depths 100 to 260) parallel flange beam series
+  and UC series, and `environments/india/` holds the IS 808:2021 narrow (NPB) and wide (WPB)
+  parallel flange beam series
   (see `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
