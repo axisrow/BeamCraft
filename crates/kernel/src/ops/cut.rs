@@ -12,7 +12,8 @@
 //! Local feature ids: input faces keep their ids (a face that is clipped keeps its id and a
 //! face whose triangles all disappear leaves the table and is listed in
 //! [`OpResult::removed_faces`]); the cap is `cut:f.p<ordinal>`. Edges and vertices are not
-//! named by this pilot. The `cut` kind and the `p` role are provisional and need the same
+//! named by this pilot; the engine's feature query names the cap corners from these face roles
+//! (the cut cap corner amendment). The `cut` kind and the `p` role are provisional and need the same
 //! contract amendment as the G05 `extrusion` kind.
 
 use super::body::{Body, MAX_ORDINAL};

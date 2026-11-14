@@ -23,6 +23,9 @@ fn point_token(token: &str) -> bool {
 
 pub(super) fn parse_role(body: BodyKind, token: &str) -> Option<FeatureKind> {
     if body == BodyKind::Cut {
+        if let Some(corner) = token.strip_prefix("v.") {
+            return cut_corner(corner).then_some(FeatureKind::Vertex);
+        }
         let face = token.strip_prefix("f.")?;
         if let Some(p) = face.strip_prefix('p') {
             return decimal(p, 999).map(|_| FeatureKind::Face);
@@ -73,6 +76,90 @@ pub(super) fn parse_role(body: BodyKind, token: &str) -> Option<FeatureKind> {
     (point_token(point)
         && (matches!(level, "z0" | "z1") || (kind == FeatureKind::Edge && level == "v")))
         .then_some(kind)
+}
+
+/// The F06 profile-features amendment's cap corner `p<ordinal>.<corner>`: the corner where the
+/// cap of cut record `<ordinal>` crosses one longitudinal edge of the member, written as the two
+/// member faces of that edge in axis order (`x0.y1`) or as the profile contour point of that
+/// edge (`o3`, `c0.2`).
+fn cut_corner(corner: &str) -> bool {
+    let Some((ordinal, edge)) = corner.strip_prefix('p').and_then(|s| s.split_once('.')) else {
+        return false;
+    };
+    decimal(ordinal, 999).is_some() && (point_token(edge) || member_edge(edge))
+}
+
+/// A longitudinal edge of a member box: one `x` side face and one `y` side face, in that order
+/// (`x0.y1`). The member axis is local `z`, so a pair with `z0`/`z1` is a transverse edge of an
+/// end face, where a cap corner stays unnamed.
+fn member_edge(edge: &str) -> bool {
+    edge.split_once('.')
+        .is_some_and(|(a, b)| matches!(a, "x0" | "x1") && matches!(b, "y0" | "y1"))
+}
+
+/// The cap corner name of a vertex shared by exactly one cut cap and two faces of the member
+/// itself (see [`cut_corner`]). Every other mixed vertex stays unnamed.
+fn cut_vertex_name(local: &[(&str, &str)], names: &[String]) -> Option<String> {
+    let caps: Vec<&str> = local
+        .iter()
+        .filter(|(family, _)| *family == "cut")
+        .map(|(_, role)| role.strip_prefix("f.p"))
+        .collect::<Option<_>>()?;
+    let [cap] = caps.as_slice() else {
+        return None;
+    };
+    let sides: Vec<(&str, &str)> = local
+        .iter()
+        .copied()
+        .filter(|(family, _)| *family != "cut")
+        .collect();
+    let [(family, a), (other, b)] = sides.as_slice() else {
+        return None;
+    };
+    if family != other {
+        return None;
+    }
+    let edge = if *family == "member" {
+        let mut axes = [a.strip_prefix("f.")?, b.strip_prefix("f.")?];
+        axes.sort_unstable();
+        axes.join(".")
+    } else if *family == "profile" {
+        shared_point(family, &wall(a)?, &wall(b)?, names).flatten()?
+    } else {
+        return None;
+    };
+    let token = format!("v.p{cap}.{edge}");
+    cut_corner(token.strip_prefix("v.")?).then(|| format!("cut:{token}"))
+}
+
+/// The contour point token shared by two walls `a` and `b` of one contour of `family`: the
+/// start of whichever wall follows the other. `Some(None)` when the walls are not adjacent on
+/// one contour; `None` when the face table holds no wall of that contour at all.
+fn shared_point(
+    family: &str,
+    a: &(String, usize),
+    b: &(String, usize),
+    names: &[String],
+) -> Option<Option<String>> {
+    if a.0 != b.0 {
+        return Some(None);
+    }
+    let count = names
+        .iter()
+        .filter_map(|s| s.split_once(':'))
+        .filter(|(f, _)| *f == family)
+        .filter_map(|(_, r)| wall(r))
+        .filter(|(c, _)| c == &a.0)
+        .map(|(_, k)| k + 1)
+        .max()?;
+    let point = if (a.1 + 1) % count == b.1 {
+        b.1
+    } else if (b.1 + 1) % count == a.1 {
+        a.1
+    } else {
+        return Some(None);
+    };
+    Some(Some(contour_point(&a.0, point)))
 }
 
 /// A contour wall's authored contour and starting point.
@@ -191,16 +278,28 @@ impl NamedFeatures {
         }
         let mut by_vertex = BTreeMap::new();
         let mut named_positions = BTreeMap::new();
+        let mut ambiguous = BTreeSet::new();
         for (i, adjacent) in incident.iter().enumerate() {
             let local = vertex_name(adjacent, &names)?;
             if let Some(local) = local {
                 let id = FeatureId::from_local(entry.id, &local).ok()?;
-                // Ambiguous names are never repaired by selecting a mesh index.
+                // Ambiguous names are never repaired by selecting a mesh index. A cap corner that
+                // occurs twice (a cap crossing one member edge more than once) is left out on its
+                // own; any other repeated name refuses the whole body as before.
+                if ambiguous.contains(&id) {
+                    continue;
+                }
                 if named_positions
                     .insert(id.clone(), *positions.get(i)?)
                     .is_some()
                 {
-                    return None;
+                    if id.body() != BodyKind::Cut {
+                        return None;
+                    }
+                    named_positions.remove(&id);
+                    by_vertex.retain(|_, named| named != &id);
+                    ambiguous.insert(id);
+                    continue;
                 }
                 by_vertex.insert(u32::try_from(i).ok()?, id);
             }
@@ -326,7 +425,7 @@ fn vertex_name(adjacent: &BTreeSet<usize>, names: &[String]) -> Option<Option<St
         return Some(None);
     };
     if local.iter().any(|(kind, _)| *kind != family) {
-        return Some(None);
+        return Some(cut_vertex_name(&local, names));
     }
     if matches!(family, "plate" | "member") {
         let mut axes: Vec<&str> = local
@@ -351,28 +450,10 @@ fn vertex_name(adjacent: &BTreeSet<usize>, names: &[String]) -> Option<Option<St
     let [a, b] = walls.as_slice() else {
         return Some(None);
     };
-    if a.0 != b.0 {
-        return Some(None);
-    }
-    let count = names
-        .iter()
-        .filter_map(|s| s.split_once(':'))
-        .filter(|(f, _)| *f == family)
-        .filter_map(|(_, r)| wall(r))
-        .filter(|(c, _)| c == &a.0)
-        .map(|(_, k)| k + 1)
-        .max()?;
-    let point = if (a.1 + 1) % count == b.1 {
-        b.1
-    } else if (b.1 + 1) % count == a.1 {
-        a.1
-    } else {
+    let Some(point) = shared_point(family, a, b, names)? else {
         return Some(None);
     };
-    Some(Some(format!(
-        "{family}:v.z{level}.{}",
-        contour_point(&a.0, point)
-    )))
+    Some(Some(format!("{family}:v.z{level}.{point}")))
 }
 
 fn edge_name(
@@ -381,7 +462,8 @@ fn edge_name(
     adjacent: &BTreeSet<usize>,
     names: &[String],
 ) -> Option<String> {
-    if a.body() != b.body() {
+    // Cap corners name vertices only: the cap's own edges are not named by this amendment.
+    if a.body() != b.body() || a.body() == BodyKind::Cut {
         return None;
     }
     let family = a.body().as_str();

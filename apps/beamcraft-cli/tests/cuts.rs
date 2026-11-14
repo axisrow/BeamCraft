@@ -477,3 +477,284 @@ fn undo_takes_the_cut_back_and_features_follow_the_plane() {
     let inspected = run_in("inspect-elements", &[]).1;
     assert!((volume_of(&inspected) - 1_250_000.0).abs() <= 1e-6);
 }
+
+#[test]
+fn a_cut_member_length_is_dimensioned_on_its_cap_corners_and_publishes() {
+    let f = Fixture::new();
+    let member = "01a00000-0000-7000-8000-0000000000e0";
+    let profile = {
+        let (_, reply) = f.run("define-profile", &["--width", "200", "--height", "300"]);
+        text(reply.get("definition").unwrap(), "digest")
+    };
+    let (code, beam) = f.run(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            member,
+        ],
+    );
+    assert_eq!(code, 0, "{beam:?}");
+    f.ok_cut(
+        member,
+        "01a00000-0000-7000-8000-0000000000e1",
+        &["--point", "3000,0,0"],
+    );
+    // The cut removed the far end face and clipped its corners; the cap corners take their place
+    // and lie at the kept length.
+    let (code, listed) = f.run("list-feature", &["--id", member]);
+    assert_eq!(code, 0, "{listed:?}");
+    let corners: Vec<String> = at(&listed, &["features"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|feature| text(feature, "feature_id"))
+        .filter(|id| id.contains(":cut:v."))
+        .collect();
+    let expected: Vec<String> = ["x0.y0", "x0.y1", "x1.y0", "x1.y1"]
+        .iter()
+        .map(|edge| format!("fid1:{member}:cut:v.p0.{edge}"))
+        .collect();
+    assert_eq!(corners, expected);
+    let (code, corner) = f.run("lookup-feature", &["--feature-id", &expected[0]]);
+    assert_eq!(code, 0, "{corner:?}");
+    let x = at(&corner, &["world", "position"]).array().unwrap()[0]
+        .float()
+        .unwrap();
+    assert!((x - 3000.0).abs() <= 1e-9, "{x}");
+
+    // A drawing anchored on the start corner and a cap corner measures the kept length, and the
+    // resolved draft publishes and exports.
+    let document = f.shared.root.join("drawing");
+    let document = document.to_str().unwrap();
+    let id = |n: u16| format!("01a00000-0000-7000-8000-{n:012x}");
+    let start = format!("fid1:{member}:member:v.x0.y0.z0");
+    let (code, preview) = f.run(
+        "preview-drawing",
+        &[
+            "--id",
+            member,
+            "--drawing-id",
+            &id(0xe2),
+            "--view-id",
+            &id(0xe3),
+            "--dimension-id",
+            &id(0xe4),
+            "--anchor-a",
+            &start,
+            "--anchor-b",
+            &expected[0],
+        ],
+    );
+    assert_eq!(code, 0, "{preview:?}");
+    assert_eq!(text(at(&preview, &["dimension"]), "state"), "resolved");
+    assert_eq!(text(at(&preview, &["dimension"]), "label_mm"), "3000");
+    let (code, created) = f.run(
+        "create-drawing",
+        &[
+            "--document-dir",
+            document,
+            "--drawing-id",
+            &id(0xe2),
+            "--view-id",
+            &id(0xe3),
+            "--dimension-id",
+            &id(0xe4),
+            "--id",
+            member,
+            "--anchor-a",
+            &start,
+            "--anchor-b",
+            &expected[0],
+            "--op-id",
+            &id(0xe5),
+            "--revision-id",
+            &id(0xe6),
+            "--actor-id",
+            &id(0xe7),
+        ],
+    );
+    assert_eq!(code, 0, "{created:?}");
+    let run = |command: &str, args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .arg(command)
+            .args(args)
+            .output()
+            .unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+        (output.status.code().unwrap(), body)
+    };
+    let (code, published) = run(
+        "publish-drawing",
+        &[
+            "--document-dir",
+            document,
+            "--expected-head",
+            &id(0xe6),
+            "--op-id",
+            &id(0xe8),
+            "--revision-id",
+            &id(0xe9),
+            "--actor-id",
+            &id(0xe7),
+            "--version-id",
+            &id(0xea),
+        ],
+    );
+    assert_eq!(code, 0, "{published:?}");
+    assert_eq!(text(&published, "state"), "published");
+    let svg = f.shared.root.join("cut.svg");
+    let (code, exported) = run(
+        "export-drawing",
+        &[
+            "--document-dir",
+            document,
+            "--version-id",
+            &id(0xea),
+            "--out",
+            svg.to_str().unwrap(),
+            "--format",
+            "svg",
+        ],
+    );
+    assert_eq!(code, 0, "{exported:?}");
+    assert!(fs::read_to_string(&svg).unwrap().starts_with("<?xml"));
+}
+
+#[test]
+fn an_oblique_cut_names_each_cap_corner_on_its_own_profile_edge() {
+    let f = Fixture::new();
+    let member = "01a00000-0000-7000-8000-0000000000f0";
+    let (code, reply) = f.run(
+        "define-profile",
+        &[
+            "--family", "i_shape", "--h", "300", "--b", "150", "--tw", "7", "--tf", "10", "--r",
+            "0",
+        ],
+    );
+    assert_eq!(code, 0, "{reply:?}");
+    let profile = text(reply.get("definition").unwrap(), "digest");
+    let (code, beam) = f.run(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            member,
+        ],
+    );
+    assert_eq!(code, 0, "{beam:?}");
+    f.ok_cut(
+        member,
+        "01a00000-0000-7000-8000-0000000000f1",
+        &["--point", "3000,0,0", "--normal", "1,0,0.3"],
+    );
+    let (code, listed) = f.run("list-feature", &["--id", member]);
+    assert_eq!(code, 0, "{listed:?}");
+    let corners: Vec<String> = at(&listed, &["features"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|feature| text(feature, "feature_id"))
+        .filter(|id| id.contains(":cut:v."))
+        .collect();
+    // An I section has twelve outline points: one cap corner on each longitudinal edge.
+    assert_eq!(corners.len(), 12, "{corners:?}");
+    let position = |id: &str| -> Vec<f64> {
+        let (code, found) = f.run("lookup-feature", &["--feature-id", id]);
+        assert_eq!(code, 0, "{found:?}");
+        at(&found, &["world", "position"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|c| c.float().unwrap())
+            .collect()
+    };
+    for k in 0..12 {
+        let corner = position(&format!("fid1:{member}:cut:v.p0.o{k}"));
+        let start = position(&format!("fid2:{member}:profile:v.z0.o{k}"));
+        // Same longitudinal edge: equal section coordinates, and the corner on the cut plane
+        // x + 0.3 z = 3000.
+        assert!(
+            (corner[1] - start[1]).abs() <= 1e-9,
+            "o{k}: {corner:?} {start:?}"
+        );
+        assert!(
+            (corner[2] - start[2]).abs() <= 1e-9,
+            "o{k}: {corner:?} {start:?}"
+        );
+        assert!(
+            (corner[0] + 0.3 * corner[2] - 3000.0).abs() <= 1e-6,
+            "o{k}: {corner:?}"
+        );
+    }
+}
+
+#[test]
+fn a_bevel_leaving_through_the_end_face_names_only_longitudinal_corners() {
+    let f = Fixture::new();
+    let member = "01a00000-0000-7000-8000-0000000000f8";
+    let profile = {
+        let (_, reply) = f.run("define-profile", &["--width", "200", "--height", "300"]);
+        text(reply.get("definition").unwrap(), "digest")
+    };
+    let (code, beam) = f.run(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            member,
+        ],
+    );
+    assert_eq!(code, 0, "{beam:?}");
+    // The plane x + z = 5900 crosses the top at x = 5750 and leaves through the end face at
+    // z = -100, so the cap meets the end face on two transverse edges.
+    f.ok_cut(
+        member,
+        "01a00000-0000-7000-8000-0000000000f9",
+        &["--point", "5900,0,0", "--normal", "1,0,1"],
+    );
+    let (code, listed) = f.run("list-feature", &["--id", member]);
+    assert_eq!(code, 0, "{listed:?}");
+    let corners: Vec<String> = at(&listed, &["features"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|feature| text(feature, "feature_id"))
+        .filter(|id| id.contains(":cut:v."))
+        .collect();
+    // Only the two top longitudinal edges carry a cap corner; the cap's crossings of the end face
+    // stay unnamed.
+    assert_eq!(corners.len(), 2, "{corners:?}");
+    for id in &corners {
+        let edge = id.rsplit_once(":cut:v.p0.").unwrap().1;
+        assert!(
+            matches!(edge, "x0.y1" | "x1.y1" | "x0.y0" | "x1.y0"),
+            "{id}"
+        );
+        let (code, found) = f.run("lookup-feature", &["--feature-id", id]);
+        assert_eq!(code, 0, "{found:?}");
+        let p: Vec<f64> = at(&found, &["world", "position"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|c| c.float().unwrap())
+            .collect();
+        assert!((p[0] + p[2] - 5900.0).abs() <= 1e-6, "{id}: {p:?}");
+        assert!((p[2] - 150.0).abs() <= 1e-9, "{id}: {p:?}");
+    }
+}
