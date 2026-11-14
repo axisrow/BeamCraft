@@ -68,7 +68,10 @@ the source pin while retaining object IDs and semantic references.
 
 A `FeatureId` is the only addressing scheme. For the first slice a dimension's two anchors must
 be qualified vertices of the drawing's selected member (`element` equal, body kind `member`,
-feature kind `vertex`); anything else is refused at admission. Equal semantic endpoints are
+`profile` or `cut`, feature kind `vertex`); anything else is refused at admission. A `cut`
+vertex is a corner of a plane cut's cap, named by the
+[cut cap corner amendment](f06-cut-cap-corners-amendment-v0.1.md), so the length of a cut or
+fitted member can be dimensioned. Equal semantic endpoints are
 invalid intent. Distinct endpoints that collapse only under the chosen projection stay valid and
 resolve as explicitly unresolved — that is a projection outcome, not an admission error.
 
@@ -81,7 +84,7 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
 - nonfinite or out-of-range numbers: paper coordinates and dimension offsets within
   ±`MAX_PAPER_MM` (10 000 mm), scale denominators 1 through `MAX_SCALE_DENOMINATOR` (10 000);
 - more than three decimal places in a dimension label;
-- anchors that are not distinct qualified vertices of the selected member;
+- anchors that are not distinct qualified vertices of the selected member or of its cut caps;
 - placed views violating the paper bounds above, colliding with any document-object, drawn
   object or sibling paper-object UUID (checked in both replacement directions);
 - section cuts that are nonfinite or beyond the model coordinate cap, and details whose

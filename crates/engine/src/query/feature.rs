@@ -708,6 +708,47 @@ mod tests {
     }
 
     #[test]
+    fn cut_cap_corners_parse_in_their_canonical_form_only() {
+        let s = snapshot();
+        let e = &s.elements()[0];
+        for good in [
+            "v.p0.x0.y1",
+            "v.p12.x1.z0",
+            "v.p0.y0.z1",
+            "v.p3.o7",
+            "v.p999.c255.1023",
+        ] {
+            let text = format!("fid1:{}:cut:{good}", e.id);
+            let parsed = FeatureId::parse(&text).unwrap();
+            assert_eq!(parsed.kind(), FeatureKind::Vertex, "{good}");
+            assert_eq!(parsed.body(), BodyKind::Cut, "{good}");
+            assert_eq!(parsed.to_string(), text);
+            assert!(text.len() <= 64, "{good}");
+        }
+        for bad in [
+            "v.p0.y1.x0",
+            "v.p0.x0.x1",
+            "v.p0.x0",
+            "v.p0.x2.y0",
+            "v.p01.x0.y1",
+            "v.p1000.x0.y1",
+            "v.p0",
+            "v.0.x0.y1",
+            "v.p0.o01",
+            "v.p0.c1",
+            "v.p0.x0.y1.z0",
+            "e.p0.x0.y1",
+        ] {
+            let text = format!("fid1:{}:cut:{bad}", e.id);
+            assert_eq!(
+                FeatureId::parse(&text).unwrap_err().code(),
+                ViewCode::FeatureIdInvalid,
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn feature_ids_round_trip_and_refuse_indices_and_foreign_forms() {
         let s = snapshot();
         let e = &s.elements()[0];

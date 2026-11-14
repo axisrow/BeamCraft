@@ -180,7 +180,7 @@ fn a_stored_revision_re_admits_text_the_glyph_set_grew_to_refuse_and_its_export_
 }
 
 #[test]
-fn admission_accepts_only_member_vertex_references_of_the_selected_owner() {
+fn admission_accepts_only_vertex_references_of_the_selected_owner() {
     let admitted = Drawing::admit(spec()).unwrap();
     assert_eq!(admitted.spec(), &spec());
     for text in [
@@ -195,6 +195,24 @@ fn admission_accepts_only_member_vertex_references_of_the_selected_owner() {
             Drawing::admit(s).unwrap_err().code,
             ErrorCode::InvalidArgument
         );
+    }
+    // The cut cap corner amendment: a corner of the member's own cut cap and a vertex of a
+    // profile member are admitted; a cap face and another member's corner are not.
+    for text in [
+        format!("fid1:{MEMBER}:cut:v.p0.x0.y0"),
+        format!("fid2:{MEMBER}:profile:v.z0.o3"),
+    ] {
+        let mut s = spec();
+        s.dimension.anchors[1] = FeatureId::parse(&text).unwrap();
+        assert!(Drawing::admit(s).is_ok(), "{text}");
+    }
+    for text in [
+        format!("fid1:{MEMBER}:cut:f.p0"),
+        format!("fid1:{A}:cut:v.p0.x0.y0"),
+    ] {
+        let mut s = spec();
+        s.dimension.anchors[1] = FeatureId::parse(&text).unwrap();
+        assert_eq!(Drawing::admit(s).unwrap_err().field, "anchors", "{text}");
     }
     let mut s = spec();
     s.dimension.anchors[1] = s.dimension.anchors[0].clone();

@@ -24,7 +24,8 @@ Plane cuts and holes retain the base body's surviving names and use the existing
 `fid1:<ElementId>:cut:f.p<n>`, `cut:f.h<n>.s<k>` and grouped `cut:f.h<n>` faces.
 An original vertex or edge removed or clipped by an operation is dangling. An operation
 does not rename the surviving original vertices and edges. Operation-created vertices
-and edges remain unaddressable, as F06 0.1 section 5 specifies. Vertices on a grouped
+and edges remain unaddressable, as F06 0.1 section 5 specifies, except the corners of a plane
+cut's cap that the [cut cap corner amendment](f06-cut-cap-corners-amendment-v0.1.md) names. Vertices on a grouped
 approximation wall are exposed only when an explicit authored point-role mapping exists;
 mesh tessellation order must never invent such a mapping.
 

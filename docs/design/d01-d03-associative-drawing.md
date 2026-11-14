@@ -14,7 +14,10 @@ must reuse that rule, rather than a renderer buffer, mesh/triangle index or near
 ## First vertical slice
 
 One owned straight rectangular member, one orthographic wireframe view and one aligned linear
-dimension between two qualified vertex FeatureIds. Both endpoints belong to the selected member.
+dimension between two qualified vertex FeatureIds. Both endpoints belong to the selected member:
+its own `member` or `profile` vertices, or the corners of its plane-cut caps
+(`cut:v.p<n>.…`, [cut cap corner amendment](../contracts/f06-cut-cap-corners-amendment-v0.1.md)),
+so a cut or fitted member's kept length can be dimensioned.
 The dimension's value is its projected distance in model millimetres; paper scale changes its
 drawn size, not the reported model-unit value. A view that collapses the anchors has an unresolved
 dimension, not a successful zero measurement. The contract explicitly identifies the projection

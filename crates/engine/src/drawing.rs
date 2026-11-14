@@ -182,7 +182,8 @@ pub struct DetailSpec {
     pub title: Option<String>,
 }
 
-/// One aligned projected linear dimension. Its endpoints must be vertices of the selected member.
+/// One aligned projected linear dimension. Its endpoints must be vertices of the selected member
+/// or corners of its cut caps.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DimensionSpec {
     /// Stable dimension identity retained through refresh.
@@ -476,12 +477,15 @@ impl Drawing {
         }
         for anchor in &spec.dimension.anchors {
             if anchor.element() != spec.member
-                || anchor.body() != BodyKind::Member
+                || !matches!(
+                    anchor.body(),
+                    BodyKind::Member | BodyKind::Profile | BodyKind::Cut
+                )
                 || anchor.kind() != FeatureKind::Vertex
             {
                 return Err(invalid(
                     "anchors",
-                    "dimension anchors must be qualified vertices of the selected member",
+                    "dimension anchors must be qualified vertices of the selected member or of its cut caps",
                 ));
             }
         }
