@@ -2271,4 +2271,187 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_shipped_india_wpb_100_260_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/profiles-is808-wpb-100-260.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "india-is808-wpb-100-260-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 52);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("IS 808:2021"),
+                "{}",
+                entry.designation
+            );
+            // Same discipline as the NPB library: the closed-form area never trips the D3 1
+            // percent warning (worst row 0.94 percent, an area column rounded to three
+            // significant digits) and every declared mass follows the closed-form geometry
+            // rather than the rounded printed area.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_geometry = parametric.exact_area_mm2() * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_geometry).abs() <= 0.05,
+                "{}: mass {mass} kg/m vs geometry-derived {mass_from_geometry}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The wide parallel flange beam (WPB) series of IS 808:2021 table 4, depths 100 to
+        // 260: 52 rows. The 280-deep and larger rows live in the follow-up library, the
+        // text-layer phantom WPB200x200x37.34 (absent from the printed table) is not here,
+        // and the reshaped heavy 220 row carries the 2021 depth of 226 mm (IS 12778:2004
+        // printed 240 mm with mass 117.31).
+        let mut expected = vec![
+            "WPB100x100x12.24",
+            "WPB100x100x16.67",
+            "WPB100x100x20.44",
+            "WPB100x100x41.79",
+            "WPB120x120x14.56",
+            "WPB120x120x19.89",
+            "WPB120x120x26.70",
+            "WPB120x120x52.13",
+            "WPB140x140x18.08",
+            "WPB140x140x24.66",
+            "WPB140x140x33.72",
+            "WPB140x140x63.24",
+            "WPB150x150x23.50",
+            "WPB150x150x30.11",
+            "WPB150x150x36.97",
+            "WPB160x160x22.75",
+            "WPB160x160x30.44",
+            "WPB160x160x42.59",
+            "WPB160x160x76.19",
+            "WPB180x180x28.68",
+            "WPB180x180x35.52",
+            "WPB180x180x51.22",
+            "WPB180x180x88.90",
+            "WPB200x200x103.06",
+            "WPB200x200x34.65",
+            "WPB200x200x42.26",
+            "WPB200x200x50.92",
+            "WPB200x200x61.30",
+            "WPB200x200x74.01",
+            "WPB200x200x83.52",
+            "WPB220x220x115.61",
+            "WPB220x220x40.40",
+            "WPB220x220x50.51",
+            "WPB220x220x71.47",
+            "WPB240x240x156.68",
+            "WPB240x240x47.40",
+            "WPB240x240x60.32",
+            "WPB240x240x83.20",
+            "WPB250x250x103.97",
+            "WPB250x250x117.58",
+            "WPB250x250x133.92",
+            "WPB250x250x148.38",
+            "WPB250x250x67.22",
+            "WPB250x250x73.15",
+            "WPB250x250x85.04",
+            "WPB250x250x97.04",
+            "WPB260x260x114.40",
+            "WPB260x260x141.52",
+            "WPB260x260x172.43",
+            "WPB260x260x54.15",
+            "WPB260x260x68.16",
+            "WPB260x260x92.99",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "WPB100x100x12.24",
+            [91.0, 100.0, 4.2, 5.5, 12.0],
+            1550.0,
+            12.24,
+        );
+        spot(
+            "WPB150x150x23.50",
+            [152.0, 152.0, 5.8, 6.8, 12.0],
+            2990.0,
+            23.5,
+        );
+        spot(
+            "WPB220x220x115.61",
+            [226.0, 226.0, 15.5, 26.0, 18.0],
+            14700.0,
+            115.61,
+        );
+        spot(
+            "WPB250x250x67.22",
+            [247.0, 252.0, 11.0, 11.1, 24.0],
+            8560.0,
+            67.22,
+        );
+        // The two 2021 root-radius updates against IS 12778:2004 (its foreword notes the fillet
+        // radii were modified for the newer production technology; the 2021 area and mass follow
+        // the new radius and both editions are self-consistent):
+        // WPB150x150x23.50 carries the raised radius (12 mm against 12778's 8 mm, area 29.9
+        // against 29.2 cm2, mass 23.50 against 22.96) and WPB160x160x22.75 the lowered one
+        // (8 mm against 15 mm, area 28.9 against 30.4 cm2, mass 22.75 against 23.83);
+        // both are spot-checked above by their shipped values.
+        for absent in [
+            "WPB280x280x61.26",
+            "WPB200x200x37.34",
+            "WPB220x220x117.31",
+            "MB300",
+            "SC200",
+            "MCP75",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
 }
