@@ -65,6 +65,7 @@ mod hostile_usd;
 mod ifc_inspect;
 mod ifc_shapes;
 mod independent_reader;
+mod india_environment;
 mod inspect_pages;
 mod inspection_cache;
 mod instance_group;
