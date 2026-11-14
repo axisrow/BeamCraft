@@ -1,0 +1,790 @@
+#usda 1.0
+(
+    doc = "BeamCraft Russia environment: hot-rolled I beams with parallel flanges of the beam (Б) and column (К) series of GOST 26020-83. The nominal dimensions, areas and masses are the published values of the public standard, re-entered by hand as our own data; no text or table is copied. Designations are Latinized (Б to B, К to K). Reference data for modelling; it is not a substitute for the standard itself."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "russia-gost-26020-profiles"
+        string "bim:library:title" = "Russia hot-rolled sections (GOST 26020-83: beam and column I beams)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Dimensional facts of GOST 26020-83 (beam and column series) re-entered by hand as our own data; cross-checked against two scans of the standard text (bulat-metal.com.ua, files.stroyinf.ru) and the tables at metcalc.ru and saitinpro.ru; no table copied"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "B_10B1"
+        {
+            string steel:profile:designation = "10B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 55
+            double steel:profile:twMm = 4.1
+            double steel:profile:tfMm = 5.7
+            double steel:profile:rMm = 7
+            double steel:profile:areaMm2 = 1032
+            double steel:profile:massPerMeterKg = 8.1
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_12B1"
+        {
+            string steel:profile:designation = "12B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 117.6
+            double steel:profile:bMm = 64
+            double steel:profile:twMm = 3.8
+            double steel:profile:tfMm = 5.1
+            double steel:profile:rMm = 7
+            double steel:profile:areaMm2 = 1103
+            double steel:profile:massPerMeterKg = 8.7
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_12B2"
+        {
+            string steel:profile:designation = "12B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 120
+            double steel:profile:bMm = 64
+            double steel:profile:twMm = 4.4
+            double steel:profile:tfMm = 6.3
+            double steel:profile:rMm = 7
+            double steel:profile:areaMm2 = 1321
+            double steel:profile:massPerMeterKg = 10.4
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_14B1"
+        {
+            string steel:profile:designation = "14B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 137.4
+            double steel:profile:bMm = 73
+            double steel:profile:twMm = 3.8
+            double steel:profile:tfMm = 5.6
+            double steel:profile:rMm = 7
+            double steel:profile:areaMm2 = 1339
+            double steel:profile:massPerMeterKg = 10.5
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_14B2"
+        {
+            string steel:profile:designation = "14B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 73
+            double steel:profile:twMm = 4.7
+            double steel:profile:tfMm = 6.9
+            double steel:profile:rMm = 7
+            double steel:profile:areaMm2 = 1643
+            double steel:profile:massPerMeterKg = 12.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_16B1"
+        {
+            string steel:profile:designation = "16B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 157
+            double steel:profile:bMm = 82
+            double steel:profile:twMm = 4
+            double steel:profile:tfMm = 5.9
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 1618
+            double steel:profile:massPerMeterKg = 12.7
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_16B2"
+        {
+            string steel:profile:designation = "16B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 82
+            double steel:profile:twMm = 5
+            double steel:profile:tfMm = 7.4
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2009
+            double steel:profile:massPerMeterKg = 15.8
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_18B1"
+        {
+            string steel:profile:designation = "18B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 177
+            double steel:profile:bMm = 91
+            double steel:profile:twMm = 4.3
+            double steel:profile:tfMm = 6.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 1958
+            double steel:profile:massPerMeterKg = 15.4
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_18B2"
+        {
+            string steel:profile:designation = "18B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 180
+            double steel:profile:bMm = 91
+            double steel:profile:twMm = 5.3
+            double steel:profile:tfMm = 8
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2395
+            double steel:profile:massPerMeterKg = 18.8
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_20B1"
+        {
+            string steel:profile:designation = "20B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 5.6
+            double steel:profile:tfMm = 8.5
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2849
+            double steel:profile:massPerMeterKg = 22.4
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_23B1"
+        {
+            string steel:profile:designation = "23B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 230
+            double steel:profile:bMm = 110
+            double steel:profile:twMm = 5.6
+            double steel:profile:tfMm = 9
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3291
+            double steel:profile:massPerMeterKg = 25.8
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_26B1"
+        {
+            string steel:profile:designation = "26B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 258
+            double steel:profile:bMm = 120
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 8.5
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3562
+            double steel:profile:massPerMeterKg = 28.0
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_26B2"
+        {
+            string steel:profile:designation = "26B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 261
+            double steel:profile:bMm = 120
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3970
+            double steel:profile:massPerMeterKg = 31.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_30B1"
+        {
+            string steel:profile:designation = "30B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 296
+            double steel:profile:bMm = 140
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 8.5
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 4192
+            double steel:profile:massPerMeterKg = 32.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_30B2"
+        {
+            string steel:profile:designation = "30B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 299
+            double steel:profile:bMm = 140
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 4667
+            double steel:profile:massPerMeterKg = 36.6
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_35B1"
+        {
+            string steel:profile:designation = "35B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 346
+            double steel:profile:bMm = 155
+            double steel:profile:twMm = 6.2
+            double steel:profile:tfMm = 8.5
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 4953
+            double steel:profile:massPerMeterKg = 38.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_35B2"
+        {
+            string steel:profile:designation = "35B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 349
+            double steel:profile:bMm = 155
+            double steel:profile:twMm = 6.5
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 5517
+            double steel:profile:massPerMeterKg = 43.3
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_40B1"
+        {
+            string steel:profile:designation = "40B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 392
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 7
+            double steel:profile:tfMm = 9.5
+            double steel:profile:rMm = 21
+            double steel:profile:areaMm2 = 6125
+            double steel:profile:massPerMeterKg = 48.1
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_40B2"
+        {
+            string steel:profile:designation = "40B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 396
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 7.5
+            double steel:profile:tfMm = 11.5
+            double steel:profile:rMm = 21
+            double steel:profile:areaMm2 = 6972
+            double steel:profile:massPerMeterKg = 54.7
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_45B1"
+        {
+            string steel:profile:designation = "45B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 443
+            double steel:profile:bMm = 180
+            double steel:profile:twMm = 7.8
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 21
+            double steel:profile:areaMm2 = 7623
+            double steel:profile:massPerMeterKg = 59.8
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_45B2"
+        {
+            string steel:profile:designation = "45B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 447
+            double steel:profile:bMm = 180
+            double steel:profile:twMm = 8.4
+            double steel:profile:tfMm = 13
+            double steel:profile:rMm = 21
+            double steel:profile:areaMm2 = 8596
+            double steel:profile:massPerMeterKg = 67.5
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_50B1"
+        {
+            string steel:profile:designation = "50B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 492
+            double steel:profile:bMm = 200
+            double steel:profile:twMm = 8.8
+            double steel:profile:tfMm = 12
+            double steel:profile:rMm = 21
+            double steel:profile:areaMm2 = 9298
+            double steel:profile:massPerMeterKg = 73.0
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_50B2"
+        {
+            string steel:profile:designation = "50B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 496
+            double steel:profile:bMm = 200
+            double steel:profile:twMm = 9.2
+            double steel:profile:tfMm = 14
+            double steel:profile:rMm = 21
+            double steel:profile:areaMm2 = 10280
+            double steel:profile:massPerMeterKg = 80.7
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_55B1"
+        {
+            string steel:profile:designation = "55B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 543
+            double steel:profile:bMm = 220
+            double steel:profile:twMm = 9.5
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 11337
+            double steel:profile:massPerMeterKg = 89.0
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_55B2"
+        {
+            string steel:profile:designation = "55B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 547
+            double steel:profile:bMm = 220
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 12475
+            double steel:profile:massPerMeterKg = 97.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_60B1"
+        {
+            string steel:profile:designation = "60B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 593
+            double steel:profile:bMm = 230
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 13526
+            double steel:profile:massPerMeterKg = 106.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_60B2"
+        {
+            string steel:profile:designation = "60B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 597
+            double steel:profile:bMm = 230
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 17.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 14730
+            double steel:profile:massPerMeterKg = 115.6
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_70B1"
+        {
+            string steel:profile:designation = "70B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 691
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 12
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 16470
+            double steel:profile:massPerMeterKg = 129.3
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_70B2"
+        {
+            string steel:profile:designation = "70B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 697
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 12.5
+            double steel:profile:tfMm = 18.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 18360
+            double steel:profile:massPerMeterKg = 144.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_80B1"
+        {
+            string steel:profile:designation = "80B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 791
+            double steel:profile:bMm = 280
+            double steel:profile:twMm = 13.5
+            double steel:profile:tfMm = 17
+            double steel:profile:rMm = 26
+            double steel:profile:areaMm2 = 20320
+            double steel:profile:massPerMeterKg = 159.5
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_80B2"
+        {
+            string steel:profile:designation = "80B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 798
+            double steel:profile:bMm = 280
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 20.5
+            double steel:profile:rMm = 26
+            double steel:profile:areaMm2 = 22660
+            double steel:profile:massPerMeterKg = 177.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_90B1"
+        {
+            string steel:profile:designation = "90B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 893
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 18.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24710
+            double steel:profile:massPerMeterKg = 194.0
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_90B2"
+        {
+            string steel:profile:designation = "90B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 900
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 15.5
+            double steel:profile:tfMm = 22
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27240
+            double steel:profile:massPerMeterKg = 213.8
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_100B1"
+        {
+            string steel:profile:designation = "100B1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 990
+            double steel:profile:bMm = 320
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 21
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 29382
+            double steel:profile:massPerMeterKg = 230.6
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_100B2"
+        {
+            string steel:profile:designation = "100B2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 998
+            double steel:profile:bMm = 320
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 25
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32890
+            double steel:profile:massPerMeterKg = 258.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_100B3"
+        {
+            string steel:profile:designation = "100B3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1006
+            double steel:profile:bMm = 320
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 29
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36400
+            double steel:profile:massPerMeterKg = 285.7
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "B_100B4"
+        {
+            string steel:profile:designation = "100B4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1013
+            double steel:profile:bMm = 320
+            double steel:profile:twMm = 19.5
+            double steel:profile:tfMm = 32.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40060
+            double steel:profile:massPerMeterKg = 314.5
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_20K1"
+        {
+            string steel:profile:designation = "20K1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 195
+            double steel:profile:bMm = 200
+            double steel:profile:twMm = 6.5
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 5282
+            double steel:profile:massPerMeterKg = 41.5
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_20K2"
+        {
+            string steel:profile:designation = "20K2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 198
+            double steel:profile:bMm = 200
+            double steel:profile:twMm = 7
+            double steel:profile:tfMm = 11.5
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 5970
+            double steel:profile:massPerMeterKg = 46.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_23K1"
+        {
+            string steel:profile:designation = "23K1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 227
+            double steel:profile:bMm = 240
+            double steel:profile:twMm = 7
+            double steel:profile:tfMm = 10.5
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 6651
+            double steel:profile:massPerMeterKg = 52.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_23K2"
+        {
+            string steel:profile:designation = "23K2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 230
+            double steel:profile:bMm = 240
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 12
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 7577
+            double steel:profile:massPerMeterKg = 59.5
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_26K1"
+        {
+            string steel:profile:designation = "26K1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 255
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 12
+            double steel:profile:rMm = 16
+            double steel:profile:areaMm2 = 8308
+            double steel:profile:massPerMeterKg = 65.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_26K2"
+        {
+            string steel:profile:designation = "26K2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 258
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 16
+            double steel:profile:areaMm2 = 9319
+            double steel:profile:massPerMeterKg = 73.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_26K3"
+        {
+            string steel:profile:designation = "26K3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 262
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 16
+            double steel:profile:areaMm2 = 10590
+            double steel:profile:massPerMeterKg = 83.1
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_30K1"
+        {
+            string steel:profile:designation = "30K1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 296
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 10800
+            double steel:profile:massPerMeterKg = 84.8
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_30K2"
+        {
+            string steel:profile:designation = "30K2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 304
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 12270
+            double steel:profile:massPerMeterKg = 96.3
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_30K3"
+        {
+            string steel:profile:designation = "30K3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11.5
+            double steel:profile:tfMm = 17.5
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 13872
+            double steel:profile:massPerMeterKg = 108.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_35K1"
+        {
+            string steel:profile:designation = "35K1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 343
+            double steel:profile:bMm = 350
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 15
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 13970
+            double steel:profile:massPerMeterKg = 109.7
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_35K2"
+        {
+            string steel:profile:designation = "35K2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 348
+            double steel:profile:bMm = 350
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 17.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 16040
+            double steel:profile:massPerMeterKg = 125.9
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_35K3"
+        {
+            string steel:profile:designation = "35K3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 353
+            double steel:profile:bMm = 350
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 20
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 18410
+            double steel:profile:massPerMeterKg = 144.5
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_40K1"
+        {
+            string steel:profile:designation = "40K1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 393
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 16.5
+            double steel:profile:rMm = 22
+            double steel:profile:areaMm2 = 17580
+            double steel:profile:massPerMeterKg = 138.0
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_40K2"
+        {
+            string steel:profile:designation = "40K2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 20
+            double steel:profile:rMm = 22
+            double steel:profile:areaMm2 = 21096
+            double steel:profile:massPerMeterKg = 165.6
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_40K3"
+        {
+            string steel:profile:designation = "40K3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 409
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 24.5
+            double steel:profile:rMm = 22
+            double steel:profile:areaMm2 = 25780
+            double steel:profile:massPerMeterKg = 202.3
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_40K4"
+        {
+            string steel:profile:designation = "40K4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 419
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 29.5
+            double steel:profile:rMm = 22
+            double steel:profile:areaMm2 = 30860
+            double steel:profile:massPerMeterKg = 242.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+        def Scope "K_40K5"
+        {
+            string steel:profile:designation = "40K5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 431
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 23
+            double steel:profile:tfMm = 35.5
+            double steel:profile:rMm = 22
+            double steel:profile:areaMm2 = 37100
+            double steel:profile:massPerMeterKg = 291.2
+            string steel:profile:standard = "GOST 26020-83"
+        }
+
+    }
+}

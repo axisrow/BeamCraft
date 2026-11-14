@@ -16,9 +16,10 @@ saved setting.
   invented and rounded; none follows a standard or catalogue (`AGENTS.md` 1.2). The start window
   prefers it when no environment is saved. These profiles first shipped as a separate `starter`
   environment next to an empty `blank`; the two were merged on 2026-11-01 so that the base
-  environment is usable on its own. The first regional environment shipped beside it on
-  2026-11-14: `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal
-  dimensions (see `ATTRIBUTION.md`).
+  environment is usable on its own. Regional environments ship beside it since 2026-11-14:
+  `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions, and
+  `environments/russia/` holds the GOST 26020-83 parallel-flange beam (Б) and column (К) series
+  (see `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or
