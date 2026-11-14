@@ -32,7 +32,7 @@ generator, so the record, its ordinal and the `steel:mhole:*` attribute family a
 old records replay identically. A gusset slot through an SHS column is `slot_width_mm` = plate
 thickness plus clearance, `slot_height_mm` = the gusset's height in the section plane.
 
-Distinct from bolt holes: the owner decision of 2026-10-22 keeps bolt-generated hole types
+Distinct from bolt holes: the owner decision of 2026-10-23 keeps bolt-generated hole types
 beyond the round through hole (oversize, slots, per-part holes, blind) after the MVP. This
 amendment is about an authored member cut; a slot record is not a fastener hole and never
 numbers as one.
