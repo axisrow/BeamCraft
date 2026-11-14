@@ -4011,13 +4011,7 @@ mod tests {
         let Some(mut app) = super::super::tests::headless() else {
             return;
         };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::super::tests::workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"

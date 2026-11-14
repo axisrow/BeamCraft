@@ -3910,6 +3910,21 @@ pub(crate) mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
+    /// The workspace's `beamcraft` CLI binary, found beside the running test binary through
+    /// any cargo build layout: cargo ≤1.99 hardlinks tests into `target/debug/deps`, so two
+    /// parents up held `target/debug/beamcraft`, while 1.100 keeps the canonical binaries in
+    /// the build script's `out` directory and the fixed two-parent walk stopped finding them.
+    /// Walks the ancestors instead and takes the first directory that carries the binary.
+    pub(crate) fn workspace_cli() -> std::path::PathBuf {
+        let cli = format!("beamcraft{}", std::env::consts::EXE_SUFFIX);
+        let exe = std::env::current_exe().unwrap();
+        exe.ancestors()
+            .find(|dir| dir.join(&cli).is_file())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| exe.parent().unwrap().to_path_buf())
+            .join(cli)
+    }
+
     /// The window state on the headless adapter, with no window and no CLI behind it: the
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
     /// saying so, without a native adapter. The counters are this test's own, so parallel tests
@@ -4115,6 +4130,195 @@ pub(crate) mod tests {
         assert_eq!(source.store, std::path::PathBuf::from("/m/Model A"));
         assert!(!source.read_only());
         assert!(app.take_open_request().is_none());
+    }
+
+    #[test]
+    fn open_works_in_a_source_window_without_the_library() {
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        // The tooltip delay would hide the row's answer behind a timer no test run has.
+        ctx.all_styles_mut(|style| {
+            style.interaction.tooltip_delay = 0.0;
+            style.interaction.tooltip_grace_time = 0.0;
+        });
+        on_the_menu(&mut app);
+        assert!(app.menu_open_enabled());
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let open = labels.iter().find(|(l, _)| l == "Open").unwrap().1;
+        // Two hover frames, then read: an enabled entry draws no "Not available yet"
+        // under the pointer — the row is live, not the dead end of issue 617.
+        app_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(open)]);
+        let hovered = app_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(open)]);
+        assert!(
+            !hovered.iter().any(|(l, _)| l == "Not available yet"),
+            "the Open entry must not be disabled in a source window"
+        );
+        // The click itself cannot run here: it opens the same native picker the start page
+        // shows, and what the picker's chosen answer sets is driven end to end by
+        // `a_menu_open_in_a_source_window_replaces_the_file_read_only`.
+        // A store window without the library keeps the entry off, as before.
+        let Some(mut store) = headless() else {
+            return;
+        };
+        on_the_menu(&mut store);
+        store.from_library = false;
+        assert!(!store.menu_open_enabled());
+        store.from_library = true;
+        assert!(store.menu_open_enabled());
+    }
+
+    #[test]
+    fn a_menu_open_in_a_source_window_replaces_the_file_read_only() {
+        use std::time::{Duration, Instant};
+        // The path a Menu → Open click drives in a source window, over the real files and the
+        // real CLI (issue 617): the picker's choice becomes this window's open request, Shell
+        // replaces the window with the same construction `--source FILE` runs, and every fact
+        // the properties panel can name is the new file's own — the old file's are gone. The
+        // native picker dialog cannot be shown headlessly; the test sets what its chosen
+        // answer sets (`open_source_request`), the one line between the dialog and the switch.
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ifc/plate-hole.ifc");
+        // The file the picker chose: the same products renamed and one placement moved, so
+        // the bytes, the display ids and every fact (name, GlobalId, bounds) are its own, and
+        // no fact of the first file survives the switch.
+        let chosen_bytes = String::from_utf8(std::fs::read(&fixture).unwrap())
+            .unwrap()
+            .replace("'PL-A'", "'WEB-A'")
+            .replace("'PL-B'", "'WEB-B'")
+            .replace("'01cdlm001m080000000A01'", "'01cdlm001m080000000B01'")
+            .replace("'01cdlm001m080000000A02'", "'01cdlm001m080000000B02'")
+            .replace(
+                "#51=IFCCARTESIANPOINT((200.,0.,0.));",
+                "#51=IFCCARTESIANPOINT((500.,0.,0.));",
+            );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!(
+            "bc-menu-open-source-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let chosen = scratch.join("web-plates.ifc");
+        std::fs::write(&chosen, chosen_bytes.as_bytes()).unwrap();
+        let Some(mut app) = headless_source_at(&fixture, &cli) else {
+            let _ = std::fs::remove_dir_all(&scratch);
+            return;
+        };
+        on_the_menu(&mut app);
+        let old = app.texture_id().unwrap();
+        app.open_source_request = Some(chosen.clone());
+        // The request is consumed by Shell, the switch's only reader.
+        let ctx = egui::Context::default();
+        let state = app.render_state().clone();
+        let mut shell = crate::shell::Shell::new(
+            &eframe::CreationContext::_new_kittest(ctx.clone()),
+            cli.clone(),
+            app.source.config_dir.clone(),
+            None,
+            Arc::new(crate::stats::Stats::default()),
+        );
+        shell.app = Some(app);
+        let mut frame = eframe::Frame::_new_kittest();
+        frame.wgpu_render_state = Some(state.clone());
+        // One frame switches; the next frees the replaced window's textures.
+        let run = |shell: &mut crate::shell::Shell, frame: &mut eframe::Frame| {
+            ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| eframe::App::ui(shell, ui, frame),
+            );
+            output.drop_without_applying_deltas();
+        };
+        run(&mut shell, &mut frame);
+        // The next frame releases the replaced window: its textures are gone.
+        run(&mut shell, &mut frame);
+        assert!(
+            state.renderer.read().texture(&old).is_none(),
+            "the old file's picture is gone"
+        );
+        let next = shell.app.as_ref().unwrap();
+        // The switch is the `--source` construction: a fresh read-only window on the chosen
+        // file, its watcher armed, nothing of the menu it was opened from carried over.
+        assert!(next.from_library);
+        assert!(next.source.read_only());
+        assert_eq!(next.source.ifc_source.as_deref(), Some(chosen.as_path()));
+        assert!(!next.menu_open);
+        assert_eq!(next.open_source_request, None);
+        assert!(next.store_watch.is_some(), "the new file is watched");
+        // The new file's bundle loads through the real CLI.
+        let settled = {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                run(&mut shell, &mut frame);
+                let next = shell.app.as_ref().unwrap();
+                if next.loaded.is_some() || Instant::now() > deadline {
+                    break Instant::now() <= deadline;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert!(settled, "the chosen file's refresh never delivered a scene");
+        let next = shell.app.as_ref().unwrap();
+        assert!(
+            next.error.is_none(),
+            "the chosen file was refused: {:?}",
+            next.error
+        );
+        // The facts are the chosen file's own: the renamed products, their new GlobalIds and
+        // the moved placement — and not one fact of the first file.
+        assert!(
+            !next.foreign.is_empty(),
+            "the chosen file's facts never loaded: {:?}",
+            next.foreign_note
+        );
+        assert_eq!(next.foreign.len(), 2);
+        let names: Vec<_> = next
+            .foreign
+            .values()
+            .filter_map(|body| body.name.clone())
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"WEB-A".to_owned()) && names.contains(&"WEB-B".to_owned()));
+        for body in next.foreign.values() {
+            assert_eq!(body.entity, "IFCPLATE");
+            assert!(
+                body.global_id
+                    .as_deref()
+                    .is_some_and(|id| id.ends_with("B01") || id.ends_with("B02")),
+                "a GlobalId of the old file leaked: {:?}",
+                body.global_id
+            );
+        }
+        let moved = next
+            .foreign
+            .values()
+            .map(|body| body.bounds[0][0])
+            .any(|min_x| min_x == 500.0);
+        assert!(moved, "the moved plate kept the old placement");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
@@ -5349,13 +5553,7 @@ pub(crate) mod tests {
     fn interactive_plate_and_member_creation_use_real_commands_without_preview_steps() {
         let mut app =
             headless().expect("a software/native adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5541,13 +5739,7 @@ pub(crate) mod tests {
         // although the framing did not change; a Move keeps it. The workspace edit sits inside
         // the model's bounds, so the extents agree before and after the undo.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5782,13 +5974,7 @@ pub(crate) mod tests {
         // framed that remainder — the camera landed inside the model with two grid lines and a
         // hugely magnified element. The framing is the model's own; a hide is display state.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5957,13 +6143,7 @@ pub(crate) mod tests {
         // coloured siblings; R did not help. Every delivery of the catalogue set re-derives
         // the overlay from the snapshot's kinds.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6087,13 +6267,7 @@ pub(crate) mod tests {
     fn the_weld_ribbon_button_picks_two_parts_and_commits_the_cli_weld_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6371,13 +6545,7 @@ pub(crate) mod tests {
     fn the_bolt_ribbon_button_picks_parts_and_points_and_commits_the_cli_bolt_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6815,13 +6983,7 @@ pub(crate) mod tests {
     fn the_bolt_bench_loads_a_placed_group_and_updates_it_through_the_cli() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -7209,13 +7371,7 @@ pub(crate) mod tests {
     fn typed_length_and_o_create_a_spatial_plate_through_real_keyboard_events() {
         let mut app =
             headless().expect("a native/software adapter is required for construction input");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before input acceptance");
         let root = std::env::temp_dir().join(format!(
             "bc-length-{}-{}",
@@ -7454,13 +7610,7 @@ pub(crate) mod tests {
         use beamcraft_engine::query::{feature::element_edges, pick::SnapKind};
         let mut app =
             headless().expect("a native/software adapter is required for construction acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         let root = std::env::temp_dir().join(format!(
             "bc-bay-outline-{}-{}",
             std::process::id(),
@@ -7618,13 +7768,7 @@ pub(crate) mod tests {
         use beamcraft_engine::query::pick::SnapKind;
         let mut app =
             headless().expect("a native/software adapter is required for snap acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before snap acceptance");
         let root = std::env::temp_dir().join(format!(
             "bc-snaps-{}-{:?}",
@@ -7896,13 +8040,7 @@ pub(crate) mod tests {
     fn review_triangle_and_rectangle_finish_with_right_or_wheel_click_and_drags_do_not_finish() {
         use crate::tools::{Created, ToolError};
         let mut app = headless().expect("software/native graphics required for input acceptance");
-        let exe = std::env::current_exe().unwrap();
-        let cli = exe
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file());
         let root = std::env::temp_dir().join(format!(
             "bc-finish-{}-{:?}",
@@ -11827,13 +11965,7 @@ mod navigation_tests {
         use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
         use beamcraft_model::id::ElementId;
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::tests::workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before native tests");
         let root = std::env::temp_dir().join(format!(
             "bc-584-hidden-grid-{}-{}",

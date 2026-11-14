@@ -1213,13 +1213,7 @@ mod tests {
         // Issue 584 item 9: the group's merged mesh carries no semantic features, so the
         // selection outline fell back to nothing and the viewport stayed unchanged. The
         // display bounds step in; a plate on the same snapshot keeps its own edges.
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::super::tests::workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"

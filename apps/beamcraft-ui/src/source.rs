@@ -577,6 +577,24 @@ fn export_error(e: ToolError) -> Error {
 pub fn is_no_revision(error: &Error) -> bool {
     matches!(error, Error::NoRevision)
 }
+
+/// The typed refusal for a store root that is a regular file (issue 616): the launch must
+/// fail before any window opens, not open one with the reason buried in the status bar.
+/// The message is the CLI's own `--store` refusal, word for word. `None`: the path is not a
+/// file — a directory, or nothing there yet, where the CLI's own rejection names the case.
+pub fn file_store_root(path: &Path) -> Option<Error> {
+    if path.is_file() {
+        Some(Error::Rejected(crate::Rejection {
+            code: "INVALID_ARGUMENT".to_owned(),
+            message:
+                "the store root is a file and not a store; render an IFC file with --source FILE"
+                    .to_owned(),
+            diagnostics: "[]".to_owned(),
+        }))
+    } else {
+        None
+    }
+}
 /// Everything one window refresh reads, gathered without a window or a GPU so it can run on a
 /// worker thread: the accepted snapshot with its scene, and the store's definitions. The two
 /// results are independent; one failing never hides the other.
@@ -847,6 +865,28 @@ mod tests {
         // A bundle the engine refuses fails the scene alone.
         assert!(scene.is_err());
         assert!(definitions.is_ok());
+    }
+
+    #[test]
+    fn a_file_store_root_is_refused_and_a_directory_or_a_missing_path_is_not() {
+        // Issue 616: the refusal names the caller's fix, the CLI's message word for word.
+        let base = std::env::temp_dir().join(format!("beamcraft-root-{}", std::process::id()));
+        let file = base.join("joint.ifc");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(&file, b"ISO-10303-21;").unwrap();
+        let Error::Rejected(rejection) = file_store_root(&file).unwrap() else {
+            panic!("a regular file store root is a refusal");
+        };
+        assert_eq!(rejection.code, "INVALID_ARGUMENT");
+        assert_eq!(
+            rejection.message,
+            "the store root is a file and not a store; render an IFC file with --source FILE"
+        );
+        // A directory is a store root as far as this gate sees; so is a path that is not
+        // there yet — the CLI names that case itself.
+        assert!(file_store_root(&base).is_none());
+        assert!(file_store_root(&base.join("absent")).is_none());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     /// An `ifc-shapes` reply with two listed bodies and the given digest, as the CLI prints it.
