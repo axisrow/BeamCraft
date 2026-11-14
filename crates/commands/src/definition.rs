@@ -49,6 +49,7 @@ use steel::model::definition::{
 use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use steel::model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
+    profile_attribute,
 };
 
 /// Path prefix used by the synthetic profile fixtures.
@@ -295,7 +296,7 @@ fn decode_definition(
         let values = family
             .parameters()
             .iter()
-            .map(|name| double(&format!("steel:profile:{name}Mm")))
+            .map(|name| double(&profile_attribute(name)))
             .collect::<Result<Vec<_>, _>>()?;
         DefinitionRecord::SectionProfile {
             shape: SectionShape::Parametric(ParametricSection::new(family, values)?),
@@ -567,7 +568,7 @@ fn default_dimensions(shape: &SectionShape) -> String {
         .parameters()
         .iter()
         .zip(parametric.values())
-        .filter(|(name, _)| !matches!(**name, "r" | "tw" | "tf"))
+        .filter(|(name, _)| !matches!(**name, "r" | "r1" | "tw" | "tf" | "k"))
         .map(|(_, value)| value.to_string())
         .collect::<Vec<_>>()
         .join("x")
@@ -618,6 +619,8 @@ impl DefinitionRecord {
                         let prefix = match parametric.family() {
                             SectionFamily::IShape => "I",
                             SectionFamily::Channel => "C",
+                            SectionFamily::TaperedI => "TI",
+                            SectionFamily::TaperedC => "TC",
                             SectionFamily::Angle => "L",
                             SectionFamily::Rhs => "RHS",
                             SectionFamily::Chs => "CHS",

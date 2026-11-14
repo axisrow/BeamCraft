@@ -67,6 +67,8 @@ sees a point.
 | `rectangle` | `h`, `b` | Existing; solid bar. Stays byte-compatible. |
 | `i_shape` | `h`, `b`, `tw`, `tf`, `r` | Doubly symmetric I/H (wide flange, IPE/HE style). |
 | `channel` | `h`, `b`, `tw`, `tf`, `r` | Hot-rolled parallel-flange channel. |
+| `tapered_i` | `h`, `b`, `s`, `t`, `r`, `r1`, `k` | Tapered-flange I (GB/T 706 工字钢, GOST 8239, ASTM S style): inclined inner faces, `t` the mean thickness at the middle of the leg, `r1` the toe radius, `k` the slope as rise over run (1:6 is `k = 1/6`; zero is parallel). |
+| `tapered_c` | `h`, `b`, `s`, `t`, `r`, `r1`, `k` | Tapered-flange channel, web on the `-X` side (GB/T 706 槽钢, GOST 8240, EN 10365 UPN style). |
 | `angle` | `h`, `b`, `t`, `r` | Equal or unequal leg. |
 | `rhs` | `h`, `b`, `t`, `r_out` | Rectangular/square hollow section (one cavity). |
 | `chs` | `d`, `t` | Circular hollow section (one cavity). |
@@ -80,7 +82,11 @@ Rules:
 
 * Admission per family: finite, inside the F04 dimension cap, above the geometric floor, and the
   family's own consistency (`2*tf < h`, `tw < b`, `r` fits between web and flange, `2*t < d`,
-  lips shorter than the flange, ...). A violation is `INVALID_ARGUMENT` naming the parameter.
+  lips shorter than the flange, ...; a tapered family also refuses a slope that consumes the
+  toe thickness and a toe radius that does not fit it). A violation is `INVALID_ARGUMENT`
+  naming the parameter. The stored slope `k` is dimensionless and is written as
+  `steel:profile:k` (no `Mm` suffix); every other parameter stores as
+  `steel:profile:<parameter>Mm`.
 * **Two representations (owner decision D2).** Every member body is generated twice from the one
   definition: a **detailed** outline with every root and corner radius, and a **simplified**
   outline with sharp corners. This is the full/simplified pair of `docs/architecture.md` ("Part

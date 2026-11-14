@@ -14,6 +14,7 @@ use super::write::{
 use crate::model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
 use crate::model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
+    profile_attribute,
 };
 use crate::model::{definition::SectionProperties, fastener::FastenerSpec, section::SectionShape};
 use beamcraft_layer_engine::authored::seam::author::{
@@ -30,10 +31,12 @@ use openusd::sdf;
 use std::any::Any;
 
 /// Every definition kind a member's `bim:profile` may target.
-pub(super) const PROFILE_KINDS: [&str; 11] = [
+pub(super) const PROFILE_KINDS: [&str; 13] = [
     "rectangle",
     "i_shape",
     "channel",
+    "tapered_i",
+    "tapered_c",
     "angle",
     "rhs",
     "chs",
@@ -111,7 +114,7 @@ pub(super) fn read_definition(p: &Prim, kind: &str) -> Result<Option<Definition>
         let values = family
             .parameters()
             .iter()
-            .map(|name| number(p, &format!("steel:profile:{name}Mm")))
+            .map(|name| number(p, &profile_attribute(name)))
             .collect::<Result<Vec<_>, _>>()?;
         let parametric = ParametricSection::new(family, values).map_err(|_| invalid())?;
         return Ok(Some(section(
@@ -372,12 +375,7 @@ impl DefinitionHook for SectionProfileDef {
             SectionShape::Parametric(parametric) => {
                 let names = parametric.family().parameters();
                 for (name, value) in names.iter().zip(parametric.values()) {
-                    write_optional_number(
-                        data,
-                        p,
-                        &format!("steel:profile:{name}Mm"),
-                        Some(*value),
-                    )?;
+                    write_optional_number(data, p, &profile_attribute(name), Some(*value))?;
                 }
             }
             SectionShape::Custom(custom) => {
