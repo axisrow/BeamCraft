@@ -29,7 +29,8 @@ pub const ENVIRONMENT_FILE: &str = "environment.usda";
 pub const ENVIRONMENTS_DIR: &str = "environments";
 /// Largest environment file, in bytes.
 pub const MAX_ENVIRONMENT_BYTES: usize = 1024 * 1024;
-/// Most libraries one environment may list; more is `LIMIT_EXCEEDED`.
+/// Most libraries one environment may list, per list (profile and fastener); more is
+/// `LIMIT_EXCEEDED`.
 pub const MAX_ENVIRONMENT_LIBRARIES: usize = 32;
 /// Most directory entries [`list_environments`] looks at in one folder.
 pub const MAX_SCANNED: usize = 4_096;
@@ -48,6 +49,9 @@ pub struct EnvironmentInfo {
     pub bytes: u64,
     /// `bim:environment:libraries`, strongest first, exactly as written.
     pub libraries: Vec<String>,
+    /// `bim:environment:fastener-libraries`, strongest first, exactly as written; empty when the
+    /// environment names none.
+    pub fastener_libraries: Vec<String>,
     /// `bim:environment:presets`, the contained relative path of the part presets, when declared.
     pub presets: Option<String>,
 }
@@ -83,15 +87,50 @@ fn contained_reference(reference: &str) -> bool {
             .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
+/// One `bim:environment:*-libraries` array: a non-empty ordered list of contained relative
+/// paths, none of them twice (`seen` spans both lists, so the same file cannot serve as a
+/// profile and a fastener library of one environment).
+fn library_list(items: &[Value], seen: &mut Vec<String>) -> Result<Vec<String>, Refusal> {
+    if items.is_empty() {
+        return Err(invalid("the environment lists no libraries"));
+    }
+    if items.len() > MAX_ENVIRONMENT_LIBRARIES {
+        return Err(refuse(
+            ErrorCode::LimitExceeded,
+            "the environment lists more than 32 libraries",
+        ));
+    }
+    let mut references = Vec::with_capacity(items.len());
+    for item in items {
+        let Value::Text(reference) = item else {
+            return Err(invalid("an environment library is not a string"));
+        };
+        if !contained_reference(reference) {
+            return Err(refuse(
+                ErrorCode::PermissionDenied,
+                "an environment library is not a relative path inside the environment directory",
+            ));
+        }
+        if seen.contains(reference) {
+            return Err(invalid("the environment lists a library twice"));
+        }
+        seen.push(reference.clone());
+        references.push(reference.clone());
+    }
+    Ok(references)
+}
+
 /// Reads the declarations of an environment layer without touching any library.
 ///
 /// The environment is a USD layer whose `customLayerData` carries `bim:environment:id`, an
-/// optional `bim:environment:title` and `bim:environment:libraries`, a non-empty ordered list of
-/// contained relative paths, strongest first. A list entry that is not contained is
-/// `PERMISSION_DENIED` and more than 32 libraries is `LIMIT_EXCEEDED`; anything else malformed is
-/// `INVALID_ARGUMENT`. (The layer engine does not expose composition arcs, and composing the
-/// libraries as sublayers would merge entries instead of letting the strongest library answer, so
-/// the order is an explicit list; see the A07 design note.)
+/// optional `bim:environment:title`, `bim:environment:libraries`, a non-empty ordered list of
+/// contained relative profile-library paths, and optionally
+/// `bim:environment:fastener-libraries`, the same kind of list for the environment's fastener
+/// libraries; both are strongest first. A list entry that is not contained is
+/// `PERMISSION_DENIED` and more than 32 libraries in one list is `LIMIT_EXCEEDED`; anything
+/// else malformed is `INVALID_ARGUMENT`. (The layer engine does not expose composition arcs,
+/// and composing the libraries as sublayers would merge entries instead of letting the
+/// strongest library answer, so the order is an explicit list; see the A07 design note.)
 ///
 /// # Errors
 /// A typed [`Refusal`] as described above.
@@ -118,34 +157,20 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
     let id = get("bim:environment:id")?
         .ok_or_else(|| invalid("the environment declares no bim:environment:id"))?;
     let title = get("bim:environment:title")?;
-    let Some(Value::Array(items)) = data.get("bim:environment:libraries") else {
-        return Err(invalid("the environment lists no libraries"));
+    let mut seen = Vec::new();
+    let libraries = match data.get("bim:environment:libraries") {
+        Some(Value::Array(items)) => library_list(items, &mut seen)?,
+        _ => return Err(invalid("the environment lists no libraries")),
     };
-    if items.is_empty() {
-        return Err(invalid("the environment lists no libraries"));
-    }
-    if items.len() > MAX_ENVIRONMENT_LIBRARIES {
-        return Err(refuse(
-            ErrorCode::LimitExceeded,
-            "the environment lists more than 32 libraries",
-        ));
-    }
-    let mut libraries = Vec::with_capacity(items.len());
-    for item in items {
-        let Value::Text(reference) = item else {
-            return Err(invalid("an environment library is not a string"));
-        };
-        if !contained_reference(reference) {
-            return Err(refuse(
-                ErrorCode::PermissionDenied,
-                "an environment library is not a relative path inside the environment directory",
+    let fastener_libraries = match data.get("bim:environment:fastener-libraries") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => library_list(items, &mut seen)?,
+        Some(_) => {
+            return Err(invalid(
+                "the environment fastener libraries are not a string list",
             ));
         }
-        if libraries.contains(reference) {
-            return Err(invalid("the environment lists a library twice"));
-        }
-        libraries.push(reference.clone());
-    }
+    };
     let presets = match data.get("bim:environment:presets") {
         None => None,
         Some(Value::Text(reference)) if contained_reference(reference) => Some(reference.clone()),
@@ -163,6 +188,7 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
         digest: layer.digest,
         bytes: layer.bytes,
         libraries,
+        fastener_libraries,
         presets,
     })
 }
@@ -332,6 +358,12 @@ mod tests {
         )
     }
 
+    /// The header of a layer whose `customLayerData` is still open, with the required profile
+    /// list already in place; entries append before the closing braces.
+    fn layer_head(id: &str) -> String {
+        layer(id, "[\"a.usda\"]").replace("    }\n)\n", "")
+    }
+
     fn scratch(tag: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("session-environment-{tag}-{}", std::process::id()));
@@ -365,6 +397,58 @@ mod tests {
         assert_eq!(info.id, "steel");
         assert_eq!(info.libraries, ["a.usda", "sub/b.usda"]);
         assert_eq!(info.title, None);
+    }
+
+    #[test]
+    fn an_environment_may_declare_fastener_libraries() {
+        let declared = format!(
+            "{}        string[] \"bim:environment:fastener-libraries\" = [\"bolts.usda\", \"sub/nuts.usda\"]\n    }}\n)\n",
+            layer_head("e")
+        );
+        let info = parse_environment(declared.into_bytes()).unwrap();
+        assert_eq!(info.fastener_libraries, ["bolts.usda", "sub/nuts.usda"]);
+        assert_eq!(info.libraries, ["a.usda"]);
+        let none = parse_environment(layer("e", "[\"a.usda\"]").into_bytes()).unwrap();
+        assert_eq!(none.fastener_libraries, Vec::<String>::new());
+        // The same containment rules as the profile list.
+        let escaped = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = [\"../b.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(escaped.code, ErrorCode::PermissionDenied);
+        // The same file cannot serve as a profile and a fastener library of one environment.
+        let twice = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = [\"a.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(twice.code, ErrorCode::InvalidArgument);
+        // An empty list is no list; a non-string entry is refused.
+        let empty = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = []\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(empty.code, ErrorCode::InvalidArgument);
+        let mistyped = parse_environment(
+            format!(
+                "{}        string \"bim:environment:fastener-libraries\" = \"a.usda\"\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(mistyped.code, ErrorCode::InvalidArgument);
     }
 
     #[test]

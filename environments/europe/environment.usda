@@ -6,5 +6,6 @@
         string "bim:environment:id" = "europe"
         string "bim:environment:title" = "Europe (EN 10365)"
         string[] "bim:environment:libraries" = ["profiles-en-10365.usda"]
+        string[] "bim:environment:fastener-libraries" = ["din-fasteners.usda"]
     }
 )
