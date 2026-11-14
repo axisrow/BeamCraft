@@ -1668,7 +1668,7 @@ mod tests {
         assert_eq!(environment.info.fastener_libraries, ["din-fasteners.usda"]);
         // The profile namespace is unchanged by the fastener listing.
         assert_eq!(environment.sources.len(), 1);
-        assert_eq!(environment.sources[0].library.entries.len(), 55);
+        assert_eq!(environment.sources[0].library.entries.len(), 69);
         // The DIN fastener set rides the same environment, admitted with declared provenance.
         assert_eq!(environment.fastener_sources.len(), 1);
         let bolts = &environment.fastener_sources[0];
