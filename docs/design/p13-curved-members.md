@@ -44,6 +44,14 @@ arc is built at 0.05 mm when its facets fit the mesh budget). An unreachable dev
 refused, never silently coarsened, and the refusal names the facet or mesh budget it hit. No cross-platform byte
 identity is claimed for trigonometric functions.
 
+The way out of a mesh-budget refusal is the fabricator's split, not a coarser bound: build
+the long arc as several members of the same circle. Each piece is its own minor arc —
+radius form or three points — whose end points sit on the refused arc (its ends and, for a
+half-and-half split, its own mid-arc point); every piece carries the full mesh budget,
+reports its own `arc_deviation_mm` and `axis_length_mm`, and the piece lengths add up to the
+original arc's true length. No new command or path type is introduced: the split is ordinary
+`create-curved-beam` work, and each piece is one undo unit of its own.
+
 ## Storage, history and compatibility
 
 Owned member USD uses optional token `steel:member:pathType = "arc"` with exactly three
