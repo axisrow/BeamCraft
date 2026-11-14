@@ -49,6 +49,10 @@ fn environment_json(info: &EnvironmentInfo) -> Json {
             "libraries",
             Json::Array(info.libraries.iter().map(Json::text).collect()),
         ),
+        (
+            "fastener_libraries",
+            Json::Array(info.fastener_libraries.iter().map(Json::text).collect()),
+        ),
     ])
 }
 

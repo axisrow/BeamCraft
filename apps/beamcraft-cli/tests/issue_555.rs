@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates; the fastener values are the shipped DIN-derived
-// library's (`assets/libraries/din-fasteners.usda`), MPL-2.0.
+// library's (`environments/europe/din-fasteners.usda`), MPL-2.0.
 
 //! Issue 555 end to end through the real `beamcraft` binary, one case per repro of the issue:
 //! the bolt grip reads the bearing ring around any coaxial hole (finding 1), a generated hole
@@ -23,7 +23,7 @@ use beamcraft_json::Json;
 
 const DIN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../assets/libraries/din-fasteners.usda"
+    "/../../environments/europe/din-fasteners.usda"
 );
 
 struct Fixture {
