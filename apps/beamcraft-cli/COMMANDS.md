@@ -708,7 +708,7 @@ create-weld --store ROOT --name TEXT --main UUID --secondary UUID --size MM
 read.
 
 ```text
-welds --store ROOT
+welds --store ROOT [--offset N] [--limit N]
 ```
 
 ## bolt
@@ -746,7 +746,7 @@ update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,..
 read.
 
 ```text
-bolts --store ROOT
+bolts --store ROOT [--offset N] [--limit N]
 ```
 
 ### fastener-geometry
@@ -975,7 +975,7 @@ update-grid --store ROOT --id UUID [--name TEXT] [--origin X,Y] [--rotation DEG]
 read.
 
 ```text
-list-grids --store ROOT [--connection UUID]
+list-grids --store ROOT [--connection UUID] [--offset N] [--limit N]
 ```
 
 ### resolve-grid-point
@@ -1457,7 +1457,7 @@ lookup-feature --store ROOT --feature-id TEXT
 read.
 
 ```text
-list-feature --store ROOT --id UUID
+list-feature --store ROOT --id UUID [--offset N] [--limit N]
 ```
 
 ### element-edges

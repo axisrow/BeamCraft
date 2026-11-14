@@ -292,7 +292,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--v-label",
             "--v-axis-id",
         ],
-        "list-grids" => &["--store"],
+        "list-grids" => &["--store", "--offset", "--limit"],
         "resolve-grid-point" => &["--store", "--grid", "--labels"],
         "resolve-grid-plane" => &["--store", "--grid", "--label"],
         "update-grid" => &[
@@ -338,7 +338,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     for pair in tail.as_chunks::<2>().0 {
         let [key, value] = pair;
         let allowed = if *command == "list-grids" {
-            matches!(*key, "--store" | "--connection")
+            matches!(*key, "--store" | "--connection" | "--offset" | "--limit")
         } else {
             own.contains(key) || CONTEXT_OPTIONS.contains(key)
         };
@@ -354,25 +354,71 @@ fn run(args: &[OsString]) -> Run<Json> {
     );
     if *command == "list-grids" {
         // With --connection, list the verified grids of that pinned coordination connection
-        // (read-only use, T01 §9); the records are shown in the source frame.
-        if let Some(text) = options.get("--connection") {
+        // (read-only use, T01 §9); the records are shown in the source frame. Both forms page
+        // through the shared page range over the grids in their stored order.
+        let (grids, fields) = if let Some(text) = options.get("--connection") {
             let connection = ConnectionId::parse(text)
                 .map_err(|_| invalid("--connection needs a UUIDv7 connection identity"))?;
             let (record, pinned) = beamcraft_commands::grid::pinned_grids(&store, connection)?;
-            return Ok(Json::object([
-                ("outcome", Json::text("grids_pinned")),
-                ("connection_id", Json::text(record.id.to_string())),
-                (
-                    "source_revision",
-                    Json::text(record.source_revision.to_string()),
-                ),
-                ("grids", views_json(&pinned)?),
-            ]));
+            (
+                pinned,
+                vec![
+                    ("outcome".to_owned(), Json::text("grids_pinned")),
+                    (
+                        "connection_id".to_owned(),
+                        Json::text(record.id.to_string()),
+                    ),
+                    (
+                        "source_revision".to_owned(),
+                        Json::text(record.source_revision.to_string()),
+                    ),
+                ],
+            )
+        } else {
+            (
+                grids(&store)?,
+                vec![("outcome".to_owned(), Json::text("grids"))],
+            )
+        };
+        let grid_total = grids.len();
+        let paged = options.contains_key("--offset") || options.contains_key("--limit");
+        if !paged {
+            let mut whole = fields;
+            whole.push(("grids".to_owned(), views_json(&grids)?));
+            return crate::plate_cmd::whole_listing(
+                Json::Object(whole.into_iter().collect()),
+                "the whole grid listing exceeds the output budget: page it with --offset and --limit",
+            );
         }
-        return Ok(Json::object([
-            ("outcome", Json::text("grids")),
-            ("grids", views_json(&grids(&store)?)?),
-        ]));
+        let (offset, limit) = crate::plate_cmd::page_of(&options)?;
+        let available = grid_total.saturating_sub(offset);
+        return crate::plate_cmd::fit_page(available, limit, |count| {
+            let next = offset.saturating_add(count);
+            let mut fields = fields.clone();
+            fields.push(("grid_count".to_owned(), Json::uint(grid_total as u64)));
+            fields.push(("offset".to_owned(), Json::uint(offset as u64)));
+            fields.push(("page_size".to_owned(), Json::uint(count as u64)));
+            fields.push((
+                "next_offset".to_owned(),
+                if next < grid_total {
+                    Json::uint(next as u64)
+                } else {
+                    Json::Null
+                },
+            ));
+            fields.push((
+                "grids".to_owned(),
+                Json::Array(
+                    grids
+                        .iter()
+                        .skip(offset)
+                        .take(count)
+                        .map(grid_entry)
+                        .collect::<Run<Vec<_>>>()?,
+                ),
+            ));
+            Ok(Json::Object(fields.into_iter().collect()))
+        });
     }
     if matches!(*command, "resolve-grid-point" | "resolve-grid-plane") {
         let required = |key| {
@@ -523,125 +569,116 @@ fn run(args: &[OsString]) -> Run<Json> {
 }
 pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
     Ok(Json::Array(
-        grids
-            .iter()
-            .map(|g| {
-                let world = |[x, y]: [f64; 2]| -> Run<Json> {
-                    let [z, w] = g.orientation_zw;
-                    let norm = z * z + w * w;
-                    let s = 2.0 * z * w / norm;
-                    let c = (w * w - z * z) / norm;
-                    let [tx, ty] = g.translation_mm;
-                    Ok(Json::Array(vec![
-                        num(c * x - s * y + tx)?,
-                        num(s * x + c * y + ty)?,
-                        num(0.0)?,
-                    ]))
-                };
-                let family = |f: &GridFamily, u: bool| -> Run<Json> {
-                    let (mode, expression, lines) = match f {
-                        GridFamily::Regular(f) => {
-                            let [a, b] = f.span_mm;
-                            (
-                                "regular",
-                                Json::text(&f.expression),
-                                f.axis_ids
-                                    .iter()
-                                    .zip(&f.labels)
-                                    .zip(&f.positions_mm)
-                                    .map(|((id, label), p)| {
-                                        (
-                                            *id,
-                                            label.clone(),
-                                            if u { [*p, a] } else { [a, *p] },
-                                            if u { [*p, b] } else { [b, *p] },
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
-                        }
-                        GridFamily::Drawn(lines) => (
-                            "drawn",
-                            Json::Null,
-                            lines
-                                .iter()
-                                .map(|l| (l.axis_id, l.label.clone(), l.start_mm, l.end_mm))
-                                .collect(),
-                        ),
-                    };
-                    Ok(Json::object([
-                        ("mode", Json::text(mode)),
-                        ("expression", expression),
-                        (
-                            "span_mm",
-                            match f {
-                                GridFamily::Regular(f) => Json::Array(
-                                    f.span_mm
-                                        .iter()
-                                        .copied()
-                                        .map(num)
-                                        .collect::<Run<Vec<_>>>()?,
-                                ),
-                                GridFamily::Drawn(_) => Json::Null,
-                            },
-                        ),
-                        (
-                            "lines",
-                            Json::Array(
-                                lines
-                                    .into_iter()
-                                    .map(|(id, label, a, b)| {
-                                        Ok(Json::object([
-                                            ("axis_id", Json::text(id.to_string())),
-                                            ("label", Json::text(label)),
-                                            ("start_mm", world(a)?),
-                                            ("end_mm", world(b)?),
-                                            (
-                                                "start_local_mm",
-                                                Json::Array(
-                                                    a.into_iter()
-                                                        .map(num)
-                                                        .collect::<Run<Vec<_>>>()?,
-                                                ),
-                                            ),
-                                            (
-                                                "end_local_mm",
-                                                Json::Array(
-                                                    b.into_iter()
-                                                        .map(num)
-                                                        .collect::<Run<Vec<_>>>()?,
-                                                ),
-                                            ),
-                                        ]))
-                                    })
-                                    .collect::<Run<Vec<_>>>()?,
-                            ),
-                        ),
-                    ]))
-                };
-                Ok(Json::object([
-                    ("id", Json::text(g.id.to_string())),
-                    ("name", Json::text(&g.name)),
-                    (
-                        "origin_mm",
-                        Json::Array(
-                            g.translation_mm
-                                .iter()
-                                .copied()
-                                .map(num)
-                                .collect::<Run<Vec<_>>>()?,
-                        ),
-                    ),
-                    (
-                        "rotation_rad",
-                        num(2.0 * g.orientation_zw[0].atan2(g.orientation_zw[1]))?,
-                    ),
-                    ("u", family(&g.u, true)?),
-                    ("v", family(&g.v, false)?),
-                ]))
-            })
-            .collect::<Run<Vec<_>>>()?,
+        grids.iter().map(grid_entry).collect::<Run<Vec<_>>>()?,
     ))
+}
+
+fn grid_entry(g: &Grid) -> Run<Json> {
+    let world = |[x, y]: [f64; 2]| -> Run<Json> {
+        let [z, w] = g.orientation_zw;
+        let norm = z * z + w * w;
+        let s = 2.0 * z * w / norm;
+        let c = (w * w - z * z) / norm;
+        let [tx, ty] = g.translation_mm;
+        Ok(Json::Array(vec![
+            num(c * x - s * y + tx)?,
+            num(s * x + c * y + ty)?,
+            num(0.0)?,
+        ]))
+    };
+    let family = |f: &GridFamily, u: bool| -> Run<Json> {
+        let (mode, expression, lines) = match f {
+            GridFamily::Regular(f) => {
+                let [a, b] = f.span_mm;
+                (
+                    "regular",
+                    Json::text(&f.expression),
+                    f.axis_ids
+                        .iter()
+                        .zip(&f.labels)
+                        .zip(&f.positions_mm)
+                        .map(|((id, label), p)| {
+                            (
+                                *id,
+                                label.clone(),
+                                if u { [*p, a] } else { [a, *p] },
+                                if u { [*p, b] } else { [b, *p] },
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+            GridFamily::Drawn(lines) => (
+                "drawn",
+                Json::Null,
+                lines
+                    .iter()
+                    .map(|l| (l.axis_id, l.label.clone(), l.start_mm, l.end_mm))
+                    .collect(),
+            ),
+        };
+        Ok(Json::object([
+            ("mode", Json::text(mode)),
+            ("expression", expression),
+            (
+                "span_mm",
+                match f {
+                    GridFamily::Regular(f) => Json::Array(
+                        f.span_mm
+                            .iter()
+                            .copied()
+                            .map(num)
+                            .collect::<Run<Vec<_>>>()?,
+                    ),
+                    GridFamily::Drawn(_) => Json::Null,
+                },
+            ),
+            (
+                "lines",
+                Json::Array(
+                    lines
+                        .into_iter()
+                        .map(|(id, label, a, b)| {
+                            Ok(Json::object([
+                                ("axis_id", Json::text(id.to_string())),
+                                ("label", Json::text(label)),
+                                ("start_mm", world(a)?),
+                                ("end_mm", world(b)?),
+                                (
+                                    "start_local_mm",
+                                    Json::Array(a.into_iter().map(num).collect::<Run<Vec<_>>>()?),
+                                ),
+                                (
+                                    "end_local_mm",
+                                    Json::Array(b.into_iter().map(num).collect::<Run<Vec<_>>>()?),
+                                ),
+                            ]))
+                        })
+                        .collect::<Run<Vec<_>>>()?,
+                ),
+            ),
+        ]))
+    };
+    Ok(Json::object([
+        ("id", Json::text(g.id.to_string())),
+        ("name", Json::text(&g.name)),
+        (
+            "origin_mm",
+            Json::Array(
+                g.translation_mm
+                    .iter()
+                    .copied()
+                    .map(num)
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        (
+            "rotation_rad",
+            num(2.0 * g.orientation_zw[0].atan2(g.orientation_zw[1]))?,
+        ),
+        ("u", family(&g.u, true)?),
+        ("v", family(&g.v, false)?),
+    ]))
 }
 
 /// Copy a grid through the ordinary `copy-element` command family.
