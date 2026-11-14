@@ -531,8 +531,13 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   the catalogue when a profile is inserted from a library, otherwise the kernel computes it with
   the exact arc formula and the mass is marked computed (`area_source`: `catalogue` | `computed`).
   A tabulated mass per metre is a reference field only. Full values are stored; rounding happens
-  only on output (0.1 kg by default). Check case: section 30B1 of GOST 27772-2015, 6 m, 7850 kg/m³
-  gives 192.2 kg from the catalogue area (40.8 cm²) and 192.17 kg from the exact arcs.
+  only on output (0.1 kg by default). Check case: section 30B1, 6 m, 7850 kg/m³ gives 192.2 kg
+  from the catalogue area (40.8 cm²) and 192.17 kg from the exact arcs. The 40.8 cm² value is the
+  new-generation assortment of the designation — STO ASChM 20-93 / GOST R 57837-2017 give 30B1 as
+  h 298, b 149, s 5.5, t 8, R 13, the dimensions of the P-Mass reference section these numbers
+  come from; GOST 27772-2015 grades the steel, not the section. GOST 26020-83's 30B1 is
+  41.92 cm² / 32.9 kg/m — the edition the shipped `russia` environment admits. Which assortment
+  generation or generations BeamCraft carries is an open owner question (#628).
 - **Declared versus computed area (A07 D3).** A difference above 1 percent is a warning
   (`declared_area_warning`), never a refusal: catalogues use simplified radii.
 - **History compaction (U14).** Undo past the compaction boundary is impossible and shown in the
