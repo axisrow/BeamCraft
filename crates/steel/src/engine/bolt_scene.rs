@@ -347,11 +347,11 @@ mod tests {
 
     #[test]
     fn a_measured_far_face_seats_the_nut_stack_on_the_joint() {
-        // Issue 562 item 5: the 35 mm length leaves the hung nut washer at −0.8, short of a
-        // far face at −0.8 nothing changes; a joint whose far face lies at −2.0 (a longer
-        // standard size than the grip needs) pulls the washer down onto it, and the shank tip
-        // protrudes past the nut instead. A face past the hung stack, or an unknown one,
-        // keeps the prototype's stack.
+        // Issue 562 item 5. This short 35 mm prototype hangs its nut washer at −0.8 below
+        // the bearing plane, so the fixture's faces are arithmetic, not a physical joint
+        // (`far_faces` never returns a negative face): a face at −2.0 lies 1.2 short of the
+        // hung washer and pulls it down onto the face, the tip protruding instead; a face
+        // past the hung stack, or an unknown one, keeps the prototype's stack.
         let id = ElementId::parse("019a7bf0-0000-7000-8000-000000710001").unwrap();
         let low = |faces: &[Option<f64>]| -> Vec<f64> {
             let (element, _) = scene_element(id, &placed(), &bolt(), faces).unwrap();

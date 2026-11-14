@@ -254,7 +254,9 @@ pub fn summary_csv(bom: &Bom) -> String {
             g.material.clone(),
             g.count.to_string(),
             g.total_length_mm.map_or(String::new(), |v| quantity(v, 2)),
-            quantity(g.total_area_m2, 2),
+            // Square metres keep four decimals (100 mm2): two left a 23924 mm2 group at a
+            // one-digit `0.02` beside smaller groups printed to four significant digits.
+            quantity(g.total_area_m2, AREA_M2_DECIMALS),
             quantity(g.total_volume_m3, 9),
             g.total_mass_kg.map_or(String::new(), |v| quantity(v, 2)),
             g.mass_unknown.to_string(),
@@ -346,6 +348,9 @@ pub(crate) fn quantity(value: f64, decimals: usize) -> String {
     }
     trimmed.to_owned()
 }
+
+/// Decimal places of a square-metre total: 100 mm2 resolution.
+const AREA_M2_DECIMALS: usize = 4;
 
 /// The most decimal places a small non-zero report quantity prints with before falling back
 /// to the exact number.
@@ -439,6 +444,13 @@ mod tests {
         let group = summary.lines().nth(1).unwrap_or_default();
         assert!(group.contains(",0.01,"), "{group}");
         assert!(group.ends_with(",0.0001002,0.79,0"), "{group}");
+        // A 23924 mm2 group prints 0.0239, not a one-digit 0.02 (the 562 recheck).
+        let mut plate = row(2, ElementKind::Plate, "PL12", Some(2.25));
+        plate.area_mm2 = Some(23924.46);
+        plate.volume_mm3 = 287093.52;
+        let summary = summary_csv(&tables(&[plate], 10).unwrap());
+        let group = summary.lines().nth(1).unwrap_or_default();
+        assert!(group.contains(",0.0239,"), "{group}");
     }
 
     #[test]
@@ -462,7 +474,8 @@ mod tests {
         assert!(line.ends_with(",0.00314"), "{line}");
         let summary = summary_csv(&bom);
         let group = summary.lines().nth(1).unwrap_or_default();
-        assert!(group.contains(",0.002485,"), "{group}");
+        // The m2 total prints at its four decimals: 0.002485 m2 reads 0.0025, never 0.
+        assert!(group.contains(",0.0025,"), "{group}");
     }
 
     #[test]

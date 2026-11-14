@@ -108,7 +108,8 @@ the numbering state; the engine API carries both (`mark: String`, `id`).
   the `PL` label is the group's profile part, so plates group by thickness and grade. Columns:
   `count`, `total_length_mm` (members), `total_area_m2`, `total_volume_m3`, `total_mass_kg`
   (current masses only), `mass_unknown` (elements of the group with unknown mass). Same order
-  as the element table.
+  as the element table. `total_area_m2` prints four decimals (100 mm2), the other quantity
+  cells the element table's precision.
 
 ### 2.7 CSV schema
 

@@ -410,12 +410,16 @@ pub fn prop_button(ui: &mut Ui, label: &str, text: &str) -> bool {
     prop_row(ui, label, |ui| {
         let palette = Palette::current(ui);
         let width = (ui.available_width() - SPACE_XS).max(30.0);
+        // One line, cut with an ellipsis and whole on hover: a long summary such as
+        // "Edit… (0 filters, 1 hidden)" wrapped onto a second line past the row height.
         ui.add_sized(
             [width, ROW_HEIGHT - 4.0],
             egui::Button::new(egui::RichText::new(text).size(12.0))
+                .wrap_mode(egui::TextWrapMode::Truncate)
                 .fill(palette.head)
                 .stroke(Stroke::new(1.0, palette.rule)),
         )
+        .on_hover_text(text)
         .clicked()
     })
 }

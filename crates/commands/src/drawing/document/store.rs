@@ -228,6 +228,10 @@ impl DocumentStore {
 
     /// Opens an existing dedicated document directory.
     pub fn open(root: &Path) -> Result<Self, Refusal> {
+        // Name the cause: a relative path read only as "not usable" (the 562 recheck).
+        if !root.is_absolute() {
+            return Err(bad("document directory must be an absolute path"));
+        }
         let blobs = BlobStore::new(root).map_err(|_| bad("document directory is not usable"))?;
         Ok(Self {
             revisions: RevisionStore::new(blobs),
@@ -615,4 +619,27 @@ pub fn expected_base(info: Option<&RevisionInfo>) -> Result<ExpectedBase, Refusa
 /// Parses a document's stable drawing identity from a canonical UUIDv7 string.
 pub fn drawing_id(text: &str) -> Result<DrawingId, Refusal> {
     DrawingId::parse(text).map_err(|_| bad("drawing id is malformed"))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_relative_document_directory_is_refused_by_name() {
+        // A relative path read only as "not usable" when opened (the 562 recheck); both entry
+        // points now say what is wrong with it.
+        for refusal in [
+            DocumentStore::open(Path::new("relative/documents")).err(),
+            DocumentStore::create(Path::new("relative/documents")).err(),
+        ] {
+            let refusal = refusal.expect("a relative path is refused");
+            assert_eq!(refusal.code, ErrorCode::InvalidArgument);
+            assert_eq!(
+                refusal.message,
+                "document directory must be an absolute path"
+            );
+        }
+    }
 }
