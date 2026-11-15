@@ -76,20 +76,20 @@ fn the_shipped_china_environment_lists_its_sections_and_provenance() {
         "--environment",
         ENVIRONMENT,
         "--limit",
-        "64",
+        "128",
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "china");
-    assert_eq!(num(&listed, &["entry_count"]), 45.0);
+    assert_eq!(num(&listed, &["entry_count"]), 86.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let library = &at(&listed, &["libraries"]).array().unwrap()[0];
     let info = at(library, &["library"]);
     assert_eq!(text(info, "id"), "china-gb-t-706-profiles");
-    assert_eq!(text(info, "version"), "1");
+    assert_eq!(text(info, "version"), "2");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 45);
+    assert_eq!(entries.len(), 86);
     let i10 = entries
         .iter()
         .find(|e| text(e, "designation") == "I10")
@@ -105,6 +105,14 @@ fn the_shipped_china_environment_lists_its_sections_and_provenance() {
         .unwrap();
     assert_eq!(num(i55a, &["parameters_mm", "h"]), 550.0);
     assert_eq!(num(i55a, &["parameters_mm", "k"]), 1.0 / 6.0);
+    // The channel series carries its own prefix: the numeric designations overlap with the
+    // I-beams (C10 is the channel, I10 the beam), and the slope is the standard's 1:10.
+    let c5 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "C5")
+        .unwrap();
+    assert_eq!(num(c5, &["parameters_mm", "h"]), 50.0);
+    assert_eq!(num(c5, &["parameters_mm", "k"]), 1.0 / 10.0);
 }
 
 #[test]
@@ -191,10 +199,53 @@ fn a_project_created_with_the_china_environment_resolves_its_designations() {
     assert_eq!(num(&q, &["section_area_mm2"]), 17980.0);
     close(num(&q, &["mass", "kg"]), 846.858, 1e-9);
 
+    // The channel series resolves beside the beams: C5, catalogue area 692.5 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "16000,0,0",
+        "--end",
+        "22000,0,0",
+        "--profile",
+        "C5",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 692.5);
+    close(num(&q, &["mass", "kg"]), 32.61675, 1e-9);
+
+    // The largest channel: C40c, catalogue area 9104 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "column",
+        "--start",
+        "24000,0,0",
+        "--end",
+        "24000,0,6000",
+        "--profile",
+        "C40c",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 9104.0);
+    close(num(&q, &["mass", "kg"]), 428.7984, 1e-9);
+
     // A designation the shipped series does not publish is refused, not silently substituted:
-    // the channel series (C5) and the H-sections (GB/T 11263-2017) are not in this pack, and
-    // the I-beam series has no I33.
-    for absent in ["C5", "I33", "H200x100"] {
+    // the channel series has no 18c or 22c variant (the official table leaves them out; the
+    // flawed web transcription printed blank cells there), the I-beam series has no I33, and
+    // the H-sections (GB/T 11263-2017) are a separate pack.
+    for absent in ["C18c", "C22c", "I33", "H200x100"] {
         assert_eq!(
             f.code(&[
                 "create-member",
@@ -220,7 +271,7 @@ fn a_project_created_with_the_china_environment_resolves_its_designations() {
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 3);
+    assert_eq!(members.len(), 5);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
