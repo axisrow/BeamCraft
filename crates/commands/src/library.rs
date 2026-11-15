@@ -2259,11 +2259,12 @@ mod tests {
         assert_eq!(environment.sources.len(), 2);
         assert_eq!(environment.sources[0].library.entries.len(), 69);
         assert_eq!(environment.sources[1].library.entries.len(), 52);
-        // The DIN fastener set rides the same environment, admitted with declared provenance.
+        // The DIN fastener set rides the same environment, admitted with declared provenance;
+        // the pack carries the M12-30 designations since the EN 1090-2 hole-series rows.
         assert_eq!(environment.fastener_sources.len(), 1);
         let bolts = &environment.fastener_sources[0];
         assert_eq!(bolts.library.info.id, "beamcraft-din-fasteners");
-        assert_eq!(bolts.library.entries.len(), 3);
+        assert_eq!(bolts.library.entries.len(), 6);
         assert!(bolts.library.rejected.is_empty());
         assert!(
             bolts
@@ -2287,7 +2288,7 @@ mod tests {
             matches!(&m12.record, DefinitionRecord::Fastener { spec } if spec.nominal_diameter_mm == 12.0 && spec.lengths_mm.contains(&80.0))
         );
         // A designation the set does not publish is NOT_FOUND, never a near match.
-        for absent in ["M24", "M12x80", "m12"] {
+        for absent in ["M36", "M12x80", "m12"] {
             assert_eq!(
                 lookup.find(absent).unwrap_err().code,
                 ErrorCode::NotFound,

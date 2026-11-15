@@ -239,7 +239,7 @@ fn an_unknown_or_damaged_fastener_entry_changes_nothing() {
     );
     assert_eq!(sequence(&created), 1);
     // An unknown designation is refused, never replaced by a near one.
-    for designation in ["M12x40", "m12", "M24"] {
+    for designation in ["M12x40", "m12", "M36"] {
         let (code, body) = f.raw(&[
             "define-fastener",
             "--store",
@@ -306,5 +306,5 @@ fn every_shipped_entry_pins_its_predicted_digest() {
         }
     }
     let definitions = f.ok("definitions", &["--store", &f.store()]);
-    assert_eq!(num(&definitions, &["definition_count"]), 6.0);
+    assert_eq!(num(&definitions, &["definition_count"]), 9.0);
 }
