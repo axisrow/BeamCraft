@@ -23,7 +23,10 @@ saved setting.
   the hollow closed-form area); `environments/russia/` holds the GOST 26020-83 parallel-flange
   beam (Б), wide-flange (Ш) and column (К) series and, since 2026-11-15, a second profile
   library with the GOST 30245-2003 cold-bent square hollow sections (the complete square
-  series, sizes 40x40 to 300x300; validated against the hollow closed-form area) and the
+  series, sizes 40x40 to 300x300; validated against the hollow closed-form area), a third
+  profile library with the GOST 8239-89 inclined-flange I beams and the GOST 8240-89
+  slope-series channels through the `tapered_i` and `tapered_c` families (the slopes the
+  standards print as roll-pass ranges 6–12 % and 4–10 % carry as data per row), and the
   GOST 7798-70 hex-bolt fastener set (M12/16/20/24, the environment's fastener library,
   BC-ENV-002); `environments/australia/` (2026-11-15) holds the
   AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series,
