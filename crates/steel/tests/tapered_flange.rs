@@ -397,7 +397,9 @@ fn the_tapered_outline_carries_the_slope_symmetry_and_toe_radius() {
             polygon > exact && polygon - exact < 0.01 * exact,
             "{family:?}: polygon {polygon} exact {exact}"
         );
-        // A member of the section is a sealed certified body in both representations.
+        // A member of the section is a sealed certified body in both representations, flagged
+        // approximated in both: the detailed one approximates the fillet arcs and the
+        // simplified one drops them (the not-exact contract of Simplified).
         for representation in [Representation::Detailed, Representation::Simplified] {
             let member = SectionMember {
                 start: beamcraft_geom::Point3::ORIGIN,
@@ -411,6 +413,23 @@ fn the_tapered_outline_carries_the_slope_symmetry_and_toe_radius() {
             };
             let built = section_member(&member).unwrap_or_else(|e| panic!("{family:?}: {e:?}"));
             assert!(built.volume_mm3() > 0.0);
+            assert!(built.approximated(), "{family:?} {representation:?}");
+        }
+        // A sharp tapered section stays exact when detailed and flags its dropped fillets when
+        // simplified, exactly like the parallel-flange families.
+        let mut sharp = values;
+        sharp[4] = 0.0;
+        sharp[5] = 0.0;
+        for (representation, expected) in [
+            (Representation::Detailed, false),
+            (Representation::Simplified, true),
+        ] {
+            let o = outline(
+                &SectionShape::Parametric(ParametricSection::new(family, sharp.to_vec()).unwrap()),
+                representation,
+            )
+            .unwrap();
+            assert_eq!(o.approximated, expected, "{family:?} {representation:?}");
         }
     }
 }

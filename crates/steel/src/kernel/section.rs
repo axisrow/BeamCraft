@@ -695,7 +695,7 @@ fn parametric_outline_with(
             cavities: Vec::new(),
             width_mm: b,
             height_mm: h,
-            approximated: r > 0.0 || r1 > 0.0,
+            approximated: r > 0.0 || r1 > 0.0 || simplified,
         });
     }
     let radius = used.values().last().copied().unwrap_or(0.0);

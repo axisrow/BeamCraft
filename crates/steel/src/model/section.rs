@@ -137,8 +137,10 @@ fn invalid(field: &'static str, message: &'static str) -> CommandError {
 /// Per-fillet area coefficient of a tapered flange, `g(k) = cot(pi/4 + alpha/2) - (pi/4 -
 /// alpha/2)` with `alpha = atan(k)`: a fillet of radius `r` between a vertical face and an
 /// inner flange face of slope `k` changes the sharp area by `g(k) * r^2` (`1 - pi/4` at
-/// `k = 0`). Expressed through `cos(alpha)`, `sin(alpha)` and half-angle square roots, so it
-/// stays bit-deterministic.
+/// `k = 0`). The cot term comes from `cos(alpha)` by half-angle square roots; the linear term
+/// needs `atan`, which is platform trigonometry. That is acceptable here because the value
+/// feeds the reported quantities (P-Mass, the D3 comparison), never the stored outline: the
+/// kernel's tapered outline uses half-angle rotations only and carries no trigonometry.
 fn fillet(k: f64) -> f64 {
     let root = (1.0 + k * k).sqrt();
     let cos = 1.0 / root;
