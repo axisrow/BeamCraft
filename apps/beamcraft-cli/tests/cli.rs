@@ -19,6 +19,7 @@ mod assemblies;
 mod attributes;
 mod australia_environment;
 mod australia_fasteners;
+mod australia_materials;
 mod bent_plates;
 mod bolt_groups;
 mod bolt_groups_view;

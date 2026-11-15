@@ -2998,6 +2998,119 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_australia_as_nzs_3678_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/materials-as-nzs-3678.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "australia-as-nzs-3678-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 5);
+        // The structural base grades of AS/NZS 3678-2016 in the loader's designation order,
+        // the bare strength-level numbers (the nominal minimum yield in MPa) the ASI
+        // specification lists for plates and flats. The 300 and 400 grades are the steels the
+        // welded beams and columns of AS/NZS 3679.2 are welded from; the impact-test L
+        // suffixes, the Z values, the AS/NZS 1594 product grades and the weathering WR350
+        // product are not in the pack.
+        let asnzs = "AS/NZS 3678-2016";
+        let expected: [(&str, &str); 5] = [
+            ("250", asnzs),
+            ("300", asnzs),
+            ("350", asnzs),
+            ("400", asnzs),
+            ("450", asnzs),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_australia_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-as-nzs-3678.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "australia-as-nzs-3678-materials");
+        assert_eq!(materials.library.entries.len(), 5);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, grade_350) = lookup.find("350").unwrap();
+        assert_eq!(source.library.info.id, "australia-as-nzs-3678-materials");
+        assert!(matches!(
+            &grade_350.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("AS/NZS 3678-2016")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no qualifier
+        // forms (the NZ catalogue G-prefix and the Grade word, the AS/NZS 1594 HA form), no
+        // impact suffix, no Z value, no lighter grade outside the shipped set and no grade of
+        // another standard.
+        for absent in [
+            "G350",
+            "Grade 350",
+            "HA250",
+            "HW350",
+            "C350L0",
+            "350L15",
+            "350Z25",
+            "200",
+            "500",
+            "A36",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
