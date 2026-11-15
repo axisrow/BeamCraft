@@ -124,6 +124,7 @@ mod transform;
 mod u19_scopes;
 mod undo;
 mod update;
+mod usa_materials;
 mod validation_layer;
 mod version;
 mod view_clipping;
