@@ -21,7 +21,9 @@ saved setting.
   parallel-flange UPE channel series and, since 2026-11-15, a second profile library with the
   EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
   the hollow closed-form area); `environments/russia/` holds the GOST 26020-83 parallel-flange
-  beam (Б), wide-flange (Ш) and column (К) series; `environments/australia/` (2026-11-15) holds
+  beam (Б), wide-flange (Ш) and column (К) series and, since 2026-11-15, the GOST 7798-70
+  hex-bolt fastener set (M12/16/20/24, the environment's fastener library, BC-ENV-002);
+  `environments/australia/` (2026-11-15) holds
   the AS/NZS 3679.1:2016 UB and UC series, `environments/india/` holds the IS 808:2021
   narrow (NPB) and wide (WPB) parallel flange beam series, and `environments/china/`
   (2026-11-15) holds the GB/T 706-2016 tapered-flange I-beam series through the `tapered_i`

@@ -106,6 +106,7 @@ mod representation_levels;
 mod resolve;
 mod revision;
 mod russia_environment;
+mod russia_fasteners;
 mod schedules;
 mod schedules_store;
 mod sections;

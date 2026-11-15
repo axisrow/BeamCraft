@@ -4,7 +4,8 @@
     upAxis = "Z"
     customLayerData = {
         string "bim:environment:id" = "russia"
-        string "bim:environment:title" = "Russia (GOST 26020-83)"
+        string "bim:environment:title" = "Russia (GOST 26020-83, GOST 7798-70)"
         string[] "bim:environment:libraries" = ["profiles-gost-26020.usda"]
+        string[] "bim:environment:fastener-libraries" = ["gost-fasteners.usda"]
     }
 )
