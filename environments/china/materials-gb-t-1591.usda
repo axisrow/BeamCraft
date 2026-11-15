@@ -1,0 +1,338 @@
+#usda 1.0
+(
+    doc = "BeamCraft China structural steel grades: the complete published grade set of GB/T 1591-2018 (high strength low alloy structural steels, the 2018 edition that replaced Q345 with Q355), clause 4 designation system: Q + minimum upper yield strength in MPa + delivery status code + quality grade (B to F). All three delivery families ship: the hot-rolled steels whose AR code is omitted (table 1: Q355 and Q390 in B, C, D; Q420 in B, C; Q460 in C, the sections-and-bars-only as-rolled grade), the normalizing and normalizing rolling steels (table 3: Q355N in B to F; Q390N and Q420N in B to E; Q460N in C to E) and the thermomechanical processed steels (table 5: Q355M in B to F; Q390M and Q420M in B to E; Q460M and Q500M to Q690M in C to E) — fifty-three designations. Re-entered by hand as our own data; no text or table is copied from the standard. The density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1). Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "china-gb-t-1591-materials"
+        string "bim:library:title" = "GB/T 1591-2018 structural steel grades"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standard GB/T 1591-2018 designation tables 1, 3 and 5, the complete 2018 grade set, re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "Q_Q355B"
+        {
+            string steel:material:grade = "Q355B"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355C"
+        {
+            string steel:material:grade = "Q355C"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355D"
+        {
+            string steel:material:grade = "Q355D"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355MB"
+        {
+            string steel:material:grade = "Q355MB"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355MC"
+        {
+            string steel:material:grade = "Q355MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355MD"
+        {
+            string steel:material:grade = "Q355MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355ME"
+        {
+            string steel:material:grade = "Q355ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355MF"
+        {
+            string steel:material:grade = "Q355MF"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355NB"
+        {
+            string steel:material:grade = "Q355NB"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355NC"
+        {
+            string steel:material:grade = "Q355NC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355ND"
+        {
+            string steel:material:grade = "Q355ND"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355NE"
+        {
+            string steel:material:grade = "Q355NE"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q355NF"
+        {
+            string steel:material:grade = "Q355NF"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390B"
+        {
+            string steel:material:grade = "Q390B"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390C"
+        {
+            string steel:material:grade = "Q390C"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390D"
+        {
+            string steel:material:grade = "Q390D"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390MB"
+        {
+            string steel:material:grade = "Q390MB"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390MC"
+        {
+            string steel:material:grade = "Q390MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390MD"
+        {
+            string steel:material:grade = "Q390MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390ME"
+        {
+            string steel:material:grade = "Q390ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390NB"
+        {
+            string steel:material:grade = "Q390NB"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390NC"
+        {
+            string steel:material:grade = "Q390NC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390ND"
+        {
+            string steel:material:grade = "Q390ND"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q390NE"
+        {
+            string steel:material:grade = "Q390NE"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420B"
+        {
+            string steel:material:grade = "Q420B"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420C"
+        {
+            string steel:material:grade = "Q420C"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420MB"
+        {
+            string steel:material:grade = "Q420MB"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420MC"
+        {
+            string steel:material:grade = "Q420MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420MD"
+        {
+            string steel:material:grade = "Q420MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420ME"
+        {
+            string steel:material:grade = "Q420ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420NB"
+        {
+            string steel:material:grade = "Q420NB"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420NC"
+        {
+            string steel:material:grade = "Q420NC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420ND"
+        {
+            string steel:material:grade = "Q420ND"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q420NE"
+        {
+            string steel:material:grade = "Q420NE"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q460C"
+        {
+            string steel:material:grade = "Q460C"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q460MC"
+        {
+            string steel:material:grade = "Q460MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q460MD"
+        {
+            string steel:material:grade = "Q460MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q460ME"
+        {
+            string steel:material:grade = "Q460ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q460NC"
+        {
+            string steel:material:grade = "Q460NC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q460ND"
+        {
+            string steel:material:grade = "Q460ND"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q460NE"
+        {
+            string steel:material:grade = "Q460NE"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q500MC"
+        {
+            string steel:material:grade = "Q500MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q500MD"
+        {
+            string steel:material:grade = "Q500MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q500ME"
+        {
+            string steel:material:grade = "Q500ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q550MC"
+        {
+            string steel:material:grade = "Q550MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q550MD"
+        {
+            string steel:material:grade = "Q550MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q550ME"
+        {
+            string steel:material:grade = "Q550ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q620MC"
+        {
+            string steel:material:grade = "Q620MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q620MD"
+        {
+            string steel:material:grade = "Q620MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q620ME"
+        {
+            string steel:material:grade = "Q620ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q690MC"
+        {
+            string steel:material:grade = "Q690MC"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q690MD"
+        {
+            string steel:material:grade = "Q690MD"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Q_Q690ME"
+        {
+            string steel:material:grade = "Q690ME"
+            string steel:material:standard = "GB/T 1591-2018"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}

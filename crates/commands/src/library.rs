@@ -2889,6 +2889,115 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_china_gb_t_1591_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/china/materials-gb-t-1591.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "china-gb-t-1591-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted, fifty-three designations.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 53);
+        // The complete published grade set of GB/T 1591-2018 in the loader's designation
+        // order: per strength level the as-rolled grades (the AR code omitted) first, then
+        // the thermomechanical M and the normalizing N families, each with the quality
+        // grades its table lists — the sections-and-bars-only Q460 as-rolled grade has C
+        // only, and the Q500-to-Q690 levels exist in the thermomechanical family only. The
+        // designation system is clause 4: Q + the minimum upper yield strength in MPa + the
+        // delivery status code + the quality grade.
+        let gb = "GB/T 1591-2018";
+        let expected: [&str; 53] = [
+            "Q355B", "Q355C", "Q355D", "Q355MB", "Q355MC", "Q355MD", "Q355ME", "Q355MF", "Q355NB",
+            "Q355NC", "Q355ND", "Q355NE", "Q355NF", "Q390B", "Q390C", "Q390D", "Q390MB", "Q390MC",
+            "Q390MD", "Q390ME", "Q390NB", "Q390NC", "Q390ND", "Q390NE", "Q420B", "Q420C", "Q420MB",
+            "Q420MC", "Q420MD", "Q420ME", "Q420NB", "Q420NC", "Q420ND", "Q420NE", "Q460C",
+            "Q460MC", "Q460MD", "Q460ME", "Q460NC", "Q460ND", "Q460NE", "Q500MC", "Q500MD",
+            "Q500ME", "Q550MC", "Q550MD", "Q550ME", "Q620MC", "Q620MD", "Q620ME", "Q690MC",
+            "Q690MD", "Q690ME",
+        ];
+        for (designation, entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(gb), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_china_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/china/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-gb-t-1591.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "china-gb-t-1591-materials");
+        assert_eq!(materials.library.entries.len(), 53);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, q355) = lookup.find("Q355ND").unwrap();
+        assert_eq!(source.library.info.id, "china-gb-t-1591-materials");
+        assert!(matches!(
+            &q355.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("GB/T 1591-2018")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare
+        // steel-grade without a quality grade, no designation of the withdrawn 2008 edition
+        // (Q345 became Q355), no lowercase, no quality grade a table omits (the as-rolled
+        // Q420 stops at C, the high-strength levels exist only in the thermomechanical
+        // family) and no grade of another standard.
+        for absent in [
+            "Q355", "Q345B", "Q345", "q355b", "Q420D", "Q420F", "Q460B", "Q500B", "Q500NB",
+            "Q690NE", "Q960", "S355",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
