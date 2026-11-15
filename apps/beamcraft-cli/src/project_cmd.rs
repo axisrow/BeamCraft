@@ -7,8 +7,11 @@
 //!
 //! The settings live in the user's configuration directory unless `--config-dir` names another.
 //! `create-project` takes its author from the settings profile unless `--actor-id` names one, and
-//! records the new project as recently opened; a project is created even when that record cannot
-//! be written (`recent_recorded` is then false).
+//! seeds the environment the settings name as the active one unless `--environment` names one;
+//! the reply's `seeded.environment_source` tells which of the two chose. A damaged settings file
+//! refuses a creation that needs it (a creation that names both its actor and its environment
+//! never reads the settings), and the new project is recorded as recently opened even when that
+//! record cannot be written (`recent_recorded` is then false).
 
 use crate::plate_cmd::revision_json;
 use beamcraft_commands::definition::{DefineRequest, DefinitionRecord, define};
@@ -23,7 +26,7 @@ use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use session::Refusal;
-use session::environment::{EnvironmentState, environment_folders, list_environments};
+use session::environment::{environment_folders, find_environment};
 use session::pipeline::summarize;
 use session::project::{ProjectInfo, ProjectState, list_projects};
 use session::settings::{Settings, SettingsError, default_dir};
@@ -110,18 +113,38 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-project" => {
             let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
             let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
-            // The settings are read only when they are needed: for the author, and to remember
-            // the project. A damaged settings file never blocks a creation that names its actor.
             let dir = config_dir();
+            // A sectioned project takes no environment yet, so it needs the settings only for
+            // its author.
+            let sectioned = given("--code").is_some() || given("--sections").is_some();
+            // The settings are read only when they are needed: for the author, and for the
+            // active environment when --environment does not name one. A damaged settings file
+            // refuses a creation that needs it; one that names both its actor and its
+            // environment never reads them.
+            let settings = if given("--actor-id").is_none()
+                || (!sectioned && given("--environment").is_none())
+            {
+                Some(Settings::load(&dir.clone()?).map_err(settings_error)?)
+            } else {
+                None
+            };
             let actor = match given("--actor-id") {
                 Some(text) => Uuid7::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-                None => {
-                    let settings = Settings::load(&dir.clone()?).map_err(settings_error)?;
-                    match settings.profile {
-                        Some(profile) => profile.actor,
-                        None => fresh_id()?,
-                    }
-                }
+                None => match settings.as_ref().and_then(|s| s.profile.as_ref()) {
+                    Some(profile) => profile.actor,
+                    None => fresh_id()?,
+                },
+            };
+            // The environment the project is seeded from: --environment names one and overrides
+            // the settings; without it the active environment of the settings is the choice of
+            // the person, so it seeds the same way an explicit one does.
+            let chosen = match given("--environment") {
+                Some(id) => Some((id.to_owned(), "option")),
+                None if !sectioned => settings
+                    .as_ref()
+                    .and_then(|s| s.environment.clone())
+                    .map(|id| (id, "settings")),
+                None => None,
             };
             let context = ProjectContext {
                 op_id: match given("--op-id") {
@@ -190,12 +213,23 @@ fn run(args: &[OsString]) -> Run<Json> {
                     }
                 }
             };
-            let seeded = match given("--environment") {
-                Some(id) => {
+            let seeded = match &chosen {
+                Some((id, source)) => {
                     let config = given("--config-dir").map(str::to_owned);
                     match seed_project(&info.path, id, config.as_deref(), &context) {
-                        Ok(seeded) => Some(seeded),
-                        Err(error) => {
+                        Ok(seeded) => Some((seeded, *source)),
+                        Err(mut error) => {
+                            // The person did not type a settings-chosen environment id, so the
+                            // not-found refusal of the search itself names where the choice came
+                            // from. Deeper not-found refusals (a listed library file that is
+                            // gone, say) keep their own text: only the exact search refusal is
+                            // rewritten.
+                            if *source == "settings"
+                                && error.message
+                                    == "the environment is not among the built-in or user environments"
+                            {
+                                error.message = "the active environment of the settings is not among the built-in or user environments";
+                            }
                             // The folder was made by this call, so a failed seeding removes it
                             // again and leaves nothing behind.
                             let _ = std::fs::remove_dir_all(&info.path);
@@ -212,11 +246,12 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ("project", project_json(&info)?),
                 ("recent_recorded", Json::Bool(recorded)),
             ]);
-            if let (Some(seeded), Json::Object(fields)) = (seeded, &mut reply) {
+            if let (Some((seeded, source)), Json::Object(fields)) = (seeded, &mut reply) {
                 fields.insert(
                     "seeded".into(),
                     Json::object([
                         ("environment", Json::text(seeded.environment)),
+                        ("environment_source", Json::text(source)),
                         ("materials", Json::uint(seeded.materials)),
                     ]),
                 );
@@ -350,21 +385,11 @@ fn seed_project(
     context: &ProjectContext,
 ) -> Run<Seeded> {
     let (folders, _) = environment_folders(config_dir.map(Path::new));
-    let file = list_environments(&folders)
-        .into_iter()
-        .find_map(|entry| match entry.state {
-            EnvironmentState::Ready {
-                id: ready,
-                shadowed: false,
-                ..
-            } if ready == id => Some(entry.path),
-            _ => None,
-        })
-        .ok_or(Refusal {
-            rule_id: None,
-            code: ErrorCode::NotFound,
-            message: "the environment is not among the built-in or user environments",
-        })?;
+    let file = find_environment(&folders, id).ok_or(Refusal {
+        rule_id: None,
+        code: ErrorCode::NotFound,
+        message: "the environment is not among the built-in or user environments",
+    })?;
     let file = file
         .to_str()
         .ok_or(invalid("the environment path is not UTF-8"))?;

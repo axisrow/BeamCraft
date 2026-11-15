@@ -16,7 +16,11 @@ pub(super) const HELP: &str = concat!(
     "environment_profiles; environment_presets lists the part presets the environment declares, ",
     "the default name, class, material, profile or thickness of a new beam, column or plate; environment_view_filters and environment_view_presets list the view filters and view presets it declares, which a view can be filled from), and publishes the default materials Steel_Undefined (density 0, a known ",
     "zero mass for auxiliary parts) and Steel (7850 kg/m3); an unknown or unreadable environment is ",
-    "refused and the folder is removed again); list-project --dir DIR (the store folders ",
+    "refused and the folder is removed again; without --environment the active environment of the ",
+    "settings is seeded instead (the start window's choice; a sectioned project seeds nothing), and ",
+    "seeded.environment_source says option when the command line chose and settings when the ",
+    "settings did; a settings file that cannot be read refuses a creation that needs it)); ",
+    "list-project --dir DIR (the store folders ",
     "directly inside DIR by name, read-only; created_ms is the ProjectId timestamp, ",
     "modified_ms the head revision id timestamp)",
 );
