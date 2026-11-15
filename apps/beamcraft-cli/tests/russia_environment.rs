@@ -76,11 +76,11 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         "--environment",
         ENVIRONMENT,
         "--limit",
-        "196",
+        "236",
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "russia");
-    assert_eq!(num(&listed, &["entry_count"]), 196.0);
+    assert_eq!(num(&listed, &["entry_count"]), 236.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let libraries = at(&listed, &["libraries"]).array().unwrap();
     assert_eq!(libraries.len(), 2);
@@ -91,14 +91,14 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let square_info = at(&libraries[1], &["library"]);
     assert_eq!(text(square_info, "id"), "russia-gost-30245-squares");
-    assert_eq!(text(square_info, "version"), "1");
+    assert_eq!(text(square_info, "version"), "2");
     assert_eq!(text(square_info, "licence"), "MPL-2.0");
     assert!(
         !text(square_info, "source").is_empty(),
         "the source is declared"
     );
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 196);
+    assert_eq!(entries.len(), 236);
     let b30_1 = entries
         .iter()
         .find(|e| text(e, "designation") == "30B1")
@@ -232,6 +232,29 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
     // 661 mm2 x 3000 mm x 7850 kg/m3.
     close(num(&q, &["mass", "kg"]), 15.566550, 1e-9);
 
+    // The largest square of the series, 300x300x9: catalogue area 10200 mm2 (printed
+    // 102.0 cm2 at one decimal).
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "column",
+        "--start",
+        "20000,0,0",
+        "--end",
+        "20000,0,3000",
+        "--profile",
+        "300x300x9",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 10200.0);
+    // 10200 mm2 x 3000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 240.21, 1e-9);
+
     // A designation the shipped series does not publish is refused, not silently substituted:
     // 30K4 and 80Sh1 exist only in the newer GOST R 57837-2017, the inclined-flange series
     // of GOST 8239-89 are not shipped, and GOST 30245-2003 publishes no 220 mm square at all.
@@ -261,7 +284,7 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 4);
+    assert_eq!(members.len(), 5);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
