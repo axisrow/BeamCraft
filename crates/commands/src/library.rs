@@ -2056,6 +2056,279 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_australia_hollows_read_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/hollows-as-nzs-1163.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "australia-asnzs-1163-hollows");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 145);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(_),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("AS/NZS 1163:2016"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires); for the hollows the closed form is the
+            // hollow formula of Appendix E with the corner radii the standard fixes for the
+            // series (2.0t to 3.0 mm, 2.5t above). The mass must be that area at 7850 kg/m3
+            // within the three significant figures the series publishes (worst 0.46 percent on
+            // SHS89x89x6.0).
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.01,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The CHS, RHS and SHS series exactly as AS/NZS 1163:2016 Appendix D publishes them:
+        // 66 + 41 + 38 designations. The mill stock lists carry sizes outside the standard's
+        // Appendix D (SHS 300x300 and smaller than 40x40, RHS 300x200 and 152x76, the heavier
+        // thicknesses of the small series); those follow the manufacturer, not the standard, and
+        // are not shipped here.
+        let mut expected = vec![
+            "CHS610x12.7",
+            "CHS610x9.5",
+            "CHS610x6.4",
+            "CHS508x12.7",
+            "CHS508x9.5",
+            "CHS508x6.4",
+            "CHS457x12.7",
+            "CHS457x9.5",
+            "CHS457x6.4",
+            "CHS406.4x12.7",
+            "CHS406.4x9.5",
+            "CHS406.4x6.4",
+            "CHS355.6x12.7",
+            "CHS355.6x9.5",
+            "CHS355.6x6.4",
+            "CHS323.9x12.7",
+            "CHS323.9x9.5",
+            "CHS323.9x6.4",
+            "CHS273.1x9.3",
+            "CHS273.1x6.4",
+            "CHS273.1x4.8",
+            "CHS219.1x8.2",
+            "CHS219.1x6.4",
+            "CHS219.1x4.8",
+            "CHS168.3x7.1",
+            "CHS168.3x6.4",
+            "CHS168.3x4.8",
+            "CHS165.1x5.4",
+            "CHS165.1x5",
+            "CHS165.1x3.5",
+            "CHS165.1x3",
+            "CHS139.7x5.4",
+            "CHS139.7x5",
+            "CHS139.7x3.5",
+            "CHS139.7x3",
+            "CHS114.3x6",
+            "CHS114.3x5.4",
+            "CHS114.3x4.8",
+            "CHS114.3x4.5",
+            "CHS114.3x3.6",
+            "CHS114.3x3.2",
+            "CHS101.6x5",
+            "CHS101.6x4",
+            "CHS101.6x3.2",
+            "CHS101.6x2.6",
+            "CHS88.9x5.9",
+            "CHS88.9x5.5",
+            "CHS88.9x5",
+            "CHS88.9x4.8",
+            "CHS88.9x4",
+            "CHS88.9x3.2",
+            "CHS88.9x2.6",
+            "CHS76.1x5.9",
+            "CHS76.1x4.5",
+            "CHS76.1x3.6",
+            "CHS76.1x3.2",
+            "CHS76.1x2.3",
+            "CHS60.3x5.4",
+            "CHS60.3x4.5",
+            "CHS60.3x3.6",
+            "CHS48.3x5.4",
+            "CHS48.3x4",
+            "CHS48.3x3.2",
+            "CHS42.4x4.9",
+            "CHS42.4x4",
+            "CHS42.4x3.2",
+            "RHS250x150x9",
+            "RHS250x150x6",
+            "RHS250x150x5",
+            "RHS200x100x9",
+            "RHS200x100x6",
+            "RHS200x100x5",
+            "RHS200x100x4",
+            "RHS150x100x6",
+            "RHS150x100x5",
+            "RHS150x100x4",
+            "RHS150x50x5",
+            "RHS150x50x4",
+            "RHS150x50x3",
+            "RHS125x75x5",
+            "RHS125x75x4",
+            "RHS125x75x3",
+            "RHS100x50x6",
+            "RHS100x50x5",
+            "RHS100x50x4",
+            "RHS100x50x3.5",
+            "RHS100x50x3",
+            "RHS100x50x2.5",
+            "RHS100x50x2",
+            "RHS75x50x4",
+            "RHS75x50x3",
+            "RHS75x50x2.5",
+            "RHS75x50x2",
+            "RHS75x25x2.5",
+            "RHS75x25x2",
+            "RHS75x25x1.6",
+            "RHS65x35x3",
+            "RHS65x35x2.5",
+            "RHS65x35x2",
+            "RHS50x25x3",
+            "RHS50x25x2.5",
+            "RHS50x25x2",
+            "RHS50x25x1.6",
+            "RHS50x20x3",
+            "RHS50x20x2.5",
+            "RHS50x20x2",
+            "RHS50x20x1.6",
+            "SHS250x250x9",
+            "SHS250x250x6",
+            "SHS200x200x9",
+            "SHS200x200x6",
+            "SHS200x200x5",
+            "SHS150x150x9",
+            "SHS150x150x6",
+            "SHS150x150x5",
+            "SHS125x125x9",
+            "SHS125x125x6",
+            "SHS125x125x5",
+            "SHS125x125x4",
+            "SHS100x100x9",
+            "SHS100x100x6",
+            "SHS100x100x5",
+            "SHS100x100x4",
+            "SHS100x100x3",
+            "SHS89x89x6",
+            "SHS89x89x5",
+            "SHS89x89x3.5",
+            "SHS75x75x6",
+            "SHS75x75x5",
+            "SHS75x75x4",
+            "SHS75x75x3.5",
+            "SHS75x75x3",
+            "SHS75x75x2.5",
+            "SHS65x65x3",
+            "SHS65x65x2.5",
+            "SHS65x65x2",
+            "SHS50x50x4",
+            "SHS50x50x3",
+            "SHS50x50x2.5",
+            "SHS50x50x2",
+            "SHS50x50x1.6",
+            "SHS40x40x4",
+            "SHS40x40x2.5",
+            "SHS40x40x2",
+            "SHS40x40x1.6",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, one per series. The SHS radius is the one
+        // the standard fixes (3.0 mm thickness or less: 2.0t; above: 2.5t).
+        let spot =
+            |designation: &str, family: SectionFamily, values: &[f64], area: f64, mass: f64| {
+                let entry = library.entry(designation).unwrap();
+                let DefinitionRecord::SectionProfile {
+                    shape: SectionShape::Parametric(p),
+                    section,
+                } = &entry.record
+                else {
+                    panic!("{designation} is not a parametric section");
+                };
+                assert_eq!(p.family(), family, "{designation}");
+                assert_eq!(p.values(), values, "{designation}");
+                assert_eq!(section.area_mm2, Some(area), "{designation}");
+                assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+            };
+        spot(
+            "SHS100x100x3",
+            SectionFamily::Rhs,
+            &[100.0, 100.0, 3.0, 6.0],
+            1140.0,
+            8.96,
+        );
+        spot(
+            "RHS200x100x9",
+            SectionFamily::Rhs,
+            &[200.0, 100.0, 9.0, 22.5],
+            4800.0,
+            37.7,
+        );
+        spot("CHS76.1x3.2", SectionFamily::Chs, &[76.1, 3.2], 733.0, 5.75);
+        for absent in [
+            "SHS300x300x8",
+            "SHS30x30x2",
+            "SHS20x20x1.6",
+            "SHS50x50x6",
+            "SHS65x65x6",
+            "RHS300x200x6",
+            "RHS400x200x8",
+            "RHS152x76x5",
+            "RHS150x100x8",
+            "CHS60.3x2.6",
+            "CHS114.3x2",
+            "RHS-100x60x4",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
     fn the_shipped_europe_hollow_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

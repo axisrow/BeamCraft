@@ -1,0 +1,1773 @@
+#usda 1.0
+(
+    doc = "BeamCraft Australia environment: cold-formed circular, rectangular and square hollow sections of AS/NZS 1163:2016, the common series of its Appendix D. The nominal dimensions, areas and masses are the published values, re-entered by hand as our own data; no text or table is copied. The outer corner radius is the one the standard fixes for the series (2.0t to 3.0 mm thickness, 2.5t above). Reference data for modelling; it is not a substitute for the standard itself."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "australia-asnzs-1163-hollows"
+        string "bim:library:title" = "Australia hollow sections (AS/NZS 1163: CHS, RHS, SHS)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Dimensional facts of AS/NZS 1163:2016 (CHS, RHS and SHS of Appendix D) re-entered by hand as our own data; cross-checked against the InfraBuild Know Your Steel catalogue 2021 and the Easysteel Steel Book 2025; no table copied"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "CHS610x12_7"
+        {
+            string steel:profile:designation = "CHS610x12.7"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 610
+            double steel:profile:tMm = 12.7
+            double steel:profile:areaMm2 = 23800
+            double steel:profile:massPerMeterKg = 187
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS610x9_5"
+        {
+            string steel:profile:designation = "CHS610x9.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 610
+            double steel:profile:tMm = 9.5
+            double steel:profile:areaMm2 = 17900
+            double steel:profile:massPerMeterKg = 141
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS610x6_4"
+        {
+            string steel:profile:designation = "CHS610x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 610
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 12100
+            double steel:profile:massPerMeterKg = 95.3
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS508x12_7"
+        {
+            string steel:profile:designation = "CHS508x12.7"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 508
+            double steel:profile:tMm = 12.7
+            double steel:profile:areaMm2 = 19800
+            double steel:profile:massPerMeterKg = 155
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS508x9_5"
+        {
+            string steel:profile:designation = "CHS508x9.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 508
+            double steel:profile:tMm = 9.5
+            double steel:profile:areaMm2 = 14900
+            double steel:profile:massPerMeterKg = 117
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS508x6_4"
+        {
+            string steel:profile:designation = "CHS508x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 508
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 10100
+            double steel:profile:massPerMeterKg = 79.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS457x12_7"
+        {
+            string steel:profile:designation = "CHS457x12.7"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 457
+            double steel:profile:tMm = 12.7
+            double steel:profile:areaMm2 = 17700
+            double steel:profile:massPerMeterKg = 139
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS457x9_5"
+        {
+            string steel:profile:designation = "CHS457x9.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 457
+            double steel:profile:tMm = 9.5
+            double steel:profile:areaMm2 = 13400
+            double steel:profile:massPerMeterKg = 105
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS457x6_4"
+        {
+            string steel:profile:designation = "CHS457x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 457
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 9060
+            double steel:profile:massPerMeterKg = 71.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS406_4x12_7"
+        {
+            string steel:profile:designation = "CHS406.4x12.7"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 406.4
+            double steel:profile:tMm = 12.7
+            double steel:profile:areaMm2 = 15700
+            double steel:profile:massPerMeterKg = 123
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS406_4x9_5"
+        {
+            string steel:profile:designation = "CHS406.4x9.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 406.4
+            double steel:profile:tMm = 9.5
+            double steel:profile:areaMm2 = 11800
+            double steel:profile:massPerMeterKg = 93
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS406_4x6_4"
+        {
+            string steel:profile:designation = "CHS406.4x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 406.4
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 8040
+            double steel:profile:massPerMeterKg = 63.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS355_6x12_7"
+        {
+            string steel:profile:designation = "CHS355.6x12.7"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 355.6
+            double steel:profile:tMm = 12.7
+            double steel:profile:areaMm2 = 13700
+            double steel:profile:massPerMeterKg = 107
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS355_6x9_5"
+        {
+            string steel:profile:designation = "CHS355.6x9.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 355.6
+            double steel:profile:tMm = 9.5
+            double steel:profile:areaMm2 = 10300
+            double steel:profile:massPerMeterKg = 81.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS355_6x6_4"
+        {
+            string steel:profile:designation = "CHS355.6x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 355.6
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 7020
+            double steel:profile:massPerMeterKg = 55.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS323_9x12_7"
+        {
+            string steel:profile:designation = "CHS323.9x12.7"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 323.9
+            double steel:profile:tMm = 12.7
+            double steel:profile:areaMm2 = 12400
+            double steel:profile:massPerMeterKg = 97.5
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS323_9x9_5"
+        {
+            string steel:profile:designation = "CHS323.9x9.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 323.9
+            double steel:profile:tMm = 9.5
+            double steel:profile:areaMm2 = 9380
+            double steel:profile:massPerMeterKg = 73.7
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS323_9x6_4"
+        {
+            string steel:profile:designation = "CHS323.9x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 323.9
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 6380
+            double steel:profile:massPerMeterKg = 50.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS273_1x9_3"
+        {
+            string steel:profile:designation = "CHS273.1x9.3"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 273.1
+            double steel:profile:tMm = 9.3
+            double steel:profile:areaMm2 = 7710
+            double steel:profile:massPerMeterKg = 60.5
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS273_1x6_4"
+        {
+            string steel:profile:designation = "CHS273.1x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 273.1
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 5360
+            double steel:profile:massPerMeterKg = 42.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS273_1x4_8"
+        {
+            string steel:profile:designation = "CHS273.1x4.8"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 273.1
+            double steel:profile:tMm = 4.8
+            double steel:profile:areaMm2 = 4050
+            double steel:profile:massPerMeterKg = 31.8
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS219_1x8_2"
+        {
+            string steel:profile:designation = "CHS219.1x8.2"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 219.1
+            double steel:profile:tMm = 8.2
+            double steel:profile:areaMm2 = 5430
+            double steel:profile:massPerMeterKg = 42.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS219_1x6_4"
+        {
+            string steel:profile:designation = "CHS219.1x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 219.1
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 4280
+            double steel:profile:massPerMeterKg = 33.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS219_1x4_8"
+        {
+            string steel:profile:designation = "CHS219.1x4.8"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 219.1
+            double steel:profile:tMm = 4.8
+            double steel:profile:areaMm2 = 3230
+            double steel:profile:massPerMeterKg = 25.4
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS168_3x7_1"
+        {
+            string steel:profile:designation = "CHS168.3x7.1"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 168.3
+            double steel:profile:tMm = 7.1
+            double steel:profile:areaMm2 = 3600
+            double steel:profile:massPerMeterKg = 28.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS168_3x6_4"
+        {
+            string steel:profile:designation = "CHS168.3x6.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 168.3
+            double steel:profile:tMm = 6.4
+            double steel:profile:areaMm2 = 3260
+            double steel:profile:massPerMeterKg = 25.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS168_3x4_8"
+        {
+            string steel:profile:designation = "CHS168.3x4.8"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 168.3
+            double steel:profile:tMm = 4.8
+            double steel:profile:areaMm2 = 2470
+            double steel:profile:massPerMeterKg = 19.4
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS165_1x5_4"
+        {
+            string steel:profile:designation = "CHS165.1x5.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 165.1
+            double steel:profile:tMm = 5.4
+            double steel:profile:areaMm2 = 2710
+            double steel:profile:massPerMeterKg = 21.3
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS165_1x5"
+        {
+            string steel:profile:designation = "CHS165.1x5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 165.1
+            double steel:profile:tMm = 5
+            double steel:profile:areaMm2 = 2510
+            double steel:profile:massPerMeterKg = 19.7
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS165_1x3_5"
+        {
+            string steel:profile:designation = "CHS165.1x3.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 165.1
+            double steel:profile:tMm = 3.5
+            double steel:profile:areaMm2 = 1780
+            double steel:profile:massPerMeterKg = 13.9
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS165_1x3"
+        {
+            string steel:profile:designation = "CHS165.1x3"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 165.1
+            double steel:profile:tMm = 3
+            double steel:profile:areaMm2 = 1530
+            double steel:profile:massPerMeterKg = 12
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS139_7x5_4"
+        {
+            string steel:profile:designation = "CHS139.7x5.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 139.7
+            double steel:profile:tMm = 5.4
+            double steel:profile:areaMm2 = 2280
+            double steel:profile:massPerMeterKg = 17.9
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS139_7x5"
+        {
+            string steel:profile:designation = "CHS139.7x5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 139.7
+            double steel:profile:tMm = 5
+            double steel:profile:areaMm2 = 2120
+            double steel:profile:massPerMeterKg = 16.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS139_7x3_5"
+        {
+            string steel:profile:designation = "CHS139.7x3.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 139.7
+            double steel:profile:tMm = 3.5
+            double steel:profile:areaMm2 = 1500
+            double steel:profile:massPerMeterKg = 11.8
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS139_7x3"
+        {
+            string steel:profile:designation = "CHS139.7x3"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 139.7
+            double steel:profile:tMm = 3
+            double steel:profile:areaMm2 = 1290
+            double steel:profile:massPerMeterKg = 10.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS114_3x6"
+        {
+            string steel:profile:designation = "CHS114.3x6"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 6
+            double steel:profile:areaMm2 = 2040
+            double steel:profile:massPerMeterKg = 16
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS114_3x5_4"
+        {
+            string steel:profile:designation = "CHS114.3x5.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 5.4
+            double steel:profile:areaMm2 = 1850
+            double steel:profile:massPerMeterKg = 14.5
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS114_3x4_8"
+        {
+            string steel:profile:designation = "CHS114.3x4.8"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 4.8
+            double steel:profile:areaMm2 = 1650
+            double steel:profile:massPerMeterKg = 13
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS114_3x4_5"
+        {
+            string steel:profile:designation = "CHS114.3x4.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 4.5
+            double steel:profile:areaMm2 = 1550
+            double steel:profile:massPerMeterKg = 12.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS114_3x3_6"
+        {
+            string steel:profile:designation = "CHS114.3x3.6"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 3.6
+            double steel:profile:areaMm2 = 1250
+            double steel:profile:massPerMeterKg = 9.83
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS114_3x3_2"
+        {
+            string steel:profile:designation = "CHS114.3x3.2"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 3.2
+            double steel:profile:areaMm2 = 1120
+            double steel:profile:massPerMeterKg = 8.77
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS101_6x5"
+        {
+            string steel:profile:designation = "CHS101.6x5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 101.6
+            double steel:profile:tMm = 5
+            double steel:profile:areaMm2 = 1520
+            double steel:profile:massPerMeterKg = 11.9
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS101_6x4"
+        {
+            string steel:profile:designation = "CHS101.6x4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 101.6
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 1230
+            double steel:profile:massPerMeterKg = 9.63
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS101_6x3_2"
+        {
+            string steel:profile:designation = "CHS101.6x3.2"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 101.6
+            double steel:profile:tMm = 3.2
+            double steel:profile:areaMm2 = 989
+            double steel:profile:massPerMeterKg = 7.77
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS101_6x2_6"
+        {
+            string steel:profile:designation = "CHS101.6x2.6"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 101.6
+            double steel:profile:tMm = 2.6
+            double steel:profile:areaMm2 = 809
+            double steel:profile:massPerMeterKg = 6.35
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS88_9x5_9"
+        {
+            string steel:profile:designation = "CHS88.9x5.9"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 5.9
+            double steel:profile:areaMm2 = 1540
+            double steel:profile:massPerMeterKg = 12.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS88_9x5_5"
+        {
+            string steel:profile:designation = "CHS88.9x5.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 5.5
+            double steel:profile:areaMm2 = 1440
+            double steel:profile:massPerMeterKg = 11.3
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS88_9x5"
+        {
+            string steel:profile:designation = "CHS88.9x5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 5
+            double steel:profile:areaMm2 = 1320
+            double steel:profile:massPerMeterKg = 10.3
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS88_9x4_8"
+        {
+            string steel:profile:designation = "CHS88.9x4.8"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 4.8
+            double steel:profile:areaMm2 = 1270
+            double steel:profile:massPerMeterKg = 9.96
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS88_9x4"
+        {
+            string steel:profile:designation = "CHS88.9x4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 1070
+            double steel:profile:massPerMeterKg = 8.38
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS88_9x3_2"
+        {
+            string steel:profile:designation = "CHS88.9x3.2"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 3.2
+            double steel:profile:areaMm2 = 862
+            double steel:profile:massPerMeterKg = 6.76
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS88_9x2_6"
+        {
+            string steel:profile:designation = "CHS88.9x2.6"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 2.6
+            double steel:profile:areaMm2 = 705
+            double steel:profile:massPerMeterKg = 5.53
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS76_1x5_9"
+        {
+            string steel:profile:designation = "CHS76.1x5.9"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 76.1
+            double steel:profile:tMm = 5.9
+            double steel:profile:areaMm2 = 1300
+            double steel:profile:massPerMeterKg = 10.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS76_1x4_5"
+        {
+            string steel:profile:designation = "CHS76.1x4.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 76.1
+            double steel:profile:tMm = 4.5
+            double steel:profile:areaMm2 = 1010
+            double steel:profile:massPerMeterKg = 7.95
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS76_1x3_6"
+        {
+            string steel:profile:designation = "CHS76.1x3.6"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 76.1
+            double steel:profile:tMm = 3.6
+            double steel:profile:areaMm2 = 820
+            double steel:profile:massPerMeterKg = 6.44
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS76_1x3_2"
+        {
+            string steel:profile:designation = "CHS76.1x3.2"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 76.1
+            double steel:profile:tMm = 3.2
+            double steel:profile:areaMm2 = 733
+            double steel:profile:massPerMeterKg = 5.75
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS76_1x2_3"
+        {
+            string steel:profile:designation = "CHS76.1x2.3"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 76.1
+            double steel:profile:tMm = 2.3
+            double steel:profile:areaMm2 = 533
+            double steel:profile:massPerMeterKg = 4.19
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS60_3x5_4"
+        {
+            string steel:profile:designation = "CHS60.3x5.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 60.3
+            double steel:profile:tMm = 5.4
+            double steel:profile:areaMm2 = 931
+            double steel:profile:massPerMeterKg = 7.31
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS60_3x4_5"
+        {
+            string steel:profile:designation = "CHS60.3x4.5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 60.3
+            double steel:profile:tMm = 4.5
+            double steel:profile:areaMm2 = 789
+            double steel:profile:massPerMeterKg = 6.19
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS60_3x3_6"
+        {
+            string steel:profile:designation = "CHS60.3x3.6"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 60.3
+            double steel:profile:tMm = 3.6
+            double steel:profile:areaMm2 = 641
+            double steel:profile:massPerMeterKg = 5.03
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS48_3x5_4"
+        {
+            string steel:profile:designation = "CHS48.3x5.4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 48.3
+            double steel:profile:tMm = 5.4
+            double steel:profile:areaMm2 = 728
+            double steel:profile:massPerMeterKg = 5.71
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS48_3x4"
+        {
+            string steel:profile:designation = "CHS48.3x4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 48.3
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 557
+            double steel:profile:massPerMeterKg = 4.37
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS48_3x3_2"
+        {
+            string steel:profile:designation = "CHS48.3x3.2"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 48.3
+            double steel:profile:tMm = 3.2
+            double steel:profile:areaMm2 = 453
+            double steel:profile:massPerMeterKg = 3.56
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS42_4x4_9"
+        {
+            string steel:profile:designation = "CHS42.4x4.9"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 42.4
+            double steel:profile:tMm = 4.9
+            double steel:profile:areaMm2 = 577
+            double steel:profile:massPerMeterKg = 4.53
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS42_4x4"
+        {
+            string steel:profile:designation = "CHS42.4x4"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 42.4
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 483
+            double steel:profile:massPerMeterKg = 3.79
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "CHS42_4x3_2"
+        {
+            string steel:profile:designation = "CHS42.4x3.2"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 42.4
+            double steel:profile:tMm = 3.2
+            double steel:profile:areaMm2 = 394
+            double steel:profile:massPerMeterKg = 3.09
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS250x150x9"
+        {
+            string steel:profile:designation = "RHS250x150x9"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 22.5
+            double steel:profile:areaMm2 = 6600
+            double steel:profile:massPerMeterKg = 51.8
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS250x150x6"
+        {
+            string steel:profile:designation = "RHS250x150x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 4530
+            double steel:profile:massPerMeterKg = 35.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS250x150x5"
+        {
+            string steel:profile:designation = "RHS250x150x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 3810
+            double steel:profile:massPerMeterKg = 29.9
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS200x100x9"
+        {
+            string steel:profile:designation = "RHS200x100x9"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 22.5
+            double steel:profile:areaMm2 = 4800
+            double steel:profile:massPerMeterKg = 37.7
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS200x100x6"
+        {
+            string steel:profile:designation = "RHS200x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 3330
+            double steel:profile:massPerMeterKg = 26.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS200x100x5"
+        {
+            string steel:profile:designation = "RHS200x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 2810
+            double steel:profile:massPerMeterKg = 22.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS200x100x4"
+        {
+            string steel:profile:designation = "RHS200x100x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2280
+            double steel:profile:massPerMeterKg = 17.9
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS150x100x6"
+        {
+            string steel:profile:designation = "RHS150x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 2730
+            double steel:profile:massPerMeterKg = 21.4
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS150x100x5"
+        {
+            string steel:profile:designation = "RHS150x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 2310
+            double steel:profile:massPerMeterKg = 18.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS150x100x4"
+        {
+            string steel:profile:designation = "RHS150x100x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1880
+            double steel:profile:massPerMeterKg = 14.8
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS150x50x5"
+        {
+            string steel:profile:designation = "RHS150x50x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 1810
+            double steel:profile:massPerMeterKg = 14.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS150x50x4"
+        {
+            string steel:profile:designation = "RHS150x50x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1480
+            double steel:profile:massPerMeterKg = 11.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS150x50x3"
+        {
+            string steel:profile:designation = "RHS150x50x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 1140
+            double steel:profile:massPerMeterKg = 8.96
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS125x75x5"
+        {
+            string steel:profile:designation = "RHS125x75x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 1810
+            double steel:profile:massPerMeterKg = 14.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS125x75x4"
+        {
+            string steel:profile:designation = "RHS125x75x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1480
+            double steel:profile:massPerMeterKg = 11.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS125x75x3"
+        {
+            string steel:profile:designation = "RHS125x75x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 1140
+            double steel:profile:massPerMeterKg = 8.96
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS100x50x6"
+        {
+            string steel:profile:designation = "RHS100x50x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 1530
+            double steel:profile:massPerMeterKg = 12
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS100x50x5"
+        {
+            string steel:profile:designation = "RHS100x50x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 1310
+            double steel:profile:massPerMeterKg = 10.3
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS100x50x4"
+        {
+            string steel:profile:designation = "RHS100x50x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1080
+            double steel:profile:massPerMeterKg = 8.49
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS100x50x3_5"
+        {
+            string steel:profile:designation = "RHS100x50x3.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 3.5
+            double steel:profile:rMm = 8.75
+            double steel:profile:areaMm2 = 959
+            double steel:profile:massPerMeterKg = 7.53
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS100x50x3"
+        {
+            string steel:profile:designation = "RHS100x50x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 841
+            double steel:profile:massPerMeterKg = 6.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS100x50x2_5"
+        {
+            string steel:profile:designation = "RHS100x50x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 709
+            double steel:profile:massPerMeterKg = 5.56
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS100x50x2"
+        {
+            string steel:profile:designation = "RHS100x50x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 574
+            double steel:profile:massPerMeterKg = 4.5
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS75x50x4"
+        {
+            string steel:profile:designation = "RHS75x50x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 881
+            double steel:profile:massPerMeterKg = 6.92
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS75x50x3"
+        {
+            string steel:profile:designation = "RHS75x50x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 691
+            double steel:profile:massPerMeterKg = 5.42
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS75x50x2_5"
+        {
+            string steel:profile:designation = "RHS75x50x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 584
+            double steel:profile:massPerMeterKg = 4.58
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS75x50x2"
+        {
+            string steel:profile:designation = "RHS75x50x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 474
+            double steel:profile:massPerMeterKg = 3.72
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS75x25x2_5"
+        {
+            string steel:profile:designation = "RHS75x25x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 25
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 459
+            double steel:profile:massPerMeterKg = 3.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS75x25x2"
+        {
+            string steel:profile:designation = "RHS75x25x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 25
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 374
+            double steel:profile:massPerMeterKg = 2.93
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS75x25x1_6"
+        {
+            string steel:profile:designation = "RHS75x25x1.6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 25
+            double steel:profile:tMm = 1.6
+            double steel:profile:rMm = 3.2
+            double steel:profile:areaMm2 = 303
+            double steel:profile:massPerMeterKg = 2.38
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS65x35x3"
+        {
+            string steel:profile:designation = "RHS65x35x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 65
+            double steel:profile:bMm = 35
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 541
+            double steel:profile:massPerMeterKg = 4.25
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS65x35x2_5"
+        {
+            string steel:profile:designation = "RHS65x35x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 65
+            double steel:profile:bMm = 35
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 459
+            double steel:profile:massPerMeterKg = 3.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS65x35x2"
+        {
+            string steel:profile:designation = "RHS65x35x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 65
+            double steel:profile:bMm = 35
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 374
+            double steel:profile:massPerMeterKg = 2.93
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x25x3"
+        {
+            string steel:profile:designation = "RHS50x25x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 25
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 391
+            double steel:profile:massPerMeterKg = 3.07
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x25x2_5"
+        {
+            string steel:profile:designation = "RHS50x25x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 25
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 334
+            double steel:profile:massPerMeterKg = 2.62
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x25x2"
+        {
+            string steel:profile:designation = "RHS50x25x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 25
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 274
+            double steel:profile:massPerMeterKg = 2.15
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x25x1_6"
+        {
+            string steel:profile:designation = "RHS50x25x1.6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 25
+            double steel:profile:tMm = 1.6
+            double steel:profile:rMm = 3.2
+            double steel:profile:areaMm2 = 223
+            double steel:profile:massPerMeterKg = 1.75
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x20x3"
+        {
+            string steel:profile:designation = "RHS50x20x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 20
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 361
+            double steel:profile:massPerMeterKg = 2.83
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x20x2_5"
+        {
+            string steel:profile:designation = "RHS50x20x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 20
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 309
+            double steel:profile:massPerMeterKg = 2.42
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x20x2"
+        {
+            string steel:profile:designation = "RHS50x20x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 20
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 254
+            double steel:profile:massPerMeterKg = 1.99
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "RHS50x20x1_6"
+        {
+            string steel:profile:designation = "RHS50x20x1.6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 20
+            double steel:profile:tMm = 1.6
+            double steel:profile:rMm = 3.2
+            double steel:profile:areaMm2 = 207
+            double steel:profile:massPerMeterKg = 1.63
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS250x250x9"
+        {
+            string steel:profile:designation = "SHS250x250x9"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 250
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 22.5
+            double steel:profile:areaMm2 = 8400
+            double steel:profile:massPerMeterKg = 65.9
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS250x250x6"
+        {
+            string steel:profile:designation = "SHS250x250x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 250
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 5730
+            double steel:profile:massPerMeterKg = 45
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS200x200x9"
+        {
+            string steel:profile:designation = "SHS200x200x9"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 22.5
+            double steel:profile:areaMm2 = 6600
+            double steel:profile:massPerMeterKg = 51.8
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS200x200x6"
+        {
+            string steel:profile:designation = "SHS200x200x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 4530
+            double steel:profile:massPerMeterKg = 35.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS200x200x5"
+        {
+            string steel:profile:designation = "SHS200x200x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 3810
+            double steel:profile:massPerMeterKg = 29.9
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS150x150x9"
+        {
+            string steel:profile:designation = "SHS150x150x9"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 22.5
+            double steel:profile:areaMm2 = 4800
+            double steel:profile:massPerMeterKg = 37.7
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS150x150x6"
+        {
+            string steel:profile:designation = "SHS150x150x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 3330
+            double steel:profile:massPerMeterKg = 26.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS150x150x5"
+        {
+            string steel:profile:designation = "SHS150x150x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 2810
+            double steel:profile:massPerMeterKg = 22.1
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS125x125x9"
+        {
+            string steel:profile:designation = "SHS125x125x9"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 125
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 22.5
+            double steel:profile:areaMm2 = 3900
+            double steel:profile:massPerMeterKg = 30.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS125x125x6"
+        {
+            string steel:profile:designation = "SHS125x125x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 125
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 2730
+            double steel:profile:massPerMeterKg = 21.4
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS125x125x5"
+        {
+            string steel:profile:designation = "SHS125x125x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 125
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 2310
+            double steel:profile:massPerMeterKg = 18.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS125x125x4"
+        {
+            string steel:profile:designation = "SHS125x125x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 125
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1880
+            double steel:profile:massPerMeterKg = 14.8
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS100x100x9"
+        {
+            string steel:profile:designation = "SHS100x100x9"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 22.5
+            double steel:profile:areaMm2 = 3000
+            double steel:profile:massPerMeterKg = 23.5
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS100x100x6"
+        {
+            string steel:profile:designation = "SHS100x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 2130
+            double steel:profile:massPerMeterKg = 16.7
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS100x100x5"
+        {
+            string steel:profile:designation = "SHS100x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 1810
+            double steel:profile:massPerMeterKg = 14.2
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS100x100x4"
+        {
+            string steel:profile:designation = "SHS100x100x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1480
+            double steel:profile:massPerMeterKg = 11.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS100x100x3"
+        {
+            string steel:profile:designation = "SHS100x100x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 1140
+            double steel:profile:massPerMeterKg = 8.96
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS89x89x6"
+        {
+            string steel:profile:designation = "SHS89x89x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 89
+            double steel:profile:bMm = 89
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 1870
+            double steel:profile:massPerMeterKg = 14.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS89x89x5"
+        {
+            string steel:profile:designation = "SHS89x89x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 89
+            double steel:profile:bMm = 89
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 1590
+            double steel:profile:massPerMeterKg = 12.5
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS89x89x3_5"
+        {
+            string steel:profile:designation = "SHS89x89x3.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 89
+            double steel:profile:bMm = 89
+            double steel:profile:tMm = 3.5
+            double steel:profile:rMm = 8.75
+            double steel:profile:areaMm2 = 1150
+            double steel:profile:massPerMeterKg = 9.06
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS75x75x6"
+        {
+            string steel:profile:designation = "SHS75x75x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 1530
+            double steel:profile:massPerMeterKg = 12
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS75x75x5"
+        {
+            string steel:profile:designation = "SHS75x75x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 12.5
+            double steel:profile:areaMm2 = 1310
+            double steel:profile:massPerMeterKg = 10.3
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS75x75x4"
+        {
+            string steel:profile:designation = "SHS75x75x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1080
+            double steel:profile:massPerMeterKg = 8.49
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS75x75x3_5"
+        {
+            string steel:profile:designation = "SHS75x75x3.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 3.5
+            double steel:profile:rMm = 8.75
+            double steel:profile:areaMm2 = 959
+            double steel:profile:massPerMeterKg = 7.53
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS75x75x3"
+        {
+            string steel:profile:designation = "SHS75x75x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 841
+            double steel:profile:massPerMeterKg = 6.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS75x75x2_5"
+        {
+            string steel:profile:designation = "SHS75x75x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 709
+            double steel:profile:massPerMeterKg = 5.56
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS65x65x3"
+        {
+            string steel:profile:designation = "SHS65x65x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 65
+            double steel:profile:bMm = 65
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 721
+            double steel:profile:massPerMeterKg = 5.66
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS65x65x2_5"
+        {
+            string steel:profile:designation = "SHS65x65x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 65
+            double steel:profile:bMm = 65
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 609
+            double steel:profile:massPerMeterKg = 4.78
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS65x65x2"
+        {
+            string steel:profile:designation = "SHS65x65x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 65
+            double steel:profile:bMm = 65
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 494
+            double steel:profile:massPerMeterKg = 3.88
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS50x50x4"
+        {
+            string steel:profile:designation = "SHS50x50x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 681
+            double steel:profile:massPerMeterKg = 5.35
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS50x50x3"
+        {
+            string steel:profile:designation = "SHS50x50x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 541
+            double steel:profile:massPerMeterKg = 4.25
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS50x50x2_5"
+        {
+            string steel:profile:designation = "SHS50x50x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 459
+            double steel:profile:massPerMeterKg = 3.6
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS50x50x2"
+        {
+            string steel:profile:designation = "SHS50x50x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 374
+            double steel:profile:massPerMeterKg = 2.93
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS50x50x1_6"
+        {
+            string steel:profile:designation = "SHS50x50x1.6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 1.6
+            double steel:profile:rMm = 3.2
+            double steel:profile:areaMm2 = 303
+            double steel:profile:massPerMeterKg = 2.38
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS40x40x4"
+        {
+            string steel:profile:designation = "SHS40x40x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 40
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 521
+            double steel:profile:massPerMeterKg = 4.09
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS40x40x2_5"
+        {
+            string steel:profile:designation = "SHS40x40x2.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 40
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 2.5
+            double steel:profile:rMm = 5
+            double steel:profile:areaMm2 = 359
+            double steel:profile:massPerMeterKg = 2.82
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS40x40x2"
+        {
+            string steel:profile:designation = "SHS40x40x2"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 40
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+            double steel:profile:areaMm2 = 294
+            double steel:profile:massPerMeterKg = 2.31
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+        def Scope "SHS40x40x1_6"
+        {
+            string steel:profile:designation = "SHS40x40x1.6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 40
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 1.6
+            double steel:profile:rMm = 3.2
+            double steel:profile:areaMm2 = 239
+            double steel:profile:massPerMeterKg = 1.88
+            string steel:profile:standard = "AS/NZS 1163:2016"
+        }
+
+    }
+}

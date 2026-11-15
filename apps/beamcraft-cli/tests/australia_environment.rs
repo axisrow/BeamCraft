@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// The shipped Australia environment holds the real AS/NZS 3679.1:2016 nominal dimensions,
-// re-entered by hand as our own data; provenance and licence are in `ATTRIBUTION.md` and in the
-// library's own metadata. The expected areas and masses in this file are the published values.
+// The shipped Australia environment holds the real AS/NZS 3679.1:2016 hot-rolled and AS/NZS
+// 1163:2016 hollow-section nominal dimensions, re-entered by hand as our own data; provenance and
+// licence are in `ATTRIBUTION.md` and in the libraries' own metadata. The expected areas and
+// masses in this file are the published values.
 
 //! The regional `australia` environment end to end through the real `beamcraft` binary: it is
 //! listed with its provenance, a project created with it resolves its designations through the
@@ -74,10 +75,11 @@ fn the_shipped_australia_environment_lists_its_sections_and_provenance() {
     let listed = f.ok(&["list-library", "--environment", ENVIRONMENT]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "australia");
-    assert_eq!(num(&listed, &["entry_count"]), 41.0);
+    assert_eq!(num(&listed, &["entry_count"]), 186.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
-    let library = &at(&listed, &["libraries"]).array().unwrap()[0];
-    let info = at(library, &["library"]);
+    let libraries = at(&listed, &["libraries"]).array().unwrap();
+    assert_eq!(libraries.len(), 2);
+    let info = at(&libraries[0], &["library"]);
     assert_eq!(text(info, "id"), "australia-asnzs-3679-profiles");
     assert_eq!(
         text(info, "title"),
@@ -86,8 +88,34 @@ fn the_shipped_australia_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(info, "version"), "1");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
+    let hollows = at(&libraries[1], &["library"]);
+    assert_eq!(text(hollows, "id"), "australia-asnzs-1163-hollows");
+    assert_eq!(
+        text(hollows, "title"),
+        "Australia hollow sections (AS/NZS 1163: CHS, RHS, SHS)"
+    );
+    assert_eq!(text(hollows, "licence"), "MPL-2.0");
+    assert!(
+        !text(hollows, "source").is_empty(),
+        "the source is declared"
+    );
+    // The pack is larger than the default reply page: the first page is the default 64 entries
+    // and names the offset the next page starts at.
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 41);
+    assert_eq!(entries.len(), 64);
+    assert_eq!(num(&listed, &["next_offset"]), 64.0);
+    assert_eq!(num(&listed, &["page_size"]), 64.0);
+    // One page at the reply cap holds the whole pack, hot-rolled and hollows together.
+    let listed = f.ok(&[
+        "list-library",
+        "--environment",
+        ENVIRONMENT,
+        "--limit",
+        "256",
+    ]);
+    let entries = at(&listed, &["entries"]).array().unwrap();
+    assert_eq!(entries.len(), 186);
+    assert_eq!(at(&listed, &["next_offset"]), &Json::Null);
     let ub610 = entries
         .iter()
         .find(|e| text(e, "designation") == "610UB125")
@@ -95,6 +123,14 @@ fn the_shipped_australia_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(ub610, "library_id"), "australia-asnzs-3679-profiles");
     assert_eq!(num(ub610, &["parameters_mm", "h"]), 611.6);
     assert_eq!(num(ub610, &["parameters_mm", "tw"]), 11.9);
+    let shs100 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "SHS100x100x3")
+        .unwrap();
+    assert_eq!(text(shs100, "library_id"), "australia-asnzs-1163-hollows");
+    assert_eq!(num(shs100, &["parameters_mm", "h"]), 100.0);
+    assert_eq!(num(shs100, &["parameters_mm", "t"]), 3.0);
+    assert_eq!(num(shs100, &["parameters_mm", "r"]), 6.0);
 }
 
 #[test]
@@ -160,9 +196,53 @@ fn a_project_created_with_the_australia_environment_resolves_its_designations() 
     assert_eq!(num(&q, &["section_area_mm2"]), 20100.0);
     close(num(&q, &["mass", "kg"]), 946.71, 1e-9);
 
+    // A hollow-series designation: SHS100x100x3.0, catalogue area 1140 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "column",
+        "--start",
+        "0,4000,0",
+        "--end",
+        "0,4000,6000",
+        "--profile",
+        "SHS100x100x3",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 1140.0);
+    // 1140 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 53.694, 1e-9);
+
+    // A circular hollow designation: CHS76.1x3.2, catalogue area 733 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "0,0,6000",
+        "--end",
+        "6000,0,6000",
+        "--profile",
+        "CHS76.1x3.2",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 733.0);
+    close(num(&q, &["mass", "kg"]), 34.5243, 1e-9);
+
     // A designation the shipped series does not publish is refused, not silently substituted:
-    // 530UB72.4 and the 350UC sizes are no longer rolled, and the older designation generation
-    // (310UC97.7, 150UB17.1) has been renamed in the 2016 assortment.
+    // 530UB72.4 and the 350UC sizes are no longer rolled, the older designation generation
+    // (310UC97.7, 150UB17.1) has been renamed in the 2016 assortment, and the hollow sizes the
+    // mill lists stock but the standard's Appendix D does not publish stay out of the pack.
     assert_eq!(
         f.code(&[
             "create-member",
@@ -181,12 +261,30 @@ fn a_project_created_with_the_australia_environment_resolves_its_designations() 
         ]),
         "NOT_FOUND"
     );
+    assert_eq!(
+        f.code(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            "SHS300x300x8",
+            "--material",
+            "Steel"
+        ]),
+        "NOT_FOUND"
+    );
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 2);
+    assert_eq!(members.len(), 4);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
