@@ -19,7 +19,7 @@ use beamcraft_engine::Representation;
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::stats::Stats;
-use beamcraft_ui::tools::{MemberKind, PlateForm, ToolKind, Tools};
+use beamcraft_ui::tools::{BY_NAME, MemberKind, PlateForm, ToolKind, Tools};
 use beamcraft_ui::{Error, command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -294,9 +294,23 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
     }
 
     // The choices come from the store's definitions, as the panel lists them: the generated
-    // display name (A07.2) leads, the dimensions follow.
+    // display name (A07.2) leads, the dimensions follow. The store defines no environment, so
+    // the neutral fallback of the layered lookup offers the shipped generic sections beside it.
     let definitions = command::definitions(&cli, &ui, &Stats::default()).unwrap();
-    assert_eq!(definitions.profiles.len(), 1);
+    let defined = definitions
+        .profiles
+        .iter()
+        .filter(|c| !c.digest.starts_with(BY_NAME))
+        .count();
+    assert_eq!(defined, 1);
+    assert!(
+        definitions
+            .profiles
+            .iter()
+            .any(|c| c.digest == format!("{BY_NAME}I-200x100")),
+        "the neutral fallback reaches the panel: {:?}",
+        definitions.profiles
+    );
     assert_eq!(definitions.materials.len(), 1);
     assert_eq!(
         definitions.profiles[0].label.split(" (").next(),
@@ -519,7 +533,15 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     assert_eq!(scene.elements, 1);
     assert!(!snapshot.pin().revision().to_string().is_empty());
     let definitions = full.definitions.unwrap();
-    assert_eq!(definitions.profiles.len(), 1);
+    let defined = definitions
+        .profiles
+        .iter()
+        .filter(|c| !c.digest.starts_with(BY_NAME))
+        .count();
+    assert_eq!(
+        defined, 1,
+        "the store defines one profile; the rest is the neutral offer"
+    );
     assert!(definitions.materials.is_empty());
     // One process and one inspection read the snapshot and the definitions (issue 26).
     assert_eq!(full.timing.processes, 1);
@@ -533,7 +555,15 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
         .join()
         .unwrap();
     assert!(matches!(again.scene, Ok(source::Refreshed::Unchanged)));
-    assert_eq!(again.definitions.unwrap().profiles.len(), 1);
+    let again = again.definitions.unwrap();
+    assert_eq!(
+        again
+            .profiles
+            .iter()
+            .filter(|c| !c.digest.starts_with(BY_NAME))
+            .count(),
+        1
+    );
 }
 
 #[test]

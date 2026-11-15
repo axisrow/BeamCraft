@@ -20,7 +20,7 @@ use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_commands::edit::{UpdateRequest, UpdatedPart, update_element};
 use beamcraft_commands::history::{Direction, Step, step, timeline};
 use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
-use beamcraft_commands::library::{Lookup, load_environment, open_lookup};
+use beamcraft_commands::library::{Lookup, open_lookup, project_library_chain};
 use beamcraft_commands::member::{
     CreateCurvedBeamRequest, CreateMemberRequest, CreatePolybeamRequest, create_curved_beam,
     create_member, create_polybeam,
@@ -29,7 +29,6 @@ use beamcraft_commands::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, QuantityReport, accepted_binding, inspect,
 };
 use beamcraft_commands::plate_draft::{CreatedDraft, create_plate_draft};
-use beamcraft_commands::project::project_environment_file;
 use beamcraft_commands::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
@@ -1010,6 +1009,7 @@ fn define_command(
             let (lookup, _) = beamcraft_commands::library::open_material_lookup(
                 given("--library"),
                 given("--environment"),
+                None,
             )?;
             // The entry's own display name is part of the catalogue record and is kept (the
             // material's default name would be its grade and density, not the same); only an
@@ -1067,17 +1067,18 @@ fn define_command(
         }
         let designation = given("--designation")
             .ok_or_else(|| invalid("a library or environment needs --designation"))?;
-        let (lookup, _) = open_lookup(
+        open_lookup(
             given("--library"),
             given("--environment"),
             given("--user-library"),
-        )?;
-        lookup
-            .find(designation)?
-            .1
-            .record
-            .clone()
-            .named(given("--name"))
+            None,
+        )?
+        .lookup
+        .find(designation)?
+        .1
+        .record
+        .clone()
+        .named(given("--name"))
     } else {
         profile_record(options)?.named(given("--name"))
     };
@@ -5131,60 +5132,41 @@ pub(crate) fn domain_diagnostics(error: &Refusal) -> Vec<Json> {
         .collect()
 }
 
-/// The lookup over the environment copied into the project folder, when there is one. The
-/// project carries its environment (`create-project --environment`), so no option names it.
+/// The layered lookup of the project: the project's own copy of its environment (the project
+/// layer), then the user-owned firm libraries of the application data, then the built-in
+/// neutral environment. The model layer answers before any of them: a designation the head
+/// already defines never reaches this chain. `None` when no layer of the chain declares a
+/// profile library.
 fn project_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
     let Some(store) = options.get("--store") else {
         return Ok(None);
     };
-    let Some(file) = project_environment_file(std::path::Path::new(store)) else {
+    let chain = project_library_chain(std::path::Path::new(store), None)?;
+    if chain.lookup.sources().is_empty() {
         return Ok(None);
-    };
-    let file = file
-        .to_str()
-        .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
-    open_lookup(None, Some(file), None).map(|(lookup, _)| Some(lookup))
+    }
+    Ok(Some(chain.lookup))
 }
 
-/// The fastener resolver over the project's own environment copy, when the environment
-/// declares fastener libraries. A project whose environment has none keeps the explicit
-/// `--fastener-library` file requirement, exactly as before fastener libraries rode
-/// environments.
+/// The fastener resolver over the same layered chain. A project whose environment copy
+/// declares no fastener libraries keeps the explicit `--fastener-library` file requirement
+/// unless the firm layer of the application data provides one.
 pub(crate) fn project_fastener_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
     let Some(store) = options.get("--store") else {
         return Ok(None);
     };
-    let Some(file) = project_environment_file(std::path::Path::new(store)) else {
-        return Ok(None);
-    };
-    let file = file
-        .to_str()
-        .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
-    let environment = load_environment(file)?;
-    if environment.fastener_sources.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(environment.fastener_lookup()))
+    Ok(project_library_chain(std::path::Path::new(store), None)?.fastener_lookup)
 }
 
-/// The material resolver over the project's own environment copy, when the environment declares
-/// material libraries (#636). A project whose environment has none keeps the seeded-constants
-/// behaviour: a grade the model does not define stays `NOT_FOUND`, never a substitute.
+/// The material resolver over the same layered chain. A project whose environment copy
+/// declares no material libraries keeps the seeded-constants behaviour — a grade the model does
+/// not define stays `NOT_FOUND`, never a substitute — unless the firm layer of the application
+/// data provides one.
 fn project_material_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
     let Some(store) = options.get("--store") else {
         return Ok(None);
     };
-    let Some(file) = project_environment_file(std::path::Path::new(store)) else {
-        return Ok(None);
-    };
-    let file = file
-        .to_str()
-        .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
-    let environment = load_environment(file)?;
-    if environment.material_sources.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(environment.material_lookup()))
+    Ok(project_library_chain(std::path::Path::new(store), None)?.material_lookup)
 }
 
 /// Defines the profile `name` of the project's environment in the model and returns its digest;

@@ -188,8 +188,9 @@ definitions --store ROOT [--name TEXT] [--offset N] [--limit N]
 read.
 
 ```text
-list-library (--library FILE | --environment FILE | --fastener-library FILE) [--user-library FILE]
-    [--family TEXT] [--filter TEXT] [--offset N] [--limit N] [--shadow-offset N]
+list-library (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
+    [--user-library FILE] [--family TEXT] [--filter TEXT] [--offset N] [--limit N]
+    [--shadow-offset N]
 ```
 
 ### show-library
@@ -197,7 +198,8 @@ list-library (--library FILE | --environment FILE | --fastener-library FILE) [--
 read.
 
 ```text
-show-library --designation TEXT (--library FILE | --environment FILE | --fastener-library FILE)
+show-library --designation TEXT
+    (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
     [--user-library FILE]
 ```
 
