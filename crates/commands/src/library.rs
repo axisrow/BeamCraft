@@ -1010,8 +1010,10 @@ pub fn open_material_lookup(
         (None, Some(path)) => {
             let loaded = load_environment(path)?;
             let info = loaded.info.clone();
-            let mut sources = loaded.material_sources;
-            sources.extend(load_firm(config_dir).material_sources);
+            // The firm layer sits above the environment, as in every other lookup of this
+            // module: a named environment never beats the user's own catalog for a grade.
+            let mut sources = load_firm(config_dir).material_sources;
+            sources.extend(loaded.material_sources);
             Ok((Lookup::new(sources), Some(info)))
         }
     }
@@ -4361,6 +4363,68 @@ mod tests {
         );
         assert_eq!(opened.firm_refused.len(), 1);
         assert_eq!(opened.firm_refused[0].code, ErrorCode::InvalidArgument);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_named_material_environment_takes_the_firm_layer_above_it() {
+        let dir = scratch("material-order");
+        let config = dir.join("config");
+        let material_library = |id: &str, grades: &[(&str, f64)]| {
+            let entries: String = grades
+                .iter()
+                .enumerate()
+                .map(|(n, (grade, density))| {
+                    format!(
+                        "        def Scope \"E{n}\"\n        {{\nstring steel:material:grade = \"{grade}\"\ndouble steel:material:densityKgM3 = {density}\n        }}\n"
+                    )
+                })
+                .collect();
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"{id}\"\n        string \"bim:library:source\" = \"Contributor-original synthetic values for tests\"\n        string \"bim:library:licence\" = \"MPL-2.0\"\n    }}\n)\ndef Scope \"Library\"\n{{\n    def Scope \"Materials\"\n    {{\n{entries}    }}\n}}\n"
+            )
+        };
+        // The named environment declares S355 at 7800 and ENV-GRADE; the firm layer declares
+        // S355 at 7850. The firm layer answers S355, as it does for sections and bolts.
+        put(
+            &dir,
+            "libs/p.usda",
+            &library(&[entry("A", "P-1", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("env-lib"),
+            ),
+        );
+        put(
+            &dir,
+            "libs/grades.usda",
+            &material_library("env-grades", &[("S355", 7800.0), ("ENV-GRADE", 7700.0)]),
+        );
+        put(
+            &config,
+            "libraries/my-grades.usda",
+            &material_library("firm-grades", &[("S355", 7850.0)]),
+        );
+        let env = put(
+            &dir,
+            "material-env.usda",
+            "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"libs/p.usda\"]\n        string[] \"bim:environment:material-libraries\" = [\"libs/grades.usda\"]\n    }\n)\n",
+        );
+        let opened = open_material_lookup(None, Some(&env), Some(&config)).unwrap();
+        let (source, entry) = opened.0.find("S355").unwrap();
+        assert_eq!(source.layer, LAYER_FIRM);
+        let density = match &entry.record {
+            DefinitionRecord::Material { density_kg_m3, .. } => density_kg_m3.unwrap(),
+            other => panic!("not a material entry: {other:?}"),
+        };
+        assert_eq!(density, 7850.0);
+        assert_eq!(
+            opened.0.find("ENV-GRADE").unwrap().0.layer,
+            LAYER_ENVIRONMENT
+        );
+        let shadows = opened.0.shadowed_for("S355");
+        assert_eq!(shadows.len(), 1);
+        assert_eq!(shadows[0].used_layer, LAYER_FIRM);
+        assert_eq!(shadows[0].shadowed_layer, LAYER_ENVIRONMENT);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
