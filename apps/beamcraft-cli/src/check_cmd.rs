@@ -29,6 +29,43 @@ fn invalid(message: &'static str) -> Refusal {
     }
 }
 
+/// The recorded inputs of the verified head: the declared joint intents
+/// (a model may declare several; their scopes merge and their connections
+/// concatenate), the recorded gap requirements, and the weld facts of the
+/// A06 and A15 welds. A store with no records yields the default inputs and
+/// the connectivity rules stay not applicable for every element.
+fn inputs_of(store: &RevisionStore) -> Run<steel::engine::check::RecordedInputs> {
+    let mut inputs = steel::engine::check::RecordedInputs::default();
+    let mut scope = Vec::new();
+    for record in beamcraft_commands::record::records(store)? {
+        match record.payload {
+            beamcraft_model::record::RecordPayload::JointIntent(mut intent) => {
+                scope.append(&mut intent.scope);
+                match &mut inputs.intent {
+                    Some(joint) => joint.connections.append(&mut intent.connections),
+                    None => inputs.intent = Some(intent),
+                }
+            }
+            beamcraft_model::record::RecordPayload::GapRequirement(gap) => {
+                inputs.gaps.push(gap);
+            }
+        }
+    }
+    if let Some(joint) = &mut inputs.intent {
+        scope.sort();
+        scope.dedup();
+        joint.scope = scope;
+    }
+    for weld in beamcraft_commands::weld::welds(store)? {
+        inputs.welds.push(steel::engine::check::WeldFact {
+            main: weld.main,
+            secondary: weld.secondary,
+            path_mm: weld.solid.map(|solid| solid.geometry.path_mm.clone()),
+        });
+    }
+    Ok(inputs)
+}
+
 /// Runs `check-model` and returns the JSON result and the process exit code:
 /// 0 green or yellow (not fully checked), 2 red, and the shared rejection
 /// envelope for an operational failure.
@@ -62,17 +99,8 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
         .transpose()?;
     let (offset, limit) = crate::plate_cmd::page_of(&options)?;
     let inspection = inspect(&store)?;
-    // No store carries recorded inputs yet (joint intent, gap requirements,
-    // weld facts are read from the store by the recorded-inputs slice); the
-    // default inputs keep the connectivity rules not applicable, which the
-    // coverage paragraph of the reply states.
-    let report = check::check_model(
-        &inspection,
-        &steel::engine::check::RecordedInputs::default(),
-        element,
-        offset,
-        limit,
-    )?;
+    let inputs = inputs_of(&store)?;
+    let report = check::check_model(&inspection, &inputs, element, offset, limit)?;
     let buckets = report
         .coverage
         .iter()

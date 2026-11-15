@@ -44,6 +44,7 @@ mod pick_cmd;
 mod plate_cmd;
 mod project_cmd;
 mod rebase_cmd;
+mod record_cmd;
 mod reference_cmd;
 mod resolve_cmd;
 mod schedule_cmd;
@@ -168,6 +169,7 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
         Some(Route::View) => view::execute(args),
         Some(Route::Views) => views_cmd::execute(args),
         Some(Route::Annotation) => annotation_cmd::execute(args),
+        Some(Route::Record) => record_cmd::execute(args),
         Some(Route::History) => history_cmd::execute(args),
         Some(Route::Reference) => reference_cmd::execute(args),
         Some(Route::Ifc) => ifc_cmd::execute(args),

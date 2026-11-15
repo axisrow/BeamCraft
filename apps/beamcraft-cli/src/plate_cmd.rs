@@ -2639,6 +2639,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     DeletedKind::Grid => "grid",
                     DeletedKind::Construction => "construction",
                     DeletedKind::Annotation => "annotation",
+                    DeletedKind::Record => "record",
                 })
             }),
         ),

@@ -234,71 +234,13 @@ pub fn range_threshold(
     }
 }
 
-/// The declared kind of one joint-intent connection (contract section 5).
-/// Bolted kinds are refused at admission in v0.1 and arrive with the
-/// fastener slices, so no variant exists for them here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionKind {
-    /// The parts must be joined by a weld element.
-    Weld,
-    /// The parts must be in physical contact within the product tolerance.
-    Contact,
-}
-
-impl ConnectionKind {
-    /// The stable token of the kind.
-    pub const fn token(self) -> &'static str {
-        match self {
-            Self::Weld => "weld",
-            Self::Contact => "contact",
-        }
-    }
-}
-
-/// One declared connection of the joint intent (contract section 5): two
-/// distinct part elements and the declared kind.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeclaredConnection {
-    /// One side of the declared connection.
-    pub a: ElementId,
-    /// The other side, distinct from `a`.
-    pub b: ElementId,
-    /// What the owner declared must join the parts.
-    pub kind: ConnectionKind,
-}
-
-/// The joint intent as plain rule input (contract section 5): the elements
-/// that form the joint and the declared connections. v0.1 has no recorded
-/// intent yet — the recorded-inputs persistence of a later slice carries it
-/// into the store; until then a caller without intent passes `None` and the
-/// connectivity rules are not applicable for any element (contract section
-/// 5: an established absence, never an unknown).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct JointIntent {
-    /// The element ids that form the joint.
-    pub scope: Vec<ElementId>,
-    /// The declared connections between scoped elements.
-    pub connections: Vec<DeclaredConnection>,
-}
-
-/// The recorded gap requirement for one declared weld connection (contract
-/// section 4.1): the permitted local gap range with the tolerance on the
-/// comparison, and the owner as the only v0.1 basis — no normative
-/// permitted-gap rule is supported (contract section 3.3). `permitted_min_mm`
-/// must not exceed `permitted_max_mm`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GapRequirement {
-    /// One side of the declared weld connection the requirement judges.
-    pub a: ElementId,
-    /// The other side, distinct from `a`.
-    pub b: ElementId,
-    /// The permitted minimum local gap in millimetres.
-    pub permitted_min_mm: f64,
-    /// The permitted maximum local gap in millimetres.
-    pub permitted_max_mm: f64,
-    /// The recorded tolerance on the comparison (contract section 7.3).
-    pub tolerance_mm: f64,
-}
+/// The recorded-input types of the contract (sections 4.1 and 5): the joint
+/// intent, its declared connections and the gap requirements. They are model
+/// data (`beamcraft_model::record`, kind `record`), stored through explicit
+/// commands and read back as plain rule input; the engine never infers them.
+pub use beamcraft_model::record::{
+    ConnectionKind, DeclaredConnection, GapRequirement, JointIntent,
+};
 
 /// The weld facts the connectivity rules consume: which two parts a weld
 /// element connects, and the authored path when the weld carries one (the
@@ -502,11 +444,15 @@ pub fn connectivity_findings(
     let Some(intent) = &inputs.intent else {
         return Vec::new();
     };
+    let declared = |id: &ElementId| intent.scope.iter().any(|member| member == id);
     let mut findings = Vec::new();
     for connection in &intent.connections {
-        if scope.binary_search(&connection.a).is_err()
-            || scope.binary_search(&connection.b).is_err()
-        {
+        // A connection is judged when its parts are inside the checked scope
+        // or declared members of the joint; a declared member that is not an
+        // evaluated part below resolves to `target_unresolved`, while an id
+        // the checked scope does not carry at all is simply outside it.
+        let judged = |id: &ElementId| scope.binary_search(id).is_ok() || declared(id);
+        if !judged(&connection.a) || !judged(&connection.b) {
             continue;
         }
         let body_of = |id: &ElementId| bodies.iter().find(|b| &b.id == id);

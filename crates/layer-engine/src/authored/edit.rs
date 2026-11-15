@@ -572,6 +572,7 @@ fn create(
         Shape::Grid(_) => "grid",
         Shape::Construction(_) => "construction",
         Shape::Annotation(_) => "annotation",
+        Shape::Record(_) => "record",
     };
     for (name, ty, v) in [
         ("bim:id", "string", sdf::Value::String(e.id.clone())),
@@ -603,6 +604,7 @@ fn create(
         Shape::Grid(g) => grid::author(data, &p, g)?,
         Shape::Construction(o) => construction::author(data, &p, o)?,
         Shape::Annotation(a) => annotation::author(data, &p, a)?,
+        Shape::Record(r) => record::author(data, &p, r)?,
         Shape::Level { elevation_mm } => attr(
             data,
             &p,
@@ -1896,6 +1898,11 @@ fn capture(
                     }
                     Shape::Annotation(_) => {
                         for &(name, ty) in annotation::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
+                    Shape::Record(_) => {
+                        for &(name, ty) in record::FIELDS {
                             add(name, ty, 0);
                         }
                     }

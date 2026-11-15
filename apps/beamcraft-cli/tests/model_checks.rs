@@ -66,6 +66,66 @@ impl Fixture {
     fn check(&self, extra: &[&str]) -> (i32, Json) {
         self.run("check-model", extra)
     }
+    /// Declares one recorded input from its payload options; returns the element id.
+    fn record(&self, name: &str, extra: &[&str]) -> String {
+        static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = format!("019a7bf0-0000-7000-8000-{n:012x}");
+        let mut args: Vec<&str> = vec!["--name", name, "--new-id", &id];
+        args.extend(extra);
+        let created = self.ok("record-create", &args);
+        text(&created, "element_id")
+    }
+    /// Declares a weld or contact connection into a joint intent record.
+    fn intent(&self, scope: &[&str], connections: &[&str]) -> String {
+        let scope_text = scope.join(",");
+        let mut extra: Vec<&str> = vec!["--kind", "joint_intent", "--scope", &scope_text];
+        for connection in connections {
+            extra.extend(["--connection", connection]);
+        }
+        self.record("joint intent", &extra)
+    }
+    /// Records the permitted local gap of one declared weld connection.
+    fn gap(&self, a: &str, b: &str, min: &str, max: &str, tolerance: &str) -> String {
+        self.record(
+            "gap requirement",
+            &[
+                "--kind",
+                "gap_requirement",
+                "--gap-a",
+                a,
+                "--gap-b",
+                b,
+                "--gap-min",
+                min,
+                "--gap-max",
+                max,
+                "--gap-tolerance",
+                tolerance,
+            ],
+        )
+    }
+    /// Creates one A06 weld without a path between the two parts.
+    fn weld(&self, main: &str, secondary: &str) -> String {
+        let created = self.ok(
+            "create-weld",
+            &[
+                "--name",
+                "weld",
+                "--main",
+                main,
+                "--secondary",
+                secondary,
+                "--size",
+                "6",
+                "--location",
+                "workshop",
+                "--side",
+                "arrow",
+            ],
+        );
+        text(&created, "element_id")
+    }
     /// Commits a head-based revision with changed layer text and no content
     /// verification, the way a layer edited outside BeamCraft would arrive.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
@@ -412,4 +472,155 @@ fn pagination_pages_findings_only_and_counts_cover_the_scope() {
     let (code, body) = f.check(&["--limit", "0"]);
     assert_eq!(code, 2);
     assert_eq!(text(&body, "outcome"), "rejected");
+}
+
+fn reason_of(reply: &Json, rule: &str) -> String {
+    list(finding_of(reply, rule), "missing_inputs")
+        .first()
+        .unwrap()
+        .string()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn a_declared_contact_over_touching_parts_is_green() {
+    // The connected variant of the sample column base: the owner declares the
+    // parts in contact, and they touch within the product tolerance.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,10");
+    f.intent(&[&base, &column], &[&format!("{base}:contact:{column}")]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(fail_count(&reply, "PART_UNCONNECTED"), 0);
+    // The coverage paragraph states the declared intent, not an absence.
+    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    assert!(
+        limitations.contains("declared joint intent"),
+        "{limitations}"
+    );
+    // The record itself is listed and reports its payload.
+    let listed = f.run("record-list", &[]).1;
+    assert_eq!(text(&listed, "outcome"), "records");
+    let rows = list(&listed, "records");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(text(rows.first().unwrap(), "kind"), "joint_intent");
+    assert_eq!(
+        text(
+            at(
+                list(rows.first().unwrap(), "connections").first().unwrap(),
+                &[]
+            ),
+            "kind"
+        ),
+        "contact"
+    );
+}
+
+#[test]
+fn a_declared_contact_over_separated_parts_is_red_part_unconnected() {
+    // The unconnected variant: the declared contact is absent, 2 mm of air.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,12");
+    f.intent(&[&base, &column], &[&format!("{base}:contact:{column}")]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    let finding = finding_of(&reply, "PART_UNCONNECTED");
+    assert_eq!(text(finding, "status"), "fail");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 2.0).abs() <= 1e-6, "{measured}");
+    // Both declared parts are named.
+    assert_eq!(list(finding, "elements").len(), 2);
+}
+
+#[test]
+fn a_weld_present_without_contact_stays_unknown_by_the_recorded_rule() {
+    // The weld-present-without-contact variant: a declared weld connection
+    // whose weld exists but whose parts are apart. With a recorded gap
+    // requirement the local gap is judged — the pathless A06 weld is never
+    // locally attached, so the gap stays unknown (attachment_unvalidated).
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,12");
+    f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
+    f.weld(&base, &column);
+    f.gap(&base, &column, "0", "0.2", "0.05");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    let finding = finding_of(&reply, "WELD_WITHOUT_CONTACT");
+    assert_eq!(text(finding, "status"), "unknown");
+    assert_eq!(
+        reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+        "attachment_unvalidated"
+    );
+    // The weld exists, so the connection is satisfied: no PART_UNCONNECTED.
+    let unconnected = list(&reply, "findings")
+        .iter()
+        .filter(|finding| text(finding, "rule") == "PART_UNCONNECTED")
+        .count();
+    assert_eq!(unconnected, 0);
+    // Without a recorded gap requirement the same joint stays unknown for a
+    // different reason: no supported rule decides the local gap.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,12");
+    f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
+    f.weld(&base, &column);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(
+        reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+        "no_supported_rule"
+    );
+}
+
+#[test]
+fn contact_without_connection_is_red_where_a_weld_is_declared() {
+    // The contact-without-connection variant: the parts touch and a weld is
+    // declared, but none exists. Contact alone never proves a weld; the
+    // declared one is missing.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,10");
+    f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    let unconnected = finding_of(&reply, "PART_UNCONNECTED");
+    assert_eq!(text(unconnected, "status"), "fail");
+    let contacted = finding_of(&reply, "CONTACT_WITHOUT_CONNECTION");
+    assert_eq!(text(contacted, "status"), "fail");
+}
+
+#[test]
+fn an_unresolved_declared_target_stays_unknown_and_named() {
+    // A declared connection to an element that never existed (or was
+    // deleted after the declaration) is unresolved: unknown with the
+    // target named, the record kept, never auto-repaired.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,10");
+    let ghost = "019a7bf0-0000-7000-8000-00000000dead";
+    f.intent(&[&base, &column, ghost], &[&format!("{base}:weld:{ghost}")]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    let finding = finding_of(&reply, "PART_UNCONNECTED");
+    assert_eq!(text(finding, "status"), "unknown");
+    assert_eq!(reason_of(&reply, "PART_UNCONNECTED"), "target_unresolved");
+    assert!(
+        text(finding, "message").contains("evaluated parts"),
+        "{reply:?}"
+    );
 }

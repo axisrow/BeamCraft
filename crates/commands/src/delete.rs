@@ -75,6 +75,8 @@ pub enum DeletedKind {
     Construction,
     /// A D06 annotation.
     Annotation,
+    /// A Q03 recorded input: a joint intent or a gap requirement.
+    Record,
 }
 
 /// Result of `delete_element`.
@@ -160,6 +162,8 @@ pub fn delete_element(
         Some(DeletedKind::Construction)
     } else if crate::annotation::is_annotation(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Annotation)
+    } else if crate::record::is_record(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Record)
     } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Level)
     } else {
