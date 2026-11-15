@@ -173,6 +173,34 @@ fn an_exact_stack_is_green_face_contact_and_exits_zero() {
 }
 
 #[test]
+fn without_joint_intent_the_connectivity_rules_are_not_applicable() {
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    f.plate(&steel, "10", "0,0,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    // The connectivity rules are in the counts and stay silent...
+    for rule in [
+        "PART_UNCONNECTED",
+        "WELD_WITHOUT_CONTACT",
+        "CONTACT_WITHOUT_CONNECTION",
+    ] {
+        assert_eq!(fail_count(&reply, rule), 0, "{rule}");
+        assert_eq!(unknown_count(&reply, rule), 0, "{rule}");
+    }
+    // ...and the coverage paragraph names the established absence: no
+    // recorded joint intent, so the rules are not applicable (contract 5).
+    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    assert!(
+        limitations.contains("no joint intent is recorded"),
+        "{limitations}"
+    );
+    assert!(limitations.contains("not applicable"), "{limitations}");
+}
+
+#[test]
 fn separated_plates_are_green_and_full_containment_is_red() {
     let f = Fixture::new();
     let steel = f.material();

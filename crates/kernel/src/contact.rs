@@ -366,6 +366,41 @@ pub fn penetration_depth(
     Ok(deepest)
 }
 
+/// The measured distance from a point to a mesh's triangles, in the meshes'
+/// coordinate units (millimetres in the product). A measurement over the
+/// given triangles, not a predicate: a faceted arc reads its chord deviation,
+/// and the caller's tolerance band absorbs that bound.
+pub fn point_gap(point: [f64; 3], mesh: &TriMesh) -> Result<f64, ContactError> {
+    Ok(point_shell_distance(point, &Shell::of(mesh)?))
+}
+
+/// The measured minimum distance between the two meshes' surfaces, in their
+/// coordinate units (millimetres in the product). The scan walks both meshes'
+/// containment samples (vertices and face probes) against the other shell,
+/// so the value is deterministic under re-triangulations that keep the
+/// vertex set; like the depth measurement it is sample-based — a surface
+/// region no sample reaches can only make the true distance smaller, never
+/// larger, and the caller's uncertainty band absorbs the difference.
+pub fn surface_gap(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<f64, ContactError> {
+    let shell_a = Shell::of(a)?;
+    let shell_b = Shell::of(b)?;
+    let mut best = f64::INFINITY;
+    let mut measured = 0u64;
+    for (samples, shell) in [(samples_of(a)?, &shell_b), (samples_of(b)?, &shell_a)] {
+        for sample in &samples {
+            if measured >= limits.max_candidate_pairs {
+                return Ok(best);
+            }
+            measured += 1;
+            let depth = point_shell_distance(*sample, shell);
+            if depth < best {
+                best = depth;
+            }
+        }
+    }
+    Ok(best)
+}
+
 /// The containment samples of a mesh: its vertices and, per triangle, the
 /// midpoint between one corner and the midpoint of the opposite edge — a
 /// point strictly inside the face by convexity with exactly representable
@@ -692,5 +727,37 @@ mod tests {
         );
         // On the surface is not strictly inside.
         assert_eq!(contains(&shell, [0.0, 5.0, 5.0], limits()).unwrap(), None);
+    }
+
+    #[test]
+    fn point_gap_measures_face_edge_and_corner_distances() {
+        let shell = cube([0.0; 3], 10.0);
+        // Above the centre of the top face.
+        let d = point_gap([5.0, 5.0, 12.0], &shell).unwrap();
+        assert!((d - 2.0).abs() <= 1e-9, "{d}");
+        // Off an edge: the nearest point is on the edge line.
+        let d = point_gap([-3.0, 5.0, 10.0], &shell).unwrap();
+        assert!((d - 3.0).abs() <= 1e-9, "{d}");
+        // Off the corner: the nearest point is the corner itself.
+        let d = point_gap([-3.0, -4.0, 10.0], &shell).unwrap();
+        assert!((d - 5.0).abs() <= 1e-9, "{d}");
+        // A point on the surface measures zero.
+        assert_eq!(point_gap([5.0, 5.0, 10.0], &shell).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn surface_gap_measures_stacked_separated_and_corner_distances() {
+        let a = cube([0.0; 3], 10.0);
+        // Stacked with shared plane: the surfaces meet, gap zero.
+        let stacked = cube([0.0, 0.0, 10.0], 10.0);
+        assert_eq!(surface_gap(&a, &stacked, limits()).unwrap(), 0.0);
+        // A uniform 5 mm air slab: every sampled distance is exact.
+        let lifted = cube([0.0, 0.0, 15.0], 10.0);
+        let d = surface_gap(&a, &lifted, limits()).unwrap();
+        assert!((d - 5.0).abs() <= 1e-9, "{d}");
+        // The nearest corner pair decides a diagonal offset.
+        let shifted = cube([13.0, 0.0, 10.0], 10.0);
+        let d = surface_gap(&a, &shifted, limits()).unwrap();
+        assert!((d - 3.0).abs() <= 1e-9, "{d}");
     }
 }
