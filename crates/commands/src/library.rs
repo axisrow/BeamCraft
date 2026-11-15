@@ -364,7 +364,7 @@ fn open_layer(bytes: Vec<u8>, not_self_contained: &'static str) -> Result<OpenLa
 
 /// [`load`] for bytes that were already read (at most 8 MiB, checked again here).
 pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
-    load_bytes_as(bytes, Some(ENTRY_PARENT), decode_record).map(|(library, _)| library)
+    Ok(load_bytes_as(bytes, Some(ENTRY_PARENT), decode_record)?.0)
 }
 
 /// [`load`] for the fastener library at `path` (A14.1): the same layer format and
@@ -376,33 +376,33 @@ pub fn load_fastener(path: &str) -> Result<Library, Refusal> {
 
 /// [`load_bytes`] for the bytes of a fastener library.
 pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
-    load_bytes_as(bytes, Some(FASTENER_ENTRY_PARENT), decode_fastener_record)
-        .map(|(library, _)| library)
+    Ok(load_bytes_as(bytes, Some(FASTENER_ENTRY_PARENT), decode_fastener_record)?.0)
 }
 
 /// [`load_bytes`] for a firm-layer file, whose entries may sit under either entry parent: the
-/// profile and fastener admission runs in one pass over the same opened layer, and the second
-/// answer says whether any admitted entry is a fastener (a file without entries is a profile
-/// library). A mixed file is not refused here; its entries decode by their own parent.
-pub fn load_firm_bytes(bytes: Vec<u8>) -> Result<(Library, bool), Refusal> {
+/// profile and fastener admission runs in one pass over the same opened layer and every entry
+/// joins the half of its own parent, so a mixed file feeds both namespaces of the firm layer.
+/// Either half may be empty; both carry the file's own declarations.
+pub fn load_firm_bytes(bytes: Vec<u8>) -> Result<(Library, Library), Refusal> {
     load_bytes_as(bytes, None, decode_record)
 }
 
 /// [`load_firm_bytes`] for the library file at `path`.
-pub fn load_firm_file(path: &str) -> Result<(Library, bool), Refusal> {
+pub fn load_firm_file(path: &str) -> Result<(Library, Library), Refusal> {
     check_source_path(path).map_err(command)?;
     load_firm_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
 }
 
 /// [`load_bytes`] for one entry parent path (or `None` for a firm file, where both entry
-/// parents are admitted and each prim decodes by its own) and the profile entry decoder; the
-/// layer budgets, identity, admission and refused-entry reporting are shared with the profile
-/// loading. The boolean answers whether any admitted entry is a fastener.
+/// parents are admitted and each entry joins the half of its own parent) and the profile entry
+/// decoder; the layer budgets, identity, admission and refused-entry reporting are shared with
+/// the profile loading. The second library is the fastener half of a firm file; when a single
+/// parent was named it is an empty library, because the one named parent is the first answer.
 fn load_bytes_as(
     bytes: Vec<u8>,
     entry_parent: Option<&str>,
     decode: fn(&Prim, &str) -> Result<DefinitionRecord, Refusal>,
-) -> Result<(Library, bool), Refusal> {
+) -> Result<(Library, Library), Refusal> {
     if bytes.len() > MAX_LIBRARY_BYTES {
         return Err(io_error(ErrorCode::LimitExceeded));
     }
@@ -421,9 +421,13 @@ fn load_bytes_as(
     let prims = read_all(&reader, &opened, &control)?;
     let mut entries = Vec::new();
     let mut rejected = Vec::new();
+    // Designation uniqueness is per namespace: a mixed firm file may name a profile and a
+    // fastener the same, but never two of one kind.
     let mut seen = BTreeSet::new();
+    let mut seen_fastener = BTreeSet::new();
+    let mut fastener_entries = Vec::new();
+    let mut fastener_rejected = Vec::new();
     let mut count = 0usize;
-    let mut any_fastener = false;
     for prim in prims.iter().filter(|p| {
         let parent = p.path.rsplit_once('/').map(|(parent, _)| parent);
         match entry_parent {
@@ -440,9 +444,6 @@ fn load_bytes_as(
         }
         let fastener_prim = entry_parent.is_none()
             && prim.path.rsplit_once('/').map(|(parent, _)| parent) == Some(FASTENER_ENTRY_PARENT);
-        if fastener_prim {
-            any_fastener = true;
-        }
         let attribute = if fastener_prim {
             "steel:fastener:designation"
         } else {
@@ -451,14 +452,28 @@ fn load_bytes_as(
         let designation = match required_text(prim, attribute, "string") {
             Ok(text) if label_is_valid(text) => text.to_owned(),
             Ok(_) | Err(_) => {
-                rejected.push(RejectedEntry {
-                    prim_path: prim.path.clone(),
-                    designation: None,
-                    code: ErrorCode::InvalidArgument,
-                    message: "the entry has no valid designation",
-                });
+                if fastener_prim {
+                    fastener_rejected.push(RejectedEntry {
+                        prim_path: prim.path.clone(),
+                        designation: None,
+                        code: ErrorCode::InvalidArgument,
+                        message: "the entry has no valid designation",
+                    });
+                } else {
+                    rejected.push(RejectedEntry {
+                        prim_path: prim.path.clone(),
+                        designation: None,
+                        code: ErrorCode::InvalidArgument,
+                        message: "the entry has no valid designation",
+                    });
+                }
                 continue;
             }
+        };
+        let seen = if fastener_prim {
+            &mut seen_fastener
+        } else {
+            &mut seen
         };
         if !seen.insert(designation.clone()) {
             return Err(invalid(
@@ -466,6 +481,11 @@ fn load_bytes_as(
             ));
         }
         if !prim.active {
+            let rejected = if fastener_prim {
+                &mut fastener_rejected
+            } else {
+                &mut rejected
+            };
             rejected.push(RejectedEntry {
                 prim_path: prim.path.clone(),
                 designation: Some(designation),
@@ -480,28 +500,56 @@ fn load_bytes_as(
             decode(prim, &designation)
         };
         match decoded {
-            Ok(record) => entries.push(LibraryEntry {
-                prim_path: prim.path.clone(),
-                designation,
-                record,
-            }),
-            Err(error) => rejected.push(RejectedEntry {
-                prim_path: prim.path.clone(),
-                designation: Some(designation),
-                code: error.code,
-                message: error.message,
-            }),
+            Ok(record) => {
+                let entry = LibraryEntry {
+                    prim_path: prim.path.clone(),
+                    designation,
+                    record,
+                };
+                if fastener_prim {
+                    fastener_entries.push(entry);
+                } else {
+                    entries.push(entry);
+                }
+            }
+            Err(error) => {
+                let rejected = if fastener_prim {
+                    &mut fastener_rejected
+                } else {
+                    &mut rejected
+                };
+                rejected.push(RejectedEntry {
+                    prim_path: prim.path.clone(),
+                    designation: Some(designation),
+                    code: error.code,
+                    message: error.message,
+                });
+            }
         }
     }
     entries.sort_by(|a, b| a.designation.cmp(&b.designation));
-    Ok((
-        Library {
+    let profiles = Library {
+        info: info.clone(),
+        entries,
+        rejected,
+    };
+    let fasteners = match entry_parent {
+        None => {
+            let mut fastener_entries = fastener_entries;
+            fastener_entries.sort_by(|a, b| a.designation.cmp(&b.designation));
+            Library {
+                info,
+                entries: fastener_entries,
+                rejected: fastener_rejected,
+            }
+        }
+        Some(_) => Library {
             info,
-            entries,
-            rejected,
+            entries: Vec::new(),
+            rejected: Vec::new(),
         },
-        any_fastener,
-    ))
+    };
+    Ok((profiles, fasteners))
 }
 
 /// The designation attribute of one entry kind: `steel:profile:designation` or
@@ -946,12 +994,12 @@ pub struct FirmLayer {
 
 /// Loads the user-owned firm layer: every library file [`session::environment::firm_library_files`]
 /// finds in `config_dir`'s `libraries/` (or in the current user's, when `config_dir` is `None`),
-/// in file-name order. A file whose entries live under `/Library/Fasteners` joins
-/// [`FirmLayer::fastener_sources`], every other file joins [`FirmLayer::sources`]; a file that
-/// does not read, a non-UTF-8 name, or a second file of a `bim:library:id` already taken is
-/// reported in [`FirmLayer::refused`] and skipped — a firm file is never allowed to break the
-/// layers above or below it, and never silently ignored either. The firm layer is the user's
-/// own: nothing here writes a file, and no environment update ever touches it.
+/// in file-name order. Every entry joins the list of its own parent, so a mixed file feeds
+/// [`FirmLayer::sources`] and [`FirmLayer::fastener_sources`] both; a file that does not read,
+/// a non-UTF-8 name, or a second file of a `bim:library:id` already taken is reported in
+/// [`FirmLayer::refused`] and skipped — a firm file is never allowed to break the layers above
+/// or below it, and never silently ignored either. The firm layer is the user's own: nothing
+/// here writes a file, and no environment update ever touches it.
 #[must_use]
 pub fn load_firm(config_dir: Option<&std::path::Path>) -> FirmLayer {
     let mut layer = FirmLayer::default();
@@ -967,8 +1015,8 @@ pub fn load_firm(config_dir: Option<&std::path::Path>) -> FirmLayer {
         };
         let loaded = load_firm_file(path);
         match loaded {
-            Ok((library, fastener)) => {
-                if ids.contains(&library.info.id) {
+            Ok((profiles, fasteners)) => {
+                if ids.contains(&profiles.info.id) {
                     layer.refused.push(FirmFileRefused {
                         path: path.to_owned(),
                         code: ErrorCode::InvalidArgument,
@@ -976,16 +1024,22 @@ pub fn load_firm(config_dir: Option<&std::path::Path>) -> FirmLayer {
                     });
                     continue;
                 }
-                ids.push(library.info.id.clone());
-                let source = Source {
-                    path: path.to_owned(),
-                    library,
-                    layer: LAYER_FIRM,
-                };
-                if fastener {
-                    layer.fastener_sources.push(source);
-                } else {
-                    layer.sources.push(source);
+                ids.push(profiles.info.id.clone());
+                // A half of a file that holds nothing of its kind is not a source: an empty
+                // library answers no lookup and would only pad the listing.
+                if !profiles.entries.is_empty() || !profiles.rejected.is_empty() {
+                    layer.sources.push(Source {
+                        path: path.to_owned(),
+                        library: profiles,
+                        layer: LAYER_FIRM,
+                    });
+                }
+                if !fasteners.entries.is_empty() || !fasteners.rejected.is_empty() {
+                    layer.fastener_sources.push(Source {
+                        path: path.to_owned(),
+                        library: fasteners,
+                        layer: LAYER_FIRM,
+                    });
                 }
             }
             Err(error) => layer.refused.push(FirmFileRefused {
@@ -3395,16 +3449,27 @@ mod tests {
     }
 
     #[test]
-    fn a_firm_file_classifies_by_its_own_entries() {
-        let profiles = load_firm_bytes(library(&[entry("A", "F-1", I_BODY)]).into_bytes()).unwrap();
-        assert!(!profiles.1, "profile entries make a profile library");
-        let bolts = load_firm_bytes(
+    fn a_firm_file_splits_by_its_own_entries() {
+        let only_profiles =
+            load_firm_bytes(library(&[entry("A", "F-1", I_BODY)]).into_bytes()).unwrap();
+        assert_eq!(only_profiles.0.entries.len(), 1);
+        assert_eq!(only_profiles.0.entries[0].designation, "F-1");
+        assert_eq!(
+            only_profiles.1.entries.len(),
+            0,
+            "no fastener half of a profile file"
+        );
+        let only_bolts = load_firm_bytes(
             fastener_library(&[fastener_entry("B", "SYN-M12", BOLT_BODY)]).into_bytes(),
         )
         .unwrap();
-        assert!(bolts.1, "fastener entries make a fastener library");
-        assert_eq!(bolts.0.entries.len(), 1);
-        // Both parents in one file: every entry decodes by its own parent.
+        assert_eq!(
+            only_bolts.0.entries.len(),
+            0,
+            "no profile half of a fastener file"
+        );
+        assert_eq!(only_bolts.1.entries.len(), 1);
+        // Both parents in one file: every entry decodes by its own parent into its own half.
         let mixed = format!(
             "{}def Scope \"Library\" {{\n    def Scope \"Profiles\" {{\n{}    }}\n    def Scope \"Fasteners\" {{\n{}    }}\n}}\n",
             HEADER.replace("    }\n)\n", "    }\n)\n\n"),
@@ -3412,12 +3477,57 @@ mod tests {
             fastener_entry("B", "SYN-M12", BOLT_BODY)
         );
         let mixed = load_firm_bytes(mixed.into_bytes()).unwrap();
-        assert!(mixed.1);
-        assert_eq!(mixed.0.entries.len(), 2);
+        assert_eq!(mixed.0.entries.len(), 1);
+        assert_eq!(mixed.1.entries.len(), 1);
         assert_eq!(
             load_firm_bytes(b"not usd".to_vec()).unwrap_err().code,
             ErrorCode::InvalidArgument
         );
+    }
+
+    #[test]
+    fn a_mixed_firm_file_feeds_both_namespaces_of_the_layer() {
+        let dir = scratch("mixed");
+        let config = dir.join("config");
+        put(
+            &config,
+            "libraries/mixed.usda",
+            &format!(
+                "{}def Scope \"Library\" {{\n    def Scope \"Profiles\" {{\n{}    }}\n    def Scope \"Fasteners\" {{\n{}    }}\n}}\n",
+                HEADER.replace("    }\n)\n", "    }\n)\n\n"),
+                entry("A", "F-1", I_BODY),
+                fastener_entry("B", "SYN-M12", BOLT_BODY)
+            ),
+        );
+        let layer = load_firm(Some(&config));
+        assert!(layer.refused.is_empty());
+        assert_eq!(layer.sources.len(), 1, "the profile half of the mixed file");
+        assert_eq!(layer.sources[0].library.info.id, "t");
+        assert_eq!(layer.sources[0].library.entries[0].designation, "F-1");
+        assert_eq!(
+            layer.fastener_sources.len(),
+            1,
+            "the fastener half of the mixed file"
+        );
+        assert_eq!(
+            layer.fastener_sources[0].library.info.id, "t",
+            "both halves carry the file's own id"
+        );
+        assert_eq!(
+            layer.fastener_sources[0].library.entries[0].designation,
+            "SYN-M12"
+        );
+        let lookup = Lookup::new(layer.sources);
+        assert_eq!(
+            lookup.find("F-1").map(|(_, e)| e.designation.as_str()),
+            Ok("F-1")
+        );
+        let bolts = Lookup::new(layer.fastener_sources);
+        assert_eq!(
+            bolts.find("SYN-M12").map(|(_, e)| e.designation.as_str()),
+            Ok("SYN-M12")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

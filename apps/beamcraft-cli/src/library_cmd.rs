@@ -248,7 +248,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             .any(|used| options.contains_key(*used))
         {
             return Err(invalid(
-                "--fastener-library is an alternative to --library, --environment and --user-library",
+                "--fastener-library is an alternative to --library, --environment, --user-library and --project",
             ));
         }
         let library = load_fastener(path)?;
