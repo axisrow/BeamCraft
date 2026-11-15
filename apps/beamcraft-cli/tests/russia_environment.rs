@@ -80,7 +80,7 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "russia");
-    assert_eq!(num(&listed, &["entry_count"]), 417.0);
+    assert_eq!(num(&listed, &["entry_count"]), 490.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     // The environment now lists 345 entries, over the 256-entry page cap, so the second page
     // completes the listing before the per-entry assertions.
@@ -95,9 +95,9 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         "--limit",
         "256",
     ]);
-    assert_eq!(num(&rest, &["entry_count"]), 417.0);
+    assert_eq!(num(&rest, &["entry_count"]), 490.0);
     entries.extend(at(&rest, &["entries"]).array().unwrap().iter().cloned());
-    assert_eq!(entries.len(), 417);
+    assert_eq!(entries.len(), 490);
     let libraries = at(&listed, &["libraries"]).array().unwrap();
     assert_eq!(libraries.len(), 3);
     let info = at(&libraries[0], &["library"]);
@@ -107,7 +107,7 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let square_info = at(&libraries[1], &["library"]);
     assert_eq!(text(square_info, "id"), "russia-gost-30245-profiles");
-    assert_eq!(text(square_info, "version"), "4");
+    assert_eq!(text(square_info, "version"), "5");
     assert_eq!(text(square_info, "licence"), "MPL-2.0");
     assert!(
         !text(square_info, "source").is_empty(),
@@ -186,6 +186,16 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert_eq!(num(band2, &["parameters_mm", "b"]), 80.0);
     assert_eq!(num(band2, &["parameters_mm", "t"]), 3.0);
     assert_eq!(num(band2, &["parameters_mm", "r"]), 6.0);
+    // Band 3 rides the same library: the 140..160 mm height groups.
+    let band3 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "160x100x4")
+        .unwrap();
+    assert_eq!(text(band3, "library_id"), "russia-gost-30245-profiles");
+    assert_eq!(num(band3, &["parameters_mm", "h"]), 160.0);
+    assert_eq!(num(band3, &["parameters_mm", "b"]), 100.0);
+    assert_eq!(num(band3, &["parameters_mm", "t"]), 4.0);
+    assert_eq!(num(band3, &["parameters_mm", "r"]), 8.0);
 }
 
 #[test]

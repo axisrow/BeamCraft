@@ -2756,7 +2756,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "russia-gost-30245-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("4"));
+        assert_eq!(library.info.version.as_deref(), Some("5"));
         assert!(
             library
                 .info
@@ -2775,7 +2775,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 301);
+        assert_eq!(library.entries.len(), 374);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -3133,6 +3133,79 @@ mod tests {
             "120x80x6",
             "120x80x6.5",
             "120x80x7",
+            "140x60x3",
+            "140x60x3.5",
+            "140x60x4",
+            "140x60x4.5",
+            "140x60x5",
+            "140x60x5.5",
+            "140x60x6",
+            "140x60x6.5",
+            "140x60x7",
+            "140x100x4",
+            "140x100x4.5",
+            "140x100x5",
+            "140x100x5.5",
+            "140x100x6",
+            "140x100x6.5",
+            "140x100x7",
+            "140x120x4",
+            "140x120x4.5",
+            "140x120x5",
+            "140x120x5.5",
+            "140x120x6",
+            "140x120x6.5",
+            "140x120x7",
+            "140x120x7.5",
+            "140x120x8",
+            "150x100x4",
+            "150x100x4.5",
+            "150x100x5",
+            "150x100x5.5",
+            "150x100x6",
+            "150x100x6.5",
+            "150x100x7",
+            "160x40x3",
+            "160x40x3.5",
+            "160x40x4",
+            "160x40x4.5",
+            "160x40x5",
+            "160x40x5.5",
+            "160x40x6",
+            "160x40x6.5",
+            "160x40x7",
+            "160x80x4",
+            "160x80x4.5",
+            "160x80x5",
+            "160x80x5.5",
+            "160x80x6",
+            "160x80x6.5",
+            "160x80x7",
+            "160x100x4",
+            "160x100x4.5",
+            "160x100x5",
+            "160x100x5.5",
+            "160x100x6",
+            "160x100x6.5",
+            "160x100x7",
+            "160x100x7.5",
+            "160x100x8",
+            "160x120x4",
+            "160x120x4.5",
+            "160x120x5",
+            "160x120x5.5",
+            "160x120x6",
+            "160x120x6.5",
+            "160x120x7",
+            "160x120x7.5",
+            "160x120x8",
+            "160x140x5",
+            "160x140x5.5",
+            "160x140x6",
+            "160x140x6.5",
+            "160x140x7",
+            "160x140x7.5",
+            "160x140x8",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -3192,6 +3265,13 @@ mod tests {
         spot("90x60x6.5", [90.0, 60.0, 6.5, 16.25], 1636.0, 12.84);
         spot("100x40x7", [100.0, 40.0, 7.0, 17.5], 1596.0, 12.53);
         spot("120x80x7", [120.0, 80.0, 7.0, 17.5], 2436.0, 19.12);
+        // Band 3 spots: the band opener, the widest group's top wall at the 2.5t radius
+        // band, and the tall-thin 160x40 pair against the scans.
+        spot("140x60x3", [140.0, 60.0, 3.0, 6.0], 1141.0, 8.96);
+        spot("140x120x5", [140.0, 120.0, 5.0, 10.0], 2436.0, 19.12);
+        spot("150x100x4", [150.0, 100.0, 4.0, 8.0], 1895.0, 14.87);
+        spot("160x40x7", [160.0, 40.0, 7.0, 17.5], 2436.0, 19.12);
+        spot("160x120x8", [160.0, 120.0, 8.0, 20.0], 4004.0, 31.43);
         // Designations the standard does not publish are NOT_FOUND, never a near match:
         // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
         // published thickness range. The Cyrillic authenticity form is not a lookup key.
@@ -3239,6 +3319,15 @@ mod tests {
             "100x40x2.5",
             "110x60x4",
             "120x80x7.5",
+            // Band 3 facts table 2 does not publish: the 140x60 wall range ends at 7 mm,
+            // the 140x100 and 150x100 ranges end at 7 mm too, the 160x40 range opens at
+            // 3 mm, and neither a 140x80 nor a 170x100 group exists.
+            "140x60x7.5",
+            "140x100x7.5",
+            "150x100x7.5",
+            "160x40x2.5",
+            "140x80x4",
+            "170x100x5",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
