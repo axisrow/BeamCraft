@@ -22,8 +22,10 @@ saved setting.
   EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
   the hollow closed-form area); `environments/russia/` holds the GOST 26020-83 parallel-flange
   beam (Б), wide-flange (Ш) and column (К) series; `environments/australia/` (2026-11-15) holds
-  the AS/NZS 3679.1:2016 UB and UC series, and `environments/india/` holds the IS 808:2021
-  narrow (NPB) and wide (WPB) parallel flange beam series (see `ATTRIBUTION.md`).
+  the AS/NZS 3679.1:2016 UB and UC series, `environments/india/` holds the IS 808:2021
+  narrow (NPB) and wide (WPB) parallel flange beam series, and `environments/china/`
+  (2026-11-15) holds the GB/T 706-2016 tapered-flange I-beam series through the `tapered_i`
+  section family (the channel series of the same standard follows; see `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or
