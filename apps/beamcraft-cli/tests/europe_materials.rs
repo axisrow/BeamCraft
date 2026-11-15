@@ -100,9 +100,9 @@ fn the_europe_environment_lists_and_carries_its_material_library() {
     // Every shipped grade is listed for pickers until the model defines it.
     let before = f.ok(&["definitions", "--store", &store]);
     let available = list(&before, "environment_materials");
-    assert_eq!(available.len(), 26);
+    assert_eq!(available.len(), 33);
     assert_eq!(text(&available[0], "grade"), "S235J0");
-    assert_eq!(text(&available[25], "grade"), "S460NL");
+    assert_eq!(text(&available[32], "grade"), "S500ML");
 
     // A grade of the set resolves through the project's own environment copy, with no option
     // naming any file, and the mass math uses the catalogue entry's density: an IPE300 beam of
@@ -136,10 +136,10 @@ fn the_europe_environment_lists_and_carries_its_material_library() {
     assert_eq!(text(&pinned[0], "grade"), "S235JR");
     assert_eq!(text(&pinned[0], "standard"), "EN 10025-2:2019");
     assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
-    // The spent grade is no longer offered to pickers; the other 25 still are.
+    // The spent grade is no longer offered to pickers; the other 32 still are.
     let spent = f.ok(&["definitions", "--store", &store]);
     let remaining = list(&spent, "environment_materials");
-    assert_eq!(remaining.len(), 25);
+    assert_eq!(remaining.len(), 32);
     assert!(
         remaining.iter().all(|g| text(g, "grade") != "S235JR"),
         "S235JR is spent"

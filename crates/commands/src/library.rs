@@ -1930,15 +1930,17 @@ mod tests {
         );
         // No transcription slips: every entry is admitted.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 26);
-        // The structural steel grades of EN 10025 parts 2, 3 and 4, S235 to S460, in the
-        // loader's designation order, each with its part and the pack density. The weathering
+        assert_eq!(library.entries.len(), 33);
+        // The complete structural steel grade sets of the EN 10025-2/-3/-4:2019 editions,
+        // S235 to S500, in the loader's designation order, each with its part and the pack
+        // density: part 2 grew in 2019 by the S460 qualities and S500J0 (and dropped S450J0,
+        // which is not shipped), part 4 by S500M/ML; part 3 is unchanged. The weathering
         // steels of part 5 and the quenched and tempered flat products of part 6 are not in
         // the pack.
         let part2 = "EN 10025-2:2019";
         let part3 = "EN 10025-3:2019";
         let part4 = "EN 10025-4:2019";
-        let expected: [(&str, &str); 26] = [
+        let expected: [(&str, &str); 33] = [
             ("S235J0", part2),
             ("S235J2", part2),
             ("S235JR", part2),
@@ -1961,10 +1963,17 @@ mod tests {
             ("S420ML", part4),
             ("S420N", part3),
             ("S420NL", part3),
+            ("S460J0", part2),
+            ("S460J2", part2),
+            ("S460JR", part2),
+            ("S460K2", part2),
             ("S460M", part4),
             ("S460ML", part4),
             ("S460N", part3),
             ("S460NL", part3),
+            ("S500J0", part2),
+            ("S500M", part4),
+            ("S500ML", part4),
         ];
         for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
             let DefinitionRecord::Material {
@@ -2002,7 +2011,7 @@ mod tests {
         assert_eq!(environment.material_sources.len(), 1);
         let materials = &environment.material_sources[0];
         assert_eq!(materials.library.info.id, "europe-en-10025-materials");
-        assert_eq!(materials.library.entries.len(), 26);
+        assert_eq!(materials.library.entries.len(), 33);
         assert!(materials.library.rejected.is_empty());
         // A grade rides the same resolver machinery, in its own namespace.
         let lookup = environment.material_lookup();
@@ -2013,8 +2022,9 @@ mod tests {
             DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
                 if standard.as_deref() == Some("EN 10025-2:2019")
         ));
-        // A grade the set does not publish is NOT_FOUND, never a near match.
-        for absent in ["S235", "S355", "s355j2", "S355K2+N"] {
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no lowercase, no grade of another part or of the superseded 2004 edition.
+        for absent in ["S235", "S355", "s355j2", "S355K2+N", "S500N", "S450J0"] {
             assert_eq!(
                 lookup.find(absent).unwrap_err().code,
                 ErrorCode::NotFound,
