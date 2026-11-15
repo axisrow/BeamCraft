@@ -531,8 +531,13 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   the catalogue when a profile is inserted from a library, otherwise the kernel computes it with
   the exact arc formula and the mass is marked computed (`area_source`: `catalogue` | `computed`).
   A tabulated mass per metre is a reference field only. Full values are stored; rounding happens
-  only on output (0.1 kg by default). Check case: section 30B1 of GOST 27772-2015, 6 m, 7850 kg/m³
-  gives 192.2 kg from the catalogue area (40.8 cm²) and 192.17 kg from the exact arcs.
+  only on output (0.1 kg by default). Check case: section 30B1, 6 m, 7850 kg/m³ gives 192.2 kg
+  from the catalogue area (40.8 cm²) and 192.17 kg from the exact arcs. The 40.8 cm² value is the
+  new-generation assortment of the designation — STO ASChM 20-93 / GOST R 57837-2017 give 30B1 as
+  h 298, b 149, s 5.5, t 8, R 13, the dimensions of the P-Mass reference section these numbers
+  come from; GOST 27772-2015 grades the steel, not the section. GOST 26020-83's 30B1 is
+  41.92 cm² / 32.9 kg/m — the edition the shipped `russia` environment admits. Which assortment
+  generation or generations BeamCraft carries is an open owner question (#628).
 - **Declared versus computed area (A07 D3).** A difference above 1 percent is a warning
   (`declared_area_warning`), never a refusal: catalogues use simplified radii.
 - **History compaction (U14).** Undo past the compaction boundary is impossible and shown in the
@@ -592,6 +597,28 @@ Schedule templates (I05) are shared, owned model USD entities with revisions, fo
 commit and undo. Items/import, IFC certification, deferred collaboration, native UI/GPU
 acceptance and release publication are not added to this scope. No automatic merges.
 See [M5 CLI delivery](m5-cli-delivery.md) for dependencies and acceptance.
+
+## Q03 model checks: automatic geometry versus owner decisions (2026-11-15)
+
+For the `check-model` harness (design in issue #634, contract in
+[the Q03 draft](../contracts/q03-model-checks-draft-v0.1.md)), the boundary is fixed:
+
+- **The engine computes and reports; it does not decide or edit.** Checks recompute dependent
+  requirements from recorded inputs and the current model on every run, but never change cut
+  geometry. Whether cuts must follow dimension changes without an explicit modelling command
+  remains a separate, still-open owner decision; parametric connections stay deferred by
+  `ROADMAP.md`.
+- **The product does not invent dimensions.** Only dimensions explicitly required by the owner
+  are checkable inputs; the sample's 10 mm corner cut is such an input, independent of any weld
+  leg, and stays 10 mm until the owner changes it. A measured value never substitutes an
+  expected value.
+- **No normative rule ships unverified.** The normative research (SP 16.13330.2017 15.5.2 and
+  14.1.7/Table 38, EN 1993-1-8:2005 §6.2.6, AISC FAQ 8.2.4/8.3.4/8.3.6/8.3.8 over AWS D1.1
+  7.21.1, AISC Design Guide 1, retrievals in the contract) justifies no universal corner-cut
+  range and no automatic upper bound for this joint. `CORNER_OVERCUT` checks only against an
+  explicit recorded bound; weld adequacy stays `unknown` in v0.1; the supported rule set
+  contains no normative rule until a slice pins one with document, edition, clause, joint types,
+  required inputs and retrieval.
 
 ## Open questions
 

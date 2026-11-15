@@ -122,7 +122,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--exclude",
         ],
         "lookup-feature" => &["--store", "--feature-id"],
-        "list-feature" => &["--store", "--id"],
+        "list-feature" => &["--store", "--id", "--offset", "--limit"],
         "element-edges" => &["--store", "--id"],
         "snap" => &[
             "--store",
@@ -369,21 +369,76 @@ fn run(args: &[OsString]) -> Run<Json> {
                 "workspace_generation".into(),
                 Json::text(snapshot.pin().generation().to_string()),
             ));
-            fields.push((
-                "features".into(),
-                Json::Array(
-                    features
-                        .into_iter()
-                        .map(|feature| {
-                            Json::object([
-                                ("feature_id", Json::text(feature.to_string())),
-                                ("kind", Json::text(feature.kind().as_str())),
-                            ])
-                        })
-                        .collect(),
-                ),
-            ));
-            fields
+            // The roles of one body are usually a handful of pages, but a rich cut body's
+            // named face and cap-corner tables grow with its records, so the list pages too.
+            let feature_total = features.len();
+            let paged = options.contains_key("--offset") || options.contains_key("--limit");
+            if paged {
+                let (offset, limit) = crate::plate_cmd::page_of(&options)?;
+                let available = feature_total.saturating_sub(offset);
+                let page = crate::plate_cmd::fit_page(available, limit, |count| {
+                    let next = offset.saturating_add(count);
+                    let mut fields = header("features_listed");
+                    fields.push(("element_id".into(), Json::text(element.to_string())));
+                    fields.push((
+                        "model_manifest".into(),
+                        Json::text(snapshot.pin().revision().to_string()),
+                    ));
+                    fields.push((
+                        "workspace_generation".into(),
+                        Json::text(snapshot.pin().generation().to_string()),
+                    ));
+                    fields.push(("feature_count".into(), Json::uint(feature_total as u64)));
+                    fields.push(("offset".into(), Json::uint(offset as u64)));
+                    fields.push(("page_size".into(), Json::uint(count as u64)));
+                    fields.push((
+                        "next_offset".into(),
+                        if next < feature_total {
+                            Json::uint(next as u64)
+                        } else {
+                            Json::Null
+                        },
+                    ));
+                    fields.push((
+                        "features".into(),
+                        Json::Array(
+                            features
+                                .iter()
+                                .skip(offset)
+                                .take(count)
+                                .map(|feature| {
+                                    Json::object([
+                                        ("feature_id", Json::text(feature.to_string())),
+                                        ("kind", Json::text(feature.kind().as_str())),
+                                    ])
+                                })
+                                .collect(),
+                        ),
+                    ));
+                    Ok(Json::Object(fields.into_iter().collect()))
+                })?;
+                // The page joins the reply through the shared tail below (the element count).
+                if let Json::Object(entries) = page {
+                    fields.extend(entries);
+                }
+                fields
+            } else {
+                fields.push((
+                    "features".into(),
+                    Json::Array(
+                        features
+                            .into_iter()
+                            .map(|feature| {
+                                Json::object([
+                                    ("feature_id", Json::text(feature.to_string())),
+                                    ("kind", Json::text(feature.kind().as_str())),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ));
+                fields
+            }
         }
         Request::Edges(id) => {
             let edges = beamcraft_engine::query::feature::element_edges(snapshot, &id)?;

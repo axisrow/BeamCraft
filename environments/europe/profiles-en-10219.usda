@@ -1,0 +1,666 @@
+#usda 1.0
+(
+    doc = "BeamCraft Europe environment: cold-formed hollow sections (SHS, RHS and CHS) of the common EN 10219 sizes. The nominal dimensions, areas and masses are the published values of the public standard EN 10219-2:2006, re-entered by hand as our own data; no text or table is copied. Every row follows the corner geometry the standard computes its sectional properties with: the outer corner radius is 2t up to 6 mm wall, 2.5t from 6 to 10 mm and 3t above 10 mm, and the inner radius is the outer radius minus the wall. Reference data for modelling; it is not a substitute for the standard itself."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "europe-en-10219-profiles"
+        string "bim:library:title" = "Europe cold-formed hollow sections (EN 10219: SHS, RHS, CHS)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Dimensional facts of EN 10219-2:2006 (cold-formed SHS, RHS and CHS sizes) re-entered by hand as our own data; cross-checked between the SCI P363 tables (steelconstruction.info) and the Hiap Teck BS EN 10219 datasheet (hiapteck.com); no table copied"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "SHS50x50x3"
+        {
+            string steel:profile:designation = "SHS50x50x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 541
+            double steel:profile:massPerMeterKg = 4.25
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS50x50x4"
+        {
+            string steel:profile:designation = "SHS50x50x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 695
+            double steel:profile:massPerMeterKg = 5.45
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS60x60x3"
+        {
+            string steel:profile:designation = "SHS60x60x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 60
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 661
+            double steel:profile:massPerMeterKg = 5.19
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS60x60x4"
+        {
+            string steel:profile:designation = "SHS60x60x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 60
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 855
+            double steel:profile:massPerMeterKg = 6.71
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS80x80x4"
+        {
+            string steel:profile:designation = "SHS80x80x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 80
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1170
+            double steel:profile:massPerMeterKg = 9.22
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS80x80x5"
+        {
+            string steel:profile:designation = "SHS80x80x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 80
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1440
+            double steel:profile:massPerMeterKg = 11.3
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS100x100x4"
+        {
+            string steel:profile:designation = "SHS100x100x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1490
+            double steel:profile:massPerMeterKg = 11.7
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS100x100x5"
+        {
+            string steel:profile:designation = "SHS100x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1840
+            double steel:profile:massPerMeterKg = 14.4
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS100x100x6"
+        {
+            string steel:profile:designation = "SHS100x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2160
+            double steel:profile:massPerMeterKg = 17
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS120x120x5"
+        {
+            string steel:profile:designation = "SHS120x120x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 120
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2240
+            double steel:profile:massPerMeterKg = 17.5
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS120x120x6"
+        {
+            string steel:profile:designation = "SHS120x120x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 120
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2640
+            double steel:profile:massPerMeterKg = 20.7
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS140x140x5"
+        {
+            string steel:profile:designation = "SHS140x140x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2640
+            double steel:profile:massPerMeterKg = 20.7
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS150x150x5"
+        {
+            string steel:profile:designation = "SHS150x150x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2840
+            double steel:profile:massPerMeterKg = 22.3
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS150x150x6"
+        {
+            string steel:profile:designation = "SHS150x150x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3360
+            double steel:profile:massPerMeterKg = 26.3
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS150x150x8"
+        {
+            string steel:profile:designation = "SHS150x150x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 4320
+            double steel:profile:massPerMeterKg = 33.9
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS160x160x6"
+        {
+            string steel:profile:designation = "SHS160x160x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 160
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3600
+            double steel:profile:massPerMeterKg = 28.3
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS180x180x6"
+        {
+            string steel:profile:designation = "SHS180x180x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 180
+            double steel:profile:bMm = 180
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 4080
+            double steel:profile:massPerMeterKg = 32.1
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS200x200x6"
+        {
+            string steel:profile:designation = "SHS200x200x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 4560
+            double steel:profile:massPerMeterKg = 35.8
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS200x200x8"
+        {
+            string steel:profile:designation = "SHS200x200x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 5920
+            double steel:profile:massPerMeterKg = 46.5
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS200x200x10"
+        {
+            string steel:profile:designation = "SHS200x200x10"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 10
+            double steel:profile:rMm = 25
+            double steel:profile:areaMm2 = 7260
+            double steel:profile:massPerMeterKg = 57
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS200x200x12"
+        {
+            string steel:profile:designation = "SHS200x200x12"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 12
+            double steel:profile:rMm = 36
+            double steel:profile:areaMm2 = 8410
+            double steel:profile:massPerMeterKg = 66
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS250x250x8"
+        {
+            string steel:profile:designation = "SHS250x250x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 250
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 7520
+            double steel:profile:massPerMeterKg = 59.1
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS300x300x6"
+        {
+            string steel:profile:designation = "SHS300x300x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 300
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 6960
+            double steel:profile:massPerMeterKg = 54.7
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "SHS350x350x10"
+        {
+            string steel:profile:designation = "SHS350x350x10"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 350
+            double steel:profile:tMm = 10
+            double steel:profile:rMm = 25
+            double steel:profile:areaMm2 = 13300
+            double steel:profile:massPerMeterKg = 104
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS60x40x3"
+        {
+            string steel:profile:designation = "RHS60x40x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 60
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 541
+            double steel:profile:massPerMeterKg = 4.25
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS80x40x4"
+        {
+            string steel:profile:designation = "RHS80x40x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 80
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 855
+            double steel:profile:massPerMeterKg = 6.71
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS100x50x4"
+        {
+            string steel:profile:designation = "RHS100x50x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1090
+            double steel:profile:massPerMeterKg = 8.59
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS100x50x5"
+        {
+            string steel:profile:designation = "RHS100x50x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1340
+            double steel:profile:massPerMeterKg = 10.5
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS120x60x5"
+        {
+            string steel:profile:designation = "RHS120x60x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 120
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1640
+            double steel:profile:massPerMeterKg = 12.8
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS120x80x5"
+        {
+            string steel:profile:designation = "RHS120x80x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 120
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1840
+            double steel:profile:massPerMeterKg = 14.4
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS150x100x5"
+        {
+            string steel:profile:designation = "RHS150x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2340
+            double steel:profile:massPerMeterKg = 18.3
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS150x100x8"
+        {
+            string steel:profile:designation = "RHS150x100x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 3520
+            double steel:profile:massPerMeterKg = 27.7
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS160x80x6"
+        {
+            string steel:profile:designation = "RHS160x80x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2640
+            double steel:profile:massPerMeterKg = 20.7
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS200x100x6"
+        {
+            string steel:profile:designation = "RHS200x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3360
+            double steel:profile:massPerMeterKg = 26.4
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS200x120x8"
+        {
+            string steel:profile:designation = "RHS200x120x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 4640
+            double steel:profile:massPerMeterKg = 36.5
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS250x150x8"
+        {
+            string steel:profile:designation = "RHS250x150x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 5920
+            double steel:profile:massPerMeterKg = 46.5
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "RHS300x200x8"
+        {
+            string steel:profile:designation = "RHS300x200x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 200
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 7520
+            double steel:profile:massPerMeterKg = 59.1
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS33_7x3_0"
+        {
+            string steel:profile:designation = "CHS33.7x3.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 33.7
+            double steel:profile:tMm = 3
+            double steel:profile:areaMm2 = 289
+            double steel:profile:massPerMeterKg = 2.27
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS42_4x3_0"
+        {
+            string steel:profile:designation = "CHS42.4x3.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 42.4
+            double steel:profile:tMm = 3
+            double steel:profile:areaMm2 = 371
+            double steel:profile:massPerMeterKg = 2.91
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS48_3x3_0"
+        {
+            string steel:profile:designation = "CHS48.3x3.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 48.3
+            double steel:profile:tMm = 3
+            double steel:profile:areaMm2 = 427
+            double steel:profile:massPerMeterKg = 3.35
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS60_3x3_0"
+        {
+            string steel:profile:designation = "CHS60.3x3.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 60.3
+            double steel:profile:tMm = 3
+            double steel:profile:areaMm2 = 540
+            double steel:profile:massPerMeterKg = 4.24
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS76_1x3_0"
+        {
+            string steel:profile:designation = "CHS76.1x3.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 76.1
+            double steel:profile:tMm = 3
+            double steel:profile:areaMm2 = 689
+            double steel:profile:massPerMeterKg = 5.41
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS76_1x4_0"
+        {
+            string steel:profile:designation = "CHS76.1x4.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 76.1
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 906
+            double steel:profile:massPerMeterKg = 7.11
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS88_9x4_0"
+        {
+            string steel:profile:designation = "CHS88.9x4.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 88.9
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 1070
+            double steel:profile:massPerMeterKg = 8.38
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS114_3x4_0"
+        {
+            string steel:profile:designation = "CHS114.3x4.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 4
+            double steel:profile:areaMm2 = 1390
+            double steel:profile:massPerMeterKg = 10.9
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS114_3x5_0"
+        {
+            string steel:profile:designation = "CHS114.3x5.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114.3
+            double steel:profile:tMm = 5
+            double steel:profile:areaMm2 = 1720
+            double steel:profile:massPerMeterKg = 13.5
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS139_7x5_0"
+        {
+            string steel:profile:designation = "CHS139.7x5.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 139.7
+            double steel:profile:tMm = 5
+            double steel:profile:areaMm2 = 2120
+            double steel:profile:massPerMeterKg = 16.6
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS168_3x5_0"
+        {
+            string steel:profile:designation = "CHS168.3x5.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 168.3
+            double steel:profile:tMm = 5
+            double steel:profile:areaMm2 = 2570
+            double steel:profile:massPerMeterKg = 20.2
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS219_1x6_0"
+        {
+            string steel:profile:designation = "CHS219.1x6.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 219.1
+            double steel:profile:tMm = 6
+            double steel:profile:areaMm2 = 4020
+            double steel:profile:massPerMeterKg = 31.4
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS273_0x8_0"
+        {
+            string steel:profile:designation = "CHS273.0x8.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 273
+            double steel:profile:tMm = 8
+            double steel:profile:areaMm2 = 6660
+            double steel:profile:massPerMeterKg = 52.3
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS323_9x8_0"
+        {
+            string steel:profile:designation = "CHS323.9x8.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 323.9
+            double steel:profile:tMm = 8
+            double steel:profile:areaMm2 = 7940
+            double steel:profile:massPerMeterKg = 62.3
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+        def Scope "CHS406_4x10_0"
+        {
+            string steel:profile:designation = "CHS406.4x10.0"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 406.4
+            double steel:profile:tMm = 10
+            double steel:profile:areaMm2 = 12500
+            double steel:profile:massPerMeterKg = 97.8
+            string steel:profile:standard = "EN 10219-2:2006"
+        }
+
+    }
+}

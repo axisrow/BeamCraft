@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic fasteners that follow no national standard, MPL-2.0. The DIN
-// set is the shipped `assets/libraries/din-fasteners.usda` (public-standard dimensions re-entered
+// set is the shipped `environments/europe/din-fasteners.usda` (public-standard dimensions re-entered
 // as our own data); the hostile and partial libraries are written by the tests from plain text.
 
 //! A14.1 end to end through the real `beamcraft` binary: a fastener library in the A07 format is
@@ -25,7 +25,7 @@ const SYNTHETIC: &str = concat!(
 );
 const DIN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../assets/libraries/din-fasteners.usda"
+    "/../../environments/europe/din-fasteners.usda"
 );
 
 struct Fixture {

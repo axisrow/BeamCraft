@@ -14,8 +14,8 @@
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
 use beamcraft_commands::bolt::{
-    BoltContext, BoltGroupView, BoltView, GroupChange, bolt_groups, bolts, create_bolt_group,
-    update_bolt_group,
+    BoltContext, BoltGroupView, BoltView, GroupChange, bolt_groups, bolt_listing, bolts,
+    create_bolt_group, update_bolt_group,
 };
 use beamcraft_commands::definition::{DefinitionRecord, head_definitions};
 use beamcraft_commands::library::{Lookup, Source, load_fastener};
@@ -166,69 +166,65 @@ fn hole_mode(text: &str) -> Run<HoleMode> {
 }
 
 fn views_json(views: &[BoltView]) -> Json {
-    Json::Array(
-        views
-            .iter()
-            .map(|v| {
-                Json::object([
-                    ("id", Json::text(v.id.to_string())),
-                    ("name", Json::text(v.name.clone())),
-                    ("main", Json::text(v.main.to_string())),
-                    ("secondary", Json::text(v.secondary.to_string())),
-                    ("diameter_mm", Json::text(v.spec.diameter_mm.to_string())),
-                    ("count", Json::text(v.spec.count.to_string())),
-                    ("pitch_mm", Json::text(v.spec.pitch_mm.to_string())),
-                    (
-                        "origin_mm",
-                        Json::Array(
-                            v.spec
-                                .origin_mm
-                                .iter()
-                                .map(|n| Json::text(n.to_string()))
-                                .collect(),
-                        ),
-                    ),
-                    (
-                        "direction_mm",
-                        Json::Array(
-                            v.spec
-                                .direction_mm
-                                .iter()
-                                .map(|n| Json::text(n.to_string()))
-                                .collect(),
-                        ),
-                    ),
-                ])
-            })
-            .collect(),
-    )
+    Json::Array(views.iter().map(bolt_entry).collect())
+}
+
+fn bolt_entry(v: &BoltView) -> Json {
+    Json::object([
+        ("id", Json::text(v.id.to_string())),
+        ("name", Json::text(v.name.clone())),
+        ("main", Json::text(v.main.to_string())),
+        ("secondary", Json::text(v.secondary.to_string())),
+        ("diameter_mm", Json::text(v.spec.diameter_mm.to_string())),
+        ("count", Json::text(v.spec.count.to_string())),
+        ("pitch_mm", Json::text(v.spec.pitch_mm.to_string())),
+        (
+            "origin_mm",
+            Json::Array(
+                v.spec
+                    .origin_mm
+                    .iter()
+                    .map(|n| Json::text(n.to_string()))
+                    .collect(),
+            ),
+        ),
+        (
+            "direction_mm",
+            Json::Array(
+                v.spec
+                    .direction_mm
+                    .iter()
+                    .map(|n| Json::text(n.to_string()))
+                    .collect(),
+            ),
+        ),
+    ])
 }
 
 fn group_views_json(views: &[BoltGroupView]) -> Vec<Json> {
-    views
-        .iter()
-        .map(|v| {
-            let mut fields = BTreeMap::new();
-            fields.insert("id".to_owned(), Json::text(v.id.to_string()));
-            fields.insert("name".to_owned(), Json::text(v.name.clone()));
-            fields.insert(
-                "parts".to_owned(),
-                Json::Array(v.parts.iter().map(|p| Json::text(p.to_string())).collect()),
-            );
-            fields.insert(
-                "fastener".to_owned(),
-                Json::text(v.spec.fastener.to_string()),
-            );
-            fields.insert(
-                "count".to_owned(),
-                Json::text((v.spec.spacings_mm.len() + 1).to_string()),
-            );
-            for (name, value) in spec_fields(v) {
-                fields.insert(name.to_owned(), value);
-            }
-            Json::Object(fields)
-        })
-        .collect()
+    views.iter().map(group_entry).collect()
+}
+
+fn group_entry(v: &BoltGroupView) -> Json {
+    let mut fields = BTreeMap::new();
+    fields.insert("id".to_owned(), Json::text(v.id.to_string()));
+    fields.insert("name".to_owned(), Json::text(v.name.clone()));
+    fields.insert(
+        "parts".to_owned(),
+        Json::Array(v.parts.iter().map(|p| Json::text(p.to_string())).collect()),
+    );
+    fields.insert(
+        "fastener".to_owned(),
+        Json::text(v.spec.fastener.to_string()),
+    );
+    fields.insert(
+        "count".to_owned(),
+        Json::text((v.spec.spacings_mm.len() + 1).to_string()),
+    );
+    for (name, value) in spec_fields(v) {
+        fields.insert(name.to_owned(), value);
+    }
+    Json::Object(fields)
 }
 
 fn change_json(subject: ElementId, op_id: OpId, change: &GroupChange) -> Json {
@@ -295,7 +291,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             create_options.push("--repin");
             create_options.leak()
         }
-        "bolts" => &["--store"],
+        "bolts" => &["--store", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 64 {
@@ -320,14 +316,68 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store = RevisionStore::new(blobs);
     let _claim = crate::plate_cmd::check_project_option(&store, &options)?;
     if *command == "bolts" {
-        return Ok(Json::object([
-            ("outcome", Json::text("bolts")),
-            ("bolts", views_json(&bolts(&store)?)),
-            (
-                "bolt_groups",
-                Json::Array(group_views_json(&bolt_groups(&store)?)),
-            ),
-        ]));
+        // Both collections come from one verified revision, so a page ranges over one
+        // snapshot; the shared page range runs over the bolts first, then the A14.3 groups,
+        // each in its element-id order.
+        let (bolt_views, group_views) = bolt_listing(&store)?;
+        let (bolt_total, group_total) = (bolt_views.len(), group_views.len());
+        let paged = options.contains_key("--offset") || options.contains_key("--limit");
+        if !paged {
+            return crate::plate_cmd::whole_listing(
+                Json::object([
+                    ("outcome", Json::text("bolts")),
+                    ("bolts", views_json(&bolt_views)),
+                    ("bolt_groups", Json::Array(group_views_json(&group_views))),
+                ]),
+                "the whole bolt listing exceeds the output budget: page it with --offset and --limit",
+            );
+        }
+        let (offset, limit) = crate::plate_cmd::page_of(&options)?;
+        let total = bolt_total.saturating_add(group_total);
+        let available = total.saturating_sub(offset);
+        return crate::plate_cmd::fit_page(available, limit, |count| {
+            let bolt_take = count.min(bolt_total.saturating_sub(offset));
+            let group_take = count - bolt_take;
+            let group_skip = offset.saturating_add(bolt_take).saturating_sub(bolt_total);
+            let next = offset.saturating_add(count);
+            Ok(Json::object([
+                ("outcome", Json::text("bolts")),
+                ("bolt_count", Json::uint(bolt_total as u64)),
+                ("bolt_group_count", Json::uint(group_total as u64)),
+                ("offset", Json::uint(offset as u64)),
+                ("page_size", Json::uint(count as u64)),
+                (
+                    "next_offset",
+                    if next < total {
+                        Json::uint(next as u64)
+                    } else {
+                        Json::Null
+                    },
+                ),
+                (
+                    "bolts",
+                    Json::Array(
+                        bolt_views
+                            .iter()
+                            .skip(offset)
+                            .take(bolt_take)
+                            .map(bolt_entry)
+                            .collect(),
+                    ),
+                ),
+                (
+                    "bolt_groups",
+                    Json::Array(
+                        group_views
+                            .iter()
+                            .skip(group_skip)
+                            .take(group_take)
+                            .map(group_entry)
+                            .collect(),
+                    ),
+                ),
+            ]))
+        });
     }
     let mut source = IdSource::system();
     let mut fresh = || {
@@ -353,20 +403,25 @@ fn run(args: &[OsString]) -> Run<Json> {
             .transpose()
     };
     let optional_flag = |key: &str| -> Run<Option<bool>> { given(key).map(boolean).transpose() };
-    // The definition travels by designation through one library file; the entry carries every
-    // value, so the model never needs the file again.
+    // The definition travels by designation: through the fastener libraries of the project's
+    // own environment copy (`create-project --environment`, BC-ENV-002), or through one
+    // `--fastener-library` file when the project has none or names it explicitly. The entry
+    // carries every value, so the model never needs the library file again.
     let library_definition = |options: &BTreeMap<&str, &str>| -> Run<DefinitionRecord> {
-        let path = options
-            .get("--fastener-library")
-            .ok_or_else(|| invalid("--fastener-library is required"))?;
         let designation = options
             .get("--designation")
             .ok_or_else(|| invalid("--designation is required"))?;
-        let library = load_fastener(path)?;
-        let lookup = Lookup::new(vec![Source {
-            path: (*path).to_owned(),
-            library,
-        }]);
+        let lookup = match options.get("--fastener-library") {
+            Some(path) => {
+                let library = load_fastener(path)?;
+                Lookup::new(vec![Source {
+                    path: (*path).to_owned(),
+                    library,
+                }])
+            }
+            None => crate::plate_cmd::project_fastener_lookup(options)?
+                .ok_or_else(|| invalid("--fastener-library is required"))?,
+        };
         let (_, entry) = lookup.find(designation)?;
         match &entry.record {
             record @ DefinitionRecord::Fastener { .. } => Ok(record.clone()),
@@ -528,7 +583,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         && !beamcraft_commands::bolt::op_accepted(&store, &context.op_id)?
     {
         return Err(invalid(
-            "--repin needs --fastener-library and --designation",
+            "--repin needs --designation (through the project environment or --fastener-library)",
         ));
     }
     let definition = match (&current, repin || from_library) {
@@ -542,7 +597,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         }
         (None, false) => {
             return Err(invalid(
-                "upgrading an A05 annotation group needs --fastener-library and --designation",
+                "upgrading an A05 annotation group needs --designation (through the project environment or --fastener-library)",
             ));
         }
     };

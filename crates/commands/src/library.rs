@@ -658,17 +658,71 @@ impl Lookup {
 pub struct Environment {
     /// The environment file's own declarations.
     pub info: EnvironmentInfo,
-    /// The listed libraries, strongest first.
+    /// The listed profile libraries, strongest first.
     pub sources: Vec<Source>,
+    /// The listed fastener libraries, strongest first (BC-ENV-002: bolts ride the same
+    /// environment as profiles).
+    pub fastener_sources: Vec<Source>,
+}
+
+impl Environment {
+    /// The resolver over the environment's fastener libraries, strongest first: the same
+    /// [`Lookup`] machinery that answers profile designations answers fastener ones. The two
+    /// namespaces stay separate; a profile library never answers a bolt lookup.
+    #[must_use]
+    pub fn fastener_lookup(&self) -> Lookup {
+        Lookup::new(self.fastener_sources.clone())
+    }
+}
+
+/// Admits one listed library of an environment: its provenance is declared (`bim:library:source`
+/// and `bim:library:licence`, empty is undeclared) and its `bim:library:id` is new among every
+/// library of the environment, profile or fastener. A single-file `--library` needs no
+/// provenance, so the rule lives here, at the environment's edge.
+fn admit_library(
+    sources: &mut Vec<Source>,
+    ids: &mut Vec<String>,
+    path: String,
+    library: Library,
+) -> Result<(), Refusal> {
+    if library.info.source.as_ref().is_none_or(String::is_empty) {
+        return Err(invalid(
+            "a library of the environment declares no bim:library:source",
+        ));
+    }
+    if library.info.licence.as_ref().is_none_or(String::is_empty) {
+        return Err(invalid(
+            "a library of the environment declares no bim:library:licence",
+        ));
+    }
+    if ids.contains(&library.info.id) {
+        return Err(invalid(
+            "two libraries of the environment have the same bim:library:id",
+        ));
+    }
+    ids.push(library.info.id.clone());
+    sources.push(Source { path, library });
+    Ok(())
+}
+
+/// Resolves one listed reference against the environment directory.
+fn resolve_reference(directory: &std::path::Path, reference: &str) -> Result<String, Refusal> {
+    let resolved = directory.join(reference);
+    resolved
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| invalid("an environment library path is not UTF-8"))
 }
 
 /// Loads an environment file and every library it lists, in order.
 ///
 /// Each listed path is resolved against the directory of the environment file and loaded with
-/// [`load`], so every library keeps its own bounds and admission. A library that cannot be
-/// loaded, or two listed libraries with the same `bim:library:id`, refuse the whole environment:
-/// a missing library would silently change which section a designation selects. The containment
-/// of a listed path is lexical; the files themselves are read like any `--library` file.
+/// [`load`] (profile libraries) or [`load_fastener`] (fastener libraries), so every library
+/// keeps its own bounds and admission. A library that cannot be loaded, one that declares no
+/// `source` or `licence`, or two listed libraries with the same `bim:library:id`, refuse the
+/// whole environment: a missing library would silently change which section or bolt a
+/// designation selects. The containment of a listed path is lexical; the files themselves are
+/// read like any `--library` file.
 pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     check_source_path(path).map_err(command)?;
     let bytes = read_file(path, MAX_ENVIRONMENT_BYTES).map_err(|code| match code {
@@ -684,25 +738,24 @@ pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
+    let mut ids: Vec<String> = Vec::new();
     let mut sources: Vec<Source> = Vec::with_capacity(info.libraries.len());
     for reference in &info.libraries {
-        let resolved = directory.join(reference);
-        let resolved = resolved
-            .to_str()
-            .ok_or_else(|| invalid("an environment library path is not UTF-8"))?
-            .to_owned();
+        let resolved = resolve_reference(&directory, reference)?;
         let library = load(&resolved)?;
-        if sources.iter().any(|s| s.library.info.id == library.info.id) {
-            return Err(invalid(
-                "two libraries of the environment have the same bim:library:id",
-            ));
-        }
-        sources.push(Source {
-            path: resolved,
-            library,
-        });
+        admit_library(&mut sources, &mut ids, resolved, library)?;
     }
-    Ok(Environment { info, sources })
+    let mut fastener_sources: Vec<Source> = Vec::with_capacity(info.fastener_libraries.len());
+    for reference in &info.fastener_libraries {
+        let resolved = resolve_reference(&directory, reference)?;
+        let library = load_fastener(&resolved)?;
+        admit_library(&mut fastener_sources, &mut ids, resolved, library)?;
+    }
+    Ok(Environment {
+        info,
+        sources,
+        fastener_sources,
+    })
 }
 
 /// The lookup that a command names: exactly one of a single `--library` file or an
@@ -1457,7 +1510,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "europe-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -1476,7 +1529,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 55);
+        assert_eq!(library.entries.len(), 69);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -1486,7 +1539,14 @@ mod tests {
             else {
                 panic!("{} is not a parametric section", entry.designation);
             };
-            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // The UPE channels are the pack's parallel-flange channel series; the rest are
+            // I and H shapes.
+            let want_family = if entry.designation.starts_with("UPE") {
+                SectionFamily::Channel
+            } else {
+                SectionFamily::IShape
+            };
+            assert_eq!(parametric.family(), want_family);
             assert_eq!(
                 section.standard.as_deref(),
                 Some("EN 10365:2022"),
@@ -1512,7 +1572,9 @@ mod tests {
             designations.push(entry.designation.clone());
         }
         // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
-        // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270).
+        // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270),
+        // and no UPE 250/260 (the channel sequence steps 240 to 270). The taper-flange UPN series
+        // of the same standard is a different geometry family and is not part of the pack.
         assert_eq!(
             designations,
             [
@@ -1522,7 +1584,9 @@ mod tests {
                 "HEB200", "HEB220", "HEB240", "HEB260", "HEB280", "HEB300", "HEB320", "HEB340",
                 "HEB360", "HEB400", "HEB450", "HEB500", "HEB550", "HEB600", "IPE100", "IPE120",
                 "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
-                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600",
+                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600", "UPE100",
+                "UPE120", "UPE140", "UPE160", "UPE180", "UPE200", "UPE220", "UPE240", "UPE270",
+                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80",
             ]
         );
         // Spot checks against the transcribed values.
@@ -1559,13 +1623,161 @@ mod tests {
         assert_eq!(p.values(), [100.0, 100.0, 6.0, 10.0, 12.0]);
         assert_eq!(section.area_mm2, Some(2600.0));
         assert_eq!(section.mass_per_meter_kg, Some(20.4));
-        for absent in ["IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700"] {
+        let upe100 = library.entry("UPE100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upe100.record
+        else {
+            panic!("UPE100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 55.0, 4.5, 7.5, 10.0]);
+        assert_eq!(section.area_mm2, Some(1250.0));
+        assert_eq!(section.mass_per_meter_kg, Some(9.8));
+        let upe300 = library.entry("UPE300").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upe300.record
+        else {
+            panic!("UPE300 is not a parametric section");
+        };
+        assert_eq!(p.values(), [300.0, 100.0, 9.5, 15.0, 15.0]);
+        assert_eq!(section.area_mm2, Some(5660.0));
+        assert_eq!(section.mass_per_meter_kg, Some(44.4));
+        for absent in [
+            "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700", "UPE250", "UPE260",
+            "UPE450", "UPN100", "UPN200",
+        ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
                 ErrorCode::NotFound,
                 "{absent} is not in the series"
             );
         }
+    }
+
+    #[test]
+    fn the_shipped_europe_environment_admits_its_fastener_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "europe");
+        assert_eq!(environment.info.fastener_libraries, ["din-fasteners.usda"]);
+        // The profile namespace is unchanged by the fastener listing: both profile libraries
+        // keep their entries.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.sources[0].library.entries.len(), 69);
+        assert_eq!(environment.sources[1].library.entries.len(), 52);
+        // The DIN fastener set rides the same environment, admitted with declared provenance.
+        assert_eq!(environment.fastener_sources.len(), 1);
+        let bolts = &environment.fastener_sources[0];
+        assert_eq!(bolts.library.info.id, "beamcraft-din-fasteners");
+        assert_eq!(bolts.library.entries.len(), 3);
+        assert!(bolts.library.rejected.is_empty());
+        assert!(
+            bolts
+                .library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty())
+                && bolts
+                    .library
+                    .info
+                    .licence
+                    .as_deref()
+                    .is_some_and(|l| !l.is_empty()),
+            "the shipped fastener library declares its provenance"
+        );
+        // Bolt lookups ride the same resolver machinery, in their own namespace.
+        let lookup = environment.fastener_lookup();
+        let m12 = lookup.find("M12").unwrap().1;
+        assert!(
+            matches!(&m12.record, DefinitionRecord::Fastener { spec } if spec.nominal_diameter_mm == 12.0 && spec.lengths_mm.contains(&80.0))
+        );
+        // A designation the set does not publish is NOT_FOUND, never a near match.
+        for absent in ["M24", "M12x80", "m12"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_environment_library_without_provenance_is_refused() {
+        let dir =
+            std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| {
+            std::fs::write(dir.join(name), text).unwrap();
+        };
+        // A profile library whose licence is missing, and a fastener one whose source is.
+        let library = |id: &str, scope: &str, entry_body: &str, declared: &str| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"{id}\"{declared}\n    }}\n)\ndef Scope \"Library\" {{\n    def Scope \"{scope}\" {{\n{entry_body}\n    }}\n}}\n"
+            )
+        };
+        let profile = library(
+            "p",
+            "Profiles",
+            &entry("A", "P-1", I_BODY),
+            "\n        string \"bim:library:source\" = \"s\"",
+        );
+        let complete = library(
+            "pc",
+            "Profiles",
+            &entry("A", "P-1", I_BODY),
+            "\n        string \"bim:library:source\" = \"s\"\n        string \"bim:library:licence\" = \"MPL-2.0\"",
+        );
+        let fastener = library(
+            "f",
+            "Fasteners",
+            &fastener_entry("B", "F-1", BOLT_BODY),
+            "\n        string \"bim:library:licence\" = \"MPL-2.0\"",
+        );
+        write("profiles-nolicence.usda", &profile);
+        write("profiles-complete.usda", &complete);
+        write("fasteners-nosource.usda", &fastener);
+        let env = |profiles: &str, fasteners: Option<&str>| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}\n    }}\n)\n",
+                match fasteners {
+                    Some(name) => format!(
+                        "\n        string[] \"bim:environment:fastener-libraries\" = [\"{name}\"]"
+                    ),
+                    None => String::new(),
+                }
+            )
+        };
+        write(
+            "no-profile-licence.usda",
+            &env("profiles-nolicence.usda", None),
+        );
+        write(
+            "no-fastener-source.usda",
+            &env("profiles-complete.usda", Some("fasteners-nosource.usda")),
+        );
+        let refused =
+            load_environment(dir.join("no-profile-licence.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("licence"),
+            "the missing record is named: {refused:?}"
+        );
+        let refused =
+            load_environment(dir.join("no-fastener-source.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("source"),
+            "the fastener library's missing record is named: {refused:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1576,7 +1788,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "russia-gost-26020-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -1595,7 +1807,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 55);
+        assert_eq!(library.entries.len(), 81);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -1615,8 +1827,9 @@ mod tests {
             // The closed-form area of the declared dimensions must match the declared catalogue
             // area (the D3 1 percent warning never fires) and the declared mass must be that
             // area at 7850 kg/m3 within the standard's one-decimal rounding. 40K3 and 70B2 sit
-            // 0.073 and 0.074 off because GOST itself truncated or rounded from unrounded
-            // geometry there; the published pairs are taken as-is.
+            // 0.073 and 0.074 off, and among the Ш rows 50Sh2, 50Sh4, 60Sh1, 70Sh3 and 70Sh4 sit
+            // 0.05..0.07 off, because GOST itself truncated or rounded from unrounded geometry
+            // there; the published pairs are taken as-is.
             assert!(
                 entry.record.declared_area_warning().is_none(),
                 "{}",
@@ -1632,16 +1845,19 @@ mod tests {
             );
             designations.push(entry.designation.clone());
         }
-        // The beam (B) and column (K) series exactly as GOST 26020-83 publishes them: 37 + 18
-        // designations. The designations that belong only to the newer GOST R 57837-2017 (30K4,
-        // 35K4, 50K1..50K5) and the unshipped wide-flange (Sh) and Д series are not here.
+        // The beam (B), wide-flange (Sh) and column (K) series exactly as GOST 26020-83 publishes
+        // them: 37 + 26 + 18 designations. The designations that belong only to the newer
+        // GOST R 57837-2017 (30K4, 35K4, 50K1..50K5, 80Sh1..100Sh5) and the unshipped Д series
+        // are not here.
         let mut expected = vec![
             "10B1", "12B1", "12B2", "14B1", "14B2", "16B1", "16B2", "18B1", "18B2", "20B1", "23B1",
             "26B1", "26B2", "30B1", "30B2", "35B1", "35B2", "40B1", "40B2", "45B1", "45B2", "50B1",
             "50B2", "55B1", "55B2", "60B1", "60B2", "70B1", "70B2", "80B1", "80B2", "90B1", "90B2",
-            "100B1", "100B2", "100B3", "100B4", "20K1", "20K2", "23K1", "23K2", "26K1", "26K2",
-            "26K3", "30K1", "30K2", "30K3", "35K1", "35K2", "35K3", "40K1", "40K2", "40K3", "40K4",
-            "40K5",
+            "100B1", "100B2", "100B3", "100B4", "20Sh1", "23Sh1", "26Sh1", "26Sh2", "30Sh1",
+            "30Sh2", "30Sh3", "35Sh1", "35Sh2", "35Sh3", "40Sh1", "40Sh2", "40Sh3", "50Sh1",
+            "50Sh2", "50Sh3", "50Sh4", "60Sh1", "60Sh2", "60Sh3", "60Sh4", "70Sh1", "70Sh2",
+            "70Sh3", "70Sh4", "70Sh5", "20K1", "20K2", "23K1", "23K2", "26K1", "26K2", "26K3",
+            "30K1", "30K2", "30K3", "35K1", "35K2", "35K3", "40K1", "40K2", "40K3", "40K4", "40K5",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -1662,10 +1878,622 @@ mod tests {
         };
         spot("30B1", [296.0, 140.0, 5.8, 8.5, 15.0], 4192.0, 32.9);
         spot("100B4", [1013.0, 320.0, 19.5, 32.5, 30.0], 40060.0, 314.5);
+        spot("20Sh1", [193.0, 150.0, 6.0, 9.0, 13.0], 3895.0, 30.6);
+        spot("30Sh1", [291.0, 200.0, 8.0, 11.0, 18.0], 6831.0, 53.6);
+        spot("70Sh5", [718.0, 320.0, 23.0, 36.5, 30.0], 38970.0, 305.9);
         spot("20K1", [195.0, 200.0, 6.5, 10.0, 13.0], 5282.0, 41.5);
         spot("40K5", [431.0, 400.0, 23.0, 35.5, 22.0], 37100.0, 291.2);
         for absent in [
-            "30K4", "35K4", "50K1", "20B2", "25B1", "30Sh1", "30Ш1", "24ДБ1",
+            "30K4", "35K4", "50K1", "20B2", "25B1", "80Sh1", "30Ш1", "24ДБ1",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_australia_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/profiles-as-nzs-3679-1.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "australia-asnzs-3679-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 41);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("AS/NZS 3679.1:2016"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires) and the designation mass must be that
+            // area at 7850 kg/m3 within the rounding the published series uses. Three rows sit
+            // widest off because the assortment names carry masses rounded from an earlier
+            // re-measurement generation (310UB40.4 1.22 percent, 610UB101 1.03 percent,
+            // 200UB22.3 1.02 percent); the published pairs are taken as-is.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.013,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The UB and UC series exactly as AS/NZS 3679.1:2016 publishes them: 28 + 13
+        // designations, each carrying its published mass per metre. The older designation
+        // generation (150UB17.1, 200UB29.7, 250UB31.3, 460UB82.4, 360UB44.3, 310UC97.7,
+        // 150UC30.6) and the sizes no longer rolled (530UB72.4, 460UB61.2, 310UC107,
+        // 250UC66.9, 250UC80.5, 200UC41.7, the 350UC series) are not here.
+        let mut expected = vec![
+            "150UB14.0",
+            "150UB18.0",
+            "180UB16.1",
+            "180UB18.1",
+            "180UB22.2",
+            "200UB18.2",
+            "200UB22.3",
+            "200UB25.4",
+            "200UB29.8",
+            "250UB25.7",
+            "250UB31.4",
+            "250UB37.3",
+            "310UB32.0",
+            "310UB40.4",
+            "310UB46.2",
+            "360UB44.7",
+            "360UB50.7",
+            "360UB56.7",
+            "410UB53.7",
+            "410UB59.7",
+            "460UB67.1",
+            "460UB74.6",
+            "460UB82.1",
+            "530UB82.0",
+            "530UB92.4",
+            "610UB101",
+            "610UB113",
+            "610UB125",
+            "100UC14.8",
+            "150UC23.4",
+            "150UC30.0",
+            "150UC37.2",
+            "200UC46.2",
+            "200UC52.2",
+            "200UC59.5",
+            "250UC72.9",
+            "250UC89.5",
+            "310UC96.8",
+            "310UC118",
+            "310UC137",
+            "310UC158",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, spanning both series.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("610UB125", [611.6, 229.0, 11.9, 19.6, 14.0], 16000.0, 125.0);
+        spot("150UB14.0", [150.0, 75.0, 5.0, 7.0, 8.0], 1780.0, 14.0);
+        spot("310UC158", [327.2, 311.0, 15.7, 25.0, 16.5], 20100.0, 158.0);
+        spot("100UC14.8", [97.0, 99.0, 5.0, 7.0, 10.0], 1890.0, 14.8);
+        for absent in [
+            "150UB17.1",
+            "200UB29.7",
+            "250UB31.3",
+            "460UB82.4",
+            "360UB44.3",
+            "530UB72.4",
+            "460UB61.2",
+            "310UC97.7",
+            "150UC30.6",
+            "310UC107",
+            "250UC66.9",
+            "250UC80.5",
+            "200UC41.7",
+            "350UC153",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_europe_hollow_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/profiles-en-10219.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "europe-en-10219-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 52);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("EN 10219-2:2006"),
+                "{}",
+                entry.designation
+            );
+            // These are closed (hollow) sections, so the declared catalogue area is checked
+            // against the hollow closed form, not the I/H formula. EN 10219-2 computes the
+            // sectional properties with the outer corner radius 2t up to a 6 mm wall, 2.5t
+            // from 6 to 10 mm and 3t above 10 mm, and the inner radius is the outer minus
+            // the wall; the closed form of that geometry must reproduce the declared area
+            // within the standard's three-significant-figure print rounding (0.55 percent),
+            // and the declared mass must be that area at 7850 kg/m3 within the same rounding.
+            let (exact_area, exact_mass) = match (parametric.family(), parametric.values()) {
+                (SectionFamily::Rhs, &[h, b, t, r]) => {
+                    let want_radius = if t <= 6.0 {
+                        2.0 * t
+                    } else if t <= 10.0 {
+                        2.5 * t
+                    } else {
+                        3.0 * t
+                    };
+                    assert!(
+                        (r - want_radius).abs() <= 1e-9,
+                        "{}: corner radius {r} for a {t} mm wall",
+                        entry.designation
+                    );
+                    let inner = (r - t).max(0.0);
+                    let k = 1.0 - core::f64::consts::PI / 4.0;
+                    let area = (h * b - 4.0 * k * r * r)
+                        - ((h - 2.0 * t) * (b - 2.0 * t) - 4.0 * k * inner * inner);
+                    (area, area * 7850.0 / 1.0e6)
+                }
+                (SectionFamily::Chs, &[d, t]) => {
+                    let area = core::f64::consts::PI * t * (d - t);
+                    (area, area * 7850.0 / 1.0e6)
+                }
+                _ => panic!("{} is not a hollow section", entry.designation),
+            };
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            assert!(
+                (area - exact_area).abs() / exact_area <= 0.0055,
+                "{}: area {area} mm2 vs hollow closed form {exact_area}",
+                entry.designation
+            );
+            assert!(
+                (mass - exact_mass).abs() / exact_mass <= 0.0055,
+                "{}: mass {mass} kg/m vs hollow closed form {exact_mass}",
+                entry.designation
+            );
+            // The D3 1 percent warning never fires for these rows.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The shipped rows are a curated subset of the common EN 10219-2 sizes; the loader
+        // reports them in designation order.
+        let mut expected = vec![
+            "CHS114.3x4.0",
+            "CHS114.3x5.0",
+            "CHS139.7x5.0",
+            "CHS168.3x5.0",
+            "CHS219.1x6.0",
+            "CHS273.0x8.0",
+            "CHS323.9x8.0",
+            "CHS33.7x3.0",
+            "CHS406.4x10.0",
+            "CHS42.4x3.0",
+            "CHS48.3x3.0",
+            "CHS60.3x3.0",
+            "CHS76.1x3.0",
+            "CHS76.1x4.0",
+            "CHS88.9x4.0",
+            "RHS100x50x4",
+            "RHS100x50x5",
+            "RHS120x60x5",
+            "RHS120x80x5",
+            "RHS150x100x5",
+            "RHS150x100x8",
+            "RHS160x80x6",
+            "RHS200x100x6",
+            "RHS200x120x8",
+            "RHS250x150x8",
+            "RHS300x200x8",
+            "RHS60x40x3",
+            "RHS80x40x4",
+            "SHS100x100x4",
+            "SHS100x100x5",
+            "SHS100x100x6",
+            "SHS120x120x5",
+            "SHS120x120x6",
+            "SHS140x140x5",
+            "SHS150x150x5",
+            "SHS150x150x6",
+            "SHS150x150x8",
+            "SHS160x160x6",
+            "SHS180x180x6",
+            "SHS200x200x10",
+            "SHS200x200x12",
+            "SHS200x200x6",
+            "SHS200x200x8",
+            "SHS250x250x8",
+            "SHS300x300x6",
+            "SHS350x350x10",
+            "SHS50x50x3",
+            "SHS50x50x4",
+            "SHS60x60x3",
+            "SHS60x60x4",
+            "SHS80x80x4",
+            "SHS80x80x5",
+        ];
+        expected.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values: one square, one rectangular and one
+        // circular row, including the 2.5t and 3t corner-radius bands.
+        let spot = |designation: &str, values: &[f64], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("SHS100x100x5", &[100.0, 100.0, 5.0, 10.0], 1840.0, 14.4);
+        spot("SHS200x200x10", &[200.0, 200.0, 10.0, 25.0], 7260.0, 57.0);
+        spot("SHS200x200x12", &[200.0, 200.0, 12.0, 36.0], 8410.0, 66.0);
+        spot("RHS200x100x6", &[200.0, 100.0, 6.0, 12.0], 3360.0, 26.4);
+        spot("CHS219.1x6.0", &[219.1, 6.0], 4020.0, 31.4);
+        // Designations and wall thicknesses the shipped series does not publish are refused,
+        // not silently substituted.
+        for absent in [
+            "SHS110x110x5",
+            "SHS50x50x3.2",
+            "SHS200x200x9",
+            "RHS100x70x4",
+            "RHS600x400x16",
+            "CHS100x5",
+            "CHS219.1x6.3",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_india_npb_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/profiles-is808-npb.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "india-is808-npb-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 70);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("IS 808:2021"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires; the worst row sits at 0.94 percent,
+            // an area column rounded to three significant digits) and the declared mass must
+            // match the closed-form area at 7850 kg/m3: the published masses are computed from
+            // unrounded geometry, so they follow the geometry and not the rounded printed area
+            // (worst observed 0.0144 kg/m).
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_geometry = parametric.exact_area_mm2() * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_geometry).abs() <= 0.05,
+                "{}: mass {mass} kg/m vs geometry-derived {mass_from_geometry}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The narrow parallel flange beam (NPB) series exactly as IS 808:2021 table 3
+        // publishes it: 70 rows, the assortment of IS 12778:2004 amalgamated into the
+        // 2021 edition. The designation mass is the 2021 printed value (the superseded
+        // IS 12778:2004 rounding of the same row, 36.52, is not here).
+        let mut expected = vec![
+            "NPB100x55x8.10",
+            "NPB120x60x10.37",
+            "NPB140x70x12.89",
+            "NPB160x80x15.77",
+            "NPB180x90x15.37",
+            "NPB180x90x18.80",
+            "NPB180x90x21.27",
+            "NPB200x100x18.43",
+            "NPB200x100x22.36",
+            "NPB200x100x25.09",
+            "NPB200x130x27.37",
+            "NPB200x130x31.56",
+            "NPB200x150x30.46",
+            "NPB200x165x35.69",
+            "NPB200x165x42.48",
+            "NPB200x165x48.00",
+            "NPB220x110x22.18",
+            "NPB220x110x26.20",
+            "NPB220x110x29.35",
+            "NPB240x120x26.15",
+            "NPB240x120x30.71",
+            "NPB240x120x34.32",
+            "NPB250x125x30.11",
+            "NPB250x150x34.08",
+            "NPB250x150x39.78",
+            "NPB250x150x46.48",
+            "NPB250x175x43.94",
+            "NPB270x135x30.73",
+            "NPB270x135x36.07",
+            "NPB270x135x42.26",
+            "NPB300x150x36.53",
+            "NPB300x150x42.24",
+            "NPB300x150x49.32",
+            "NPB300x165x39.88",
+            "NPB300x165x45.76",
+            "NPB300x165x53.46",
+            "NPB300x200x59.57",
+            "NPB300x200x66.75",
+            "NPB300x200x75.37",
+            "NPB330x160x42.97",
+            "NPB330x160x49.15",
+            "NPB330x160x57.01",
+            "NPB350x170x50.22",
+            "NPB350x170x57.10",
+            "NPB350x170x66.05",
+            "NPB350x250x79.18",
+            "NPB400x180x57.38",
+            "NPB400x180x66.31",
+            "NPB400x180x75.67",
+            "NPB400x200x67.28",
+            "NPB450x190x67.16",
+            "NPB450x190x77.58",
+            "NPB450x190x92.37",
+            "NPB500x200x107.32",
+            "NPB500x200x79.36",
+            "NPB500x200x90.69",
+            "NPB550x210x105.52",
+            "NPB550x210x122.52",
+            "NPB550x210x92.08",
+            "NPB600x220x107.57",
+            "NPB600x220x122.45",
+            "NPB600x220x154.47",
+            "NPB700x250x113.46",
+            "NPB700x250x128.41",
+            "NPB700x250x143.42",
+            "NPB700x250x153.87",
+            "NPB700x250x171.48",
+            "NPB750x270x145.29",
+            "NPB750x270x174.54",
+            "NPB750x270x202.49",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, including the deepest row with its
+        // production-technology root radius of 17 mm and the row whose 2021 area re-rounding
+        // differs from IS 12778:2004 by one final digit.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("NPB100x55x8.10", [100.0, 55.0, 4.1, 5.7, 7.0], 1030.0, 8.1);
+        spot(
+            "NPB300x150x42.24",
+            [300.0, 150.0, 7.1, 10.7, 15.0],
+            5380.0,
+            42.24,
+        );
+        spot(
+            "NPB400x200x67.28",
+            [400.0, 200.0, 8.0, 13.0, 21.0],
+            8570.0,
+            67.28,
+        );
+        spot(
+            "NPB750x270x202.49",
+            [770.0, 270.0, 15.6, 26.6, 17.0],
+            25700.0,
+            202.49,
+        );
+        // Independent cross-check against the shipped `europe` pack: seventeen NPB rows are the
+        // EN 10365 IPE sizes rolled under the Indian designation, and their dimensions, areas
+        // and masses must agree with that separately transcribed edition (within its printed
+        // rounding).
+        let europe = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/profiles-en-10365.usda"
+        ))
+        .unwrap();
+        let ipe_twins: Vec<(&str, &[f64], f64, f64)> = europe
+            .entries
+            .iter()
+            .filter_map(|e| match &e.record {
+                DefinitionRecord::SectionProfile {
+                    shape: SectionShape::Parametric(p),
+                    section,
+                } => Some((
+                    e.designation.as_str(),
+                    p.values(),
+                    section.area_mm2?,
+                    section.mass_per_meter_kg?,
+                )),
+                _ => None,
+            })
+            .collect();
+        let mut ipe_rows = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                continue;
+            };
+            let values = p.values();
+            if let Some((designation, _, twin_area, twin_mass)) = ipe_twins
+                .iter()
+                .find(|(_, twin_values, _, _)| *twin_values == values)
+            {
+                ipe_rows += 1;
+                assert!(
+                    (section.area_mm2.unwrap() - twin_area).abs() <= 100.0,
+                    "{} vs {designation}: area",
+                    entry.designation
+                );
+                // The europe pack rounds the heaviest sections to three significant digits
+                // (IPE550: 106 against the standard's 105.5, carried here as 105.52), so the
+                // mass agreement is 0.5 kg/m on those rows.
+                assert!(
+                    (section.mass_per_meter_kg.unwrap() - twin_mass).abs() <= 0.5,
+                    "{} vs {designation}: mass",
+                    entry.designation
+                );
+            }
+        }
+        // Seventeen, not eighteen: IPE 250 is not part of the shipped `europe` pack.
+        assert_eq!(
+            ipe_rows, 17,
+            "the IPE-exact NPB rows agree with the europe pack"
+        );
+        // The sloping-flange series of the same edition (MB/WB/SC, tables 1 and 5), the
+        // toe-radius channels (table 8), the angles and the bearing piles are not shipped.
+        for absent in [
+            "MB300",
+            "SC200",
+            "WB200",
+            "MCP75",
+            "ISA50x50x6",
+            "PBP200x43.85",
+            "NPB300x150x36.52",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,

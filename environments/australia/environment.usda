@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "australia"
+        string "bim:environment:title" = "Australia (AS/NZS 3679.1)"
+        string[] "bim:environment:libraries" = ["profiles-as-nzs-3679-1.usda"]
+    }
+)

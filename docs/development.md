@@ -377,7 +377,8 @@ packages and attaches them to a GitHub release:
 
 Every package holds `beamcraft`, `beamcraft-ui`, the Inter font with its
 OFL-1.1 licence (in the .app under `Contents/Resources/`), the shipped libraries
-of `assets/libraries/` and the project documents.
+of `assets/libraries/`, the environments of `environments/` (which carry the
+DIN fastener set) and the project documents.
 Build the package executables and package them:
 
 ```sh
