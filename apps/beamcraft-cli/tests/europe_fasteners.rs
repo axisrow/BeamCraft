@@ -257,8 +257,10 @@ fn assert_series_row(entry: &Json, designation: &str, facts: [f64; 8], expected:
     assert_eq!(num(entry, &["washer_outer_diameter_mm"]), washer_outer);
     assert_eq!(num(entry, &["washer_inner_diameter_mm"]), washer_inner);
     assert_eq!(num(entry, &["washer_thickness_mm"]), washer_thickness);
-    // EN 1090-2 table 11 normal round holes: two millimetres over the bolt up to M24 and three
-    // from M27, which is the 26/30/33 hole series the follow-up rows ship.
+    // EN 1090-2 table 11 normal round holes for the follow-up sizes only: two millimetres over
+    // the bolt at M24 and three from M27, the 26/30/33 hole series these rows ship. The M12 row
+    // is not part of this series: it keeps its A14.1 close-fit 13 mm hole (the EN 1090-2 normal
+    // value for M12 is 14) and is asserted by the older test above.
     assert_eq!(lengths(entry), expected);
     assert!(at(entry, &["washer_under_head"]).boolean().unwrap());
     assert!(at(entry, &["washer_under_nut"]).boolean().unwrap());

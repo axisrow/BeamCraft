@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    doc = "BeamCraft European hex-bolt set: the dimensions of DIN EN ISO 4014 (hex head bolt), DIN EN ISO 4032 (nut) and DIN EN ISO 7089 (plain washer), re-entered by hand as our own data; standard hole clearances follow the EN 1090-2 standard hole series. No text or table is copied from a standard document. BeamCraft contributors, MPL-2.0. Not for design use."
+    doc = "BeamCraft European hex-bolt set: the dimensions of DIN EN ISO 4014 (hex head bolt), DIN EN ISO 4032 (nut) and DIN EN ISO 7089 (plain washer), re-entered by hand as our own data; the M24/27/30 hole clearances follow the EN 1090-2 table 11 normal round holes (26/30/33 mm, two millimetres over the bolt up to M24 and three from M27), while the M12 row keeps its A14.1 close-fit 13 mm hole (the EN 1090-2 normal value for M12 is 14). No text or table is copied from a standard document. BeamCraft contributors, MPL-2.0. Not for design use."
     metersPerUnit = 0.001
     upAxis = "Z"
     customLayerData = {
