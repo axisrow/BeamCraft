@@ -504,10 +504,7 @@ fn a_subtree_check_is_quiet_about_declared_members_outside_it() {
     let base = f.plate(&steel, "10", "0,0,0");
     let column = f.plate(&steel, "10", "0,0,10");
     let ghost = "019a7bf0-0000-7000-8000-00000000dead";
-    f.intent(
-        &[&base, &column, ghost],
-        &[&format!("{base}:weld:{ghost}")],
-    );
+    f.intent(&[&base, &column, ghost], &[&format!("{base}:weld:{ghost}")]);
     let (code, reply) = f.check(&["--element", &base]);
     assert_eq!(code, 0, "{reply:?}");
     assert_eq!(text(&reply, "status"), "unknown");
