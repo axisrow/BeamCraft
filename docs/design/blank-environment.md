@@ -30,7 +30,9 @@ saved setting.
   `environments/india/` holds the IS 808:2021
   narrow (NPB) and wide (WPB) parallel flange beam series, and `environments/china/`
   (2026-11-15) holds the GB/T 706-2016 tapered-flange I-beam and channel series through the
-  `tapered_i` and `tapered_c` section families (see `ATTRIBUTION.md`).
+  `tapered_i` and `tapered_c` section families and, since 2026-11-15, the GB/T 5782 hex-bolt
+  fastener set (M12/16/20/24, the environment's fastener library, BC-ENV-002; see
+  `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or
