@@ -35,7 +35,7 @@ pub const LIBRARIES_DIR: &str = "libraries";
 pub const NEUTRAL_ENVIRONMENT_ID: &str = "blank";
 /// Largest environment file, in bytes.
 pub const MAX_ENVIRONMENT_BYTES: usize = 1024 * 1024;
-/// Most libraries one environment may list, per list (profile and fastener); more is
+/// Most libraries one environment may list, per list (profile, fastener and material); more is
 /// `LIMIT_EXCEEDED`.
 pub const MAX_ENVIRONMENT_LIBRARIES: usize = 32;
 /// Most directory entries [`list_environments`] looks at in one folder.
@@ -58,6 +58,9 @@ pub struct EnvironmentInfo {
     /// `bim:environment:fastener-libraries`, strongest first, exactly as written; empty when the
     /// environment names none.
     pub fastener_libraries: Vec<String>,
+    /// `bim:environment:material-libraries`, strongest first, exactly as written; empty when the
+    /// environment names none.
+    pub material_libraries: Vec<String>,
     /// `bim:environment:presets`, the contained relative path of the part presets, when declared.
     pub presets: Option<String>,
 }
@@ -94,8 +97,8 @@ fn contained_reference(reference: &str) -> bool {
 }
 
 /// One `bim:environment:*-libraries` array: a non-empty ordered list of contained relative
-/// paths, none of them twice (`seen` spans both lists, so the same file cannot serve as a
-/// profile and a fastener library of one environment).
+/// paths, none of them twice (`seen` spans every list, so the same file cannot serve as a
+/// profile, a fastener and a material library of one environment).
 fn library_list(items: &[Value], seen: &mut Vec<String>) -> Result<Vec<String>, Refusal> {
     if items.is_empty() {
         return Err(invalid("the environment lists no libraries"));
@@ -131,12 +134,13 @@ fn library_list(items: &[Value], seen: &mut Vec<String>) -> Result<Vec<String>, 
 /// The environment is a USD layer whose `customLayerData` carries `bim:environment:id`, an
 /// optional `bim:environment:title`, `bim:environment:libraries`, a non-empty ordered list of
 /// contained relative profile-library paths, and optionally
-/// `bim:environment:fastener-libraries`, the same kind of list for the environment's fastener
-/// libraries; both are strongest first. A list entry that is not contained is
-/// `PERMISSION_DENIED` and more than 32 libraries in one list is `LIMIT_EXCEEDED`; anything
-/// else malformed is `INVALID_ARGUMENT`. (The layer engine does not expose composition arcs,
-/// and composing the libraries as sublayers would merge entries instead of letting the
-/// strongest library answer, so the order is an explicit list; see the A07 design note.)
+/// `bim:environment:fastener-libraries` and `bim:environment:material-libraries`, the same kind
+/// of list for the environment's fastener and material libraries; all are strongest first. A list
+/// entry that is not contained is `PERMISSION_DENIED` and more than 32 libraries in one list is
+/// `LIMIT_EXCEEDED`; anything else malformed is `INVALID_ARGUMENT`. (The layer engine does not
+/// expose composition arcs, and composing the libraries as sublayers would merge entries instead
+/// of letting the strongest library answer, so the order is an explicit list; see the A07 design
+/// note.)
 ///
 /// # Errors
 /// A typed [`Refusal`] as described above.
@@ -177,6 +181,15 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
             ));
         }
     };
+    let material_libraries = match data.get("bim:environment:material-libraries") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => library_list(items, &mut seen)?,
+        Some(_) => {
+            return Err(invalid(
+                "the environment material libraries are not a string list",
+            ));
+        }
+    };
     let presets = match data.get("bim:environment:presets") {
         None => None,
         Some(Value::Text(reference)) if contained_reference(reference) => Some(reference.clone()),
@@ -195,6 +208,7 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
         bytes: layer.bytes,
         libraries,
         fastener_libraries,
+        material_libraries,
         presets,
     })
 }
@@ -493,7 +507,7 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(twice.code, ErrorCode::InvalidArgument);
-        // An empty list is no list; a non-string entry is refused.
+        // An empty list is no list.
         let empty = parse_environment(
             format!(
                 "{}        string[] \"bim:environment:fastener-libraries\" = []\n    }}\n)\n",
@@ -503,15 +517,59 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(empty.code, ErrorCode::InvalidArgument);
+        // A non-string entry is refused for the material list too, and the same file cannot
+        // serve as a profile and a material library of one environment.
         let mistyped = parse_environment(
             format!(
-                "{}        string \"bim:environment:fastener-libraries\" = \"a.usda\"\n    }}\n)\n",
+                "{}        string \"bim:environment:material-libraries\" = \"a.usda\"\n    }}\n)\n",
                 layer_head("e")
             )
             .into_bytes(),
         )
         .unwrap_err();
         assert_eq!(mistyped.code, ErrorCode::InvalidArgument);
+        let twice = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:material-libraries\" = [\"a.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(twice.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn an_environment_may_declare_material_libraries() {
+        let declared = format!(
+            "{}        string[] \"bim:environment:material-libraries\" = [\"grades.usda\", \"sub/more.usda\"]\n    }}\n)\n",
+            layer_head("e")
+        );
+        let info = parse_environment(declared.into_bytes()).unwrap();
+        assert_eq!(info.material_libraries, ["grades.usda", "sub/more.usda"]);
+        assert_eq!(info.libraries, ["a.usda"]);
+        let none = parse_environment(layer("e", "[\"a.usda\"]").into_bytes()).unwrap();
+        assert_eq!(none.material_libraries, Vec::<String>::new());
+        // The same containment rules as the other lists.
+        let escaped = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:material-libraries\" = [\"../m.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(escaped.code, ErrorCode::PermissionDenied);
+        // One file cannot serve as a fastener and a material library of one environment.
+        let shared = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = [\"g.usda\"]\n        string[] \"bim:environment:material-libraries\" = [\"g.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(shared.code, ErrorCode::InvalidArgument);
     }
 
     #[test]

@@ -26,6 +26,12 @@
 //! library file is written only by [`add_entry`], which renders the whole library again and reads
 //! it back before it installs the file.
 //!
+//! Fastener libraries (A14.1, #668) and material libraries (#636) ride the same machinery under
+//! `/Library/Fasteners` and `/Library/Materials`: the fastener entries carry
+//! `steel:fastener:*` attributes, the material entries `steel:material:*` (grade, density,
+//! optional standard and display name), and both are admitted by the same rules, provenance
+//! included, when an environment lists them.
+//!
 //! The Layering work adds the layers above the environment. Every [`Source`] of a lookup names
 //! its layer, strongest first: the user library named on the command line, the user-owned firm
 //! layer (`libraries/` in the application data, loaded by [`load_firm`], never written by the
@@ -33,9 +39,11 @@
 //! own copy of its environment is the project layer of [`project_library_chain`], and the
 //! shipped neutral environment ([`neutral_environment`]) is the built-in fallback every project
 //! chain ends with. When a weaker layer declares a designation a stronger one already answers,
-//! [`Lookup::shadowed`] reports it with both layers. Fastener entries ride the same machinery in
-//! their own namespace ([`Environment::fastener_lookup`], [`ProjectChain::fastener_lookup`]);
-//! material libraries join the same chain when they arrive.
+//! [`Lookup::shadowed`] reports it with both layers. Profiles, fasteners and materials ride the
+//! same machinery in their own namespaces ([`Environment::fastener_lookup`],
+//! [`Environment::material_lookup`], [`ProjectChain::fastener_lookup`],
+//! [`ProjectChain::material_lookup`]), and every namespace of the firm layer feeds its own
+//! chain.
 //!
 //! Limits, none of them hidden: a bad entry is reported and skipped, while a duplicate
 //! designation refuses the whole library; a firm file that does not read is reported and skipped
@@ -72,6 +80,8 @@ pub const MAX_LIBRARY_ENTRIES: usize = foreign::MAX_LIBRARY_ENTRIES;
 const ENTRY_PARENT: &str = "/Library/Profiles";
 /// Parent path of every fastener entry prim (A14.1).
 const FASTENER_ENTRY_PARENT: &str = "/Library/Fasteners";
+/// Parent path of every material entry prim (#636).
+const MATERIAL_ENTRY_PARENT: &str = "/Library/Materials";
 
 /// The layer of a source that was named on the command line: an explicit single library.
 pub const LAYER_LIBRARY: &str = "library";
@@ -379,30 +389,44 @@ pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
     Ok(load_bytes_as(bytes, Some(FASTENER_ENTRY_PARENT), decode_fastener_record)?.0)
 }
 
-/// [`load_bytes`] for a firm-layer file, whose entries may sit under either entry parent: the
-/// profile and fastener admission runs in one pass over the same opened layer and every entry
-/// joins the half of its own parent, so a mixed file feeds both namespaces of the firm layer.
-/// Either half may be empty; both carry the file's own declarations.
-pub fn load_firm_bytes(bytes: Vec<u8>) -> Result<(Library, Library), Refusal> {
+/// [`load`] for the material library at `path` (#636): the same layer format and loading rules,
+/// entries under `/Library/Materials` carrying `steel:material:*` attributes. The designation of
+/// an entry is its grade.
+pub fn load_material(path: &str) -> Result<Library, Refusal> {
+    check_source_path(path).map_err(command)?;
+    load_material_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
+}
+
+/// [`load_bytes`] for the bytes of a material library.
+pub fn load_material_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
+    Ok(load_bytes_as(bytes, Some(MATERIAL_ENTRY_PARENT), decode_material_record)?.0)
+}
+
+/// [`load_firm_bytes`] for a firm-layer file, whose entries may sit under any entry parent: the
+/// profile, fastener and material admission runs in one pass over the same opened layer and
+/// every entry joins the half of its own parent, so a mixed file feeds every namespace of the
+/// firm layer. Any half may be empty; all carry the file's own declarations.
+pub fn load_firm_bytes(bytes: Vec<u8>) -> Result<(Library, Library, Library), Refusal> {
     load_bytes_as(bytes, None, decode_record)
 }
 
 /// [`load_firm_bytes`] for the library file at `path`.
-pub fn load_firm_file(path: &str) -> Result<(Library, Library), Refusal> {
+pub fn load_firm_file(path: &str) -> Result<(Library, Library, Library), Refusal> {
     check_source_path(path).map_err(command)?;
     load_firm_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
 }
 
-/// [`load_bytes`] for one entry parent path (or `None` for a firm file, where both entry
-/// parents are admitted and each entry joins the half of its own parent) and the profile entry
+/// [`load_bytes`] for one entry parent path (or `None` for a firm file, where every entry
+/// parent is admitted and each entry joins the half of its own parent) and the profile entry
 /// decoder; the layer budgets, identity, admission and refused-entry reporting are shared with
-/// the profile loading. The second library is the fastener half of a firm file; when a single
-/// parent was named it is an empty library, because the one named parent is the first answer.
+/// the profile loading. The second and third libraries are the fastener and material halves of
+/// a firm file; when a single parent was named they are empty libraries, because the one named
+/// parent is the answer.
 fn load_bytes_as(
     bytes: Vec<u8>,
     entry_parent: Option<&str>,
     decode: fn(&Prim, &str) -> Result<DefinitionRecord, Refusal>,
-) -> Result<(Library, Library), Refusal> {
+) -> Result<(Library, Library, Library), Refusal> {
     if bytes.len() > MAX_LIBRARY_BYTES {
         return Err(io_error(ErrorCode::LimitExceeded));
     }
@@ -419,20 +443,36 @@ fn load_bytes_as(
     )?;
     let info = read_info(&opened.metadata, digest, size, binary)?;
     let prims = read_all(&reader, &opened, &control)?;
-    let mut entries = Vec::new();
-    let mut rejected = Vec::new();
-    // Designation uniqueness is per namespace: a mixed firm file may name a profile and a
-    // fastener the same, but never two of one kind.
-    let mut seen = BTreeSet::new();
-    let mut seen_fastener = BTreeSet::new();
-    let mut fastener_entries = Vec::new();
-    let mut fastener_rejected = Vec::new();
+    // The three namespaces of a firm file, collected by their own entry parents in one pass.
+    // Designation uniqueness is per namespace: a mixed firm file may name a profile, a bolt and
+    // a grade the same, but never two of one kind.
+    struct Half {
+        entries: Vec<LibraryEntry>,
+        rejected: Vec<RejectedEntry>,
+        seen: BTreeSet<String>,
+    }
+    impl Half {
+        fn new() -> Self {
+            Self {
+                entries: Vec::new(),
+                rejected: Vec::new(),
+                seen: BTreeSet::new(),
+            }
+        }
+    }
+    let mut profiles = Half::new();
+    let mut fasteners = Half::new();
+    let mut materials = Half::new();
     let mut count = 0usize;
     for prim in prims.iter().filter(|p| {
         let parent = p.path.rsplit_once('/').map(|(parent, _)| parent);
         match entry_parent {
             Some(one) => parent == Some(one),
-            None => parent == Some(ENTRY_PARENT) || parent == Some(FASTENER_ENTRY_PARENT),
+            None => {
+                parent == Some(ENTRY_PARENT)
+                    || parent == Some(FASTENER_ENTRY_PARENT)
+                    || parent == Some(MATERIAL_ENTRY_PARENT)
+            }
         }
     }) {
         count += 1;
@@ -442,51 +482,47 @@ fn load_bytes_as(
                 "the library has more than 4096 entries",
             ));
         }
-        let fastener_prim = entry_parent.is_none()
-            && prim.path.rsplit_once('/').map(|(parent, _)| parent) == Some(FASTENER_ENTRY_PARENT);
-        let attribute = if fastener_prim {
-            "steel:fastener:designation"
-        } else {
-            designation_attribute(entry_parent.unwrap_or(ENTRY_PARENT))
+        let prim_parent = prim.path.rsplit_once('/').map(|(parent, _)| parent);
+        // The filter above admitted this prim. In firm mode every entry joins the half of its
+        // own parent; when one parent was named, it is the answer and it fills the first
+        // library, whatever its kind.
+        let kind_parent = match (entry_parent, prim_parent) {
+            (Some(one), _) => one,
+            (None, Some(parent))
+                if parent == FASTENER_ENTRY_PARENT || parent == MATERIAL_ENTRY_PARENT =>
+            {
+                parent
+            }
+            _ => ENTRY_PARENT,
         };
-        let designation = match required_text(prim, attribute, "string") {
+        let half = if entry_parent.is_none() {
+            match kind_parent {
+                FASTENER_ENTRY_PARENT => &mut fasteners,
+                MATERIAL_ENTRY_PARENT => &mut materials,
+                _ => &mut profiles,
+            }
+        } else {
+            &mut profiles
+        };
+        let designation = match required_text(prim, designation_attribute(kind_parent), "string") {
             Ok(text) if label_is_valid(text) => text.to_owned(),
             Ok(_) | Err(_) => {
-                if fastener_prim {
-                    fastener_rejected.push(RejectedEntry {
-                        prim_path: prim.path.clone(),
-                        designation: None,
-                        code: ErrorCode::InvalidArgument,
-                        message: "the entry has no valid designation",
-                    });
-                } else {
-                    rejected.push(RejectedEntry {
-                        prim_path: prim.path.clone(),
-                        designation: None,
-                        code: ErrorCode::InvalidArgument,
-                        message: "the entry has no valid designation",
-                    });
-                }
+                half.rejected.push(RejectedEntry {
+                    prim_path: prim.path.clone(),
+                    designation: None,
+                    code: ErrorCode::InvalidArgument,
+                    message: "the entry has no valid designation",
+                });
                 continue;
             }
         };
-        let seen = if fastener_prim {
-            &mut seen_fastener
-        } else {
-            &mut seen
-        };
-        if !seen.insert(designation.clone()) {
+        if !half.seen.insert(designation.clone()) {
             return Err(invalid(
                 "the library has two entries with the same designation",
             ));
         }
         if !prim.active {
-            let rejected = if fastener_prim {
-                &mut fastener_rejected
-            } else {
-                &mut rejected
-            };
-            rejected.push(RejectedEntry {
+            half.rejected.push(RejectedEntry {
                 prim_path: prim.path.clone(),
                 designation: Some(designation),
                 code: ErrorCode::InvalidArgument,
@@ -494,69 +530,68 @@ fn load_bytes_as(
             });
             continue;
         }
-        let decoded = if fastener_prim {
-            decode_fastener_record(prim, &designation)
-        } else {
-            decode(prim, &designation)
+        let decoded = match kind_parent {
+            FASTENER_ENTRY_PARENT => decode_fastener_record(prim, &designation),
+            MATERIAL_ENTRY_PARENT => decode_material_record(prim, &designation),
+            _ => decode(prim, &designation),
         };
-        match decoded {
-            Ok(record) => {
-                let entry = LibraryEntry {
-                    prim_path: prim.path.clone(),
-                    designation,
-                    record,
-                };
-                if fastener_prim {
-                    fastener_entries.push(entry);
-                } else {
-                    entries.push(entry);
-                }
-            }
+        let record = match decoded {
+            Ok(record) => record,
             Err(error) => {
-                let rejected = if fastener_prim {
-                    &mut fastener_rejected
-                } else {
-                    &mut rejected
-                };
-                rejected.push(RejectedEntry {
+                half.rejected.push(RejectedEntry {
                     prim_path: prim.path.clone(),
-                    designation: Some(designation),
+                    designation: Some(designation.clone()),
                     code: error.code,
                     message: error.message,
                 });
+                continue;
             }
-        }
+        };
+        half.entries.push(LibraryEntry {
+            prim_path: prim.path.clone(),
+            designation,
+            record,
+        });
     }
-    entries.sort_by(|a, b| a.designation.cmp(&b.designation));
-    let profiles = Library {
-        info: info.clone(),
-        entries,
-        rejected,
-    };
-    let fasteners = match entry_parent {
-        None => {
-            let mut fastener_entries = fastener_entries;
-            fastener_entries.sort_by(|a, b| a.designation.cmp(&b.designation));
-            Library {
-                info,
-                entries: fastener_entries,
-                rejected: fastener_rejected,
-            }
+    let half_library = |half: &mut Half, info: &LibraryInfo| {
+        half.entries
+            .sort_by(|a, b| a.designation.cmp(&b.designation));
+        Library {
+            info: info.clone(),
+            entries: std::mem::take(&mut half.entries),
+            rejected: std::mem::take(&mut half.rejected),
         }
-        Some(_) => Library {
+    };
+    let profiles = half_library(&mut profiles, &info);
+    let auto = entry_parent.is_none();
+    let fasteners = if auto {
+        half_library(&mut fasteners, &info)
+    } else {
+        Library {
+            info: info.clone(),
+            entries: Vec::new(),
+            rejected: Vec::new(),
+        }
+    };
+    let materials = if auto {
+        half_library(&mut materials, &info)
+    } else {
+        Library {
             info,
             entries: Vec::new(),
             rejected: Vec::new(),
-        },
+        }
     };
-    Ok((profiles, fasteners))
+    Ok((profiles, fasteners, materials))
 }
 
-/// The designation attribute of one entry kind: `steel:profile:designation` or
-/// `steel:fastener:designation`.
+/// The designation attribute of one entry kind: `steel:profile:designation`,
+/// `steel:fastener:designation` or `steel:material:grade`.
 fn designation_attribute(entry_parent: &str) -> &'static str {
     if entry_parent == FASTENER_ENTRY_PARENT {
         "steel:fastener:designation"
+    } else if entry_parent == MATERIAL_ENTRY_PARENT {
+        "steel:material:grade"
     } else {
         "steel:profile:designation"
     }
@@ -642,6 +677,34 @@ fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRe
     };
     spec.validate().map_err(command)?;
     Ok(DefinitionRecord::Fastener { spec })
+}
+
+/// The material definition of one entry prim, admitted by the F04 value rules (#636). The
+/// density and the grade are required; the standard and the display name are optional, and a
+/// display name that is not declared is the grade. Nothing is inferred from the grade: an
+/// unknown density is refused, never substituted.
+fn decode_material_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Refusal> {
+    let optional_text = |name: &str| -> Result<Option<String>, Refusal> {
+        field(prim, &format!("steel:material:{name}"), "string")
+            .map_err(as_input)?
+            .map(|v| {
+                text(v)
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid("a material label is not a string"))
+            })
+            .transpose()
+    };
+    let display_name = optional_text("displayName")?.unwrap_or_else(|| designation.to_owned());
+    let density = optional_number(prim, "steel:material:densityKgM3")?
+        .ok_or_else(|| invalid("a material entry has no density"))?;
+    let record = DefinitionRecord::Material {
+        density_kg_m3: Some(density),
+        grade: Some(designation.to_owned()),
+        standard: optional_text("standard")?,
+        display_name: Some(display_name),
+    };
+    record.validate().map_err(command)?;
+    Ok(record)
 }
 
 /// One library of a lookup, with the path it was read from and the layer it sits in.
@@ -789,6 +852,9 @@ pub struct Environment {
     /// The listed fastener libraries, strongest first (BC-ENV-002: bolts ride the same
     /// environment as profiles).
     pub fastener_sources: Vec<Source>,
+    /// The listed material libraries, strongest first (#636: grades ride the same environment
+    /// as profiles and bolts).
+    pub material_sources: Vec<Source>,
 }
 
 impl Environment {
@@ -799,11 +865,19 @@ impl Environment {
     pub fn fastener_lookup(&self) -> Lookup {
         Lookup::new(self.fastener_sources.clone())
     }
+
+    /// The resolver over the environment's material libraries, strongest first: the same
+    /// [`Lookup`] machinery answers a grade. The namespaces stay separate; a profile library
+    /// never answers a material lookup and the other way round.
+    #[must_use]
+    pub fn material_lookup(&self) -> Lookup {
+        Lookup::new(self.material_sources.clone())
+    }
 }
 
 /// Admits one listed library of an environment: its provenance is declared (`bim:library:source`
 /// and `bim:library:licence`, empty is undeclared) and its `bim:library:id` is new among every
-/// library of the environment, profile or fastener. A single-file `--library` needs no
+/// library of the environment, profile, fastener or material. A single-file `--library` needs no
 /// provenance, so the rule lives here, at the environment's edge.
 fn admit_library(
     sources: &mut Vec<Source>,
@@ -847,12 +921,12 @@ fn resolve_reference(directory: &std::path::Path, reference: &str) -> Result<Str
 /// Loads an environment file and every library it lists, in order.
 ///
 /// Each listed path is resolved against the directory of the environment file and loaded with
-/// [`load`] (profile libraries) or [`load_fastener`] (fastener libraries), so every library
-/// keeps its own bounds and admission. A library that cannot be loaded, one that declares no
-/// `source` or `licence`, or two listed libraries with the same `bim:library:id`, refuse the
-/// whole environment: a missing library would silently change which section or bolt a
-/// designation selects. The containment of a listed path is lexical; the files themselves are
-/// read like any `--library` file.
+/// [`load`] (profile libraries), [`load_fastener`] (fastener libraries) or [`load_material`]
+/// (material libraries), so every library keeps its own bounds and admission. A library that
+/// cannot be loaded, one that declares no `source` or `licence`, or two listed libraries with
+/// the same `bim:library:id`, refuse the whole environment: a missing library would silently
+/// change which section, bolt or grade a designation selects. The containment of a listed path
+/// is lexical; the files themselves are read like any `--library` file.
 pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     check_source_path(path).map_err(command)?;
     let bytes = read_file(path, MAX_ENVIRONMENT_BYTES).map_err(|code| match code {
@@ -881,10 +955,17 @@ pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
         let library = load_fastener(&resolved)?;
         admit_library(&mut fastener_sources, &mut ids, resolved, library)?;
     }
+    let mut material_sources: Vec<Source> = Vec::with_capacity(info.material_libraries.len());
+    for reference in &info.material_libraries {
+        let resolved = resolve_reference(&directory, reference)?;
+        let library = load_material(&resolved)?;
+        admit_library(&mut material_sources, &mut ids, resolved, library)?;
+    }
     Ok(Environment {
         info,
         sources,
         fastener_sources,
+        material_sources,
     })
 }
 
@@ -898,6 +979,42 @@ pub struct OpenedLookup {
     pub environment: Option<EnvironmentInfo>,
     /// The firm files that did not read, in file-name order.
     pub firm_refused: Vec<FirmFileRefused>,
+}
+
+/// The material lookup that a command names (#636): exactly one of a single `--library` file
+/// (a material library, no provenance required) or an `--environment` file (its material
+/// libraries in order), like [`open_lookup`] for profiles. A single `--library` names every
+/// source exactly; an `--environment` consults the firm material libraries between nothing and
+/// the environment's own (no `--user-library` option exists for materials yet), and a firm file
+/// that does not read is skipped as [`open_lookup`] describes. The environment's own
+/// declarations are returned when one was named.
+///
+/// # Errors
+/// The same refusals as [`open_lookup`], with the material loading rules.
+pub fn open_material_lookup(
+    library: Option<&str>,
+    environment: Option<&str>,
+    config_dir: Option<&std::path::Path>,
+) -> Result<(Lookup, Option<EnvironmentInfo>), Refusal> {
+    match (library, environment) {
+        (Some(_), Some(_)) => Err(invalid("--library and --environment are alternatives")),
+        (None, None) => Err(invalid("--library or --environment is required")),
+        (Some(path), None) => Ok((
+            Lookup::new(vec![Source {
+                path: path.to_owned(),
+                library: load_material(path)?,
+                layer: LAYER_LIBRARY,
+            }]),
+            None,
+        )),
+        (None, Some(path)) => {
+            let loaded = load_environment(path)?;
+            let info = loaded.info.clone();
+            let mut sources = loaded.material_sources;
+            sources.extend(load_firm(config_dir).material_sources);
+            Ok((Lookup::new(sources), Some(info)))
+        }
+    }
 }
 
 /// The lookup that a command names: exactly one of a single `--library` file or an
@@ -988,6 +1105,8 @@ pub struct FirmLayer {
     pub sources: Vec<Source>,
     /// The firm fastener libraries, in file-name order.
     pub fastener_sources: Vec<Source>,
+    /// The firm material libraries, in file-name order.
+    pub material_sources: Vec<Source>,
     /// The firm files that did not read, in file-name order.
     pub refused: Vec<FirmFileRefused>,
 }
@@ -995,11 +1114,12 @@ pub struct FirmLayer {
 /// Loads the user-owned firm layer: every library file [`session::environment::firm_library_files`]
 /// finds in `config_dir`'s `libraries/` (or in the current user's, when `config_dir` is `None`),
 /// in file-name order. Every entry joins the list of its own parent, so a mixed file feeds
-/// [`FirmLayer::sources`] and [`FirmLayer::fastener_sources`] both; a file that does not read,
-/// a non-UTF-8 name, or a second file of a `bim:library:id` already taken is reported in
-/// [`FirmLayer::refused`] and skipped — a firm file is never allowed to break the layers above
-/// or below it, and never silently ignored either. The firm layer is the user's own: nothing
-/// here writes a file, and no environment update ever touches it.
+/// [`FirmLayer::sources`], [`FirmLayer::fastener_sources`] and [`FirmLayer::material_sources`]
+/// all; a file that does not read, a non-UTF-8 name, or a second file of a `bim:library:id`
+/// already taken is reported in [`FirmLayer::refused`] and skipped — a firm file is never
+/// allowed to break the layers above or below it, and never silently ignored either. The firm
+/// layer is the user's own: nothing here writes a file, and no environment update ever touches
+/// it.
 #[must_use]
 pub fn load_firm(config_dir: Option<&std::path::Path>) -> FirmLayer {
     let mut layer = FirmLayer::default();
@@ -1015,7 +1135,7 @@ pub fn load_firm(config_dir: Option<&std::path::Path>) -> FirmLayer {
         };
         let loaded = load_firm_file(path);
         match loaded {
-            Ok((profiles, fasteners)) => {
+            Ok((profiles, fasteners, materials)) => {
                 if ids.contains(&profiles.info.id) {
                     layer.refused.push(FirmFileRefused {
                         path: path.to_owned(),
@@ -1027,19 +1147,18 @@ pub fn load_firm(config_dir: Option<&std::path::Path>) -> FirmLayer {
                 ids.push(profiles.info.id.clone());
                 // A half of a file that holds nothing of its kind is not a source: an empty
                 // library answers no lookup and would only pad the listing.
-                if !profiles.entries.is_empty() || !profiles.rejected.is_empty() {
-                    layer.sources.push(Source {
-                        path: path.to_owned(),
-                        library: profiles,
-                        layer: LAYER_FIRM,
-                    });
-                }
-                if !fasteners.entries.is_empty() || !fasteners.rejected.is_empty() {
-                    layer.fastener_sources.push(Source {
-                        path: path.to_owned(),
-                        library: fasteners,
-                        layer: LAYER_FIRM,
-                    });
+                for (half, sources) in [
+                    (profiles, &mut layer.sources),
+                    (fasteners, &mut layer.fastener_sources),
+                    (materials, &mut layer.material_sources),
+                ] {
+                    if !half.entries.is_empty() || !half.rejected.is_empty() {
+                        sources.push(Source {
+                            path: path.to_owned(),
+                            library: half,
+                            layer: LAYER_FIRM,
+                        });
+                    }
                 }
             }
             Err(error) => layer.refused.push(FirmFileRefused {
@@ -1079,26 +1198,24 @@ pub fn neutral_environment() -> Result<Option<Environment>, Refusal> {
 pub fn append_neutral(
     sources: &mut Vec<Source>,
     fastener_sources: &mut Vec<Source>,
+    material_sources: &mut Vec<Source>,
 ) -> Result<(), Refusal> {
     let Some(neutral) = neutral_environment()? else {
         return Ok(());
     };
-    for source in neutral.sources {
-        let id = &source.library.info.id;
-        if !sources.iter().any(|s| &s.library.info.id == id) {
-            sources.push(Source {
-                layer: LAYER_NEUTRAL,
-                ..source
-            });
-        }
-    }
-    for source in neutral.fastener_sources {
-        let id = &source.library.info.id;
-        if !fastener_sources.iter().any(|s| &s.library.info.id == id) {
-            fastener_sources.push(Source {
-                layer: LAYER_NEUTRAL,
-                ..source
-            });
+    for (neutral_sources, chain_sources) in [
+        (&neutral.sources, sources),
+        (&neutral.fastener_sources, fastener_sources),
+        (&neutral.material_sources, material_sources),
+    ] {
+        for source in neutral_sources {
+            let id = &source.library.info.id;
+            if !chain_sources.iter().any(|s| &s.library.info.id == id) {
+                chain_sources.push(Source {
+                    layer: LAYER_NEUTRAL,
+                    ..source.clone()
+                });
+            }
         }
     }
     Ok(())
@@ -1117,6 +1234,9 @@ pub struct ProjectChain {
     /// The resolver over the fastener libraries of the chain, strongest first; `None` when no
     /// layer of the chain declares a fastener library.
     pub fastener_lookup: Option<Lookup>,
+    /// The resolver over the material libraries of the chain, strongest first; `None` when no
+    /// layer of the chain declares a material library.
+    pub material_lookup: Option<Lookup>,
     /// The project environment copy's own declarations, when the project carries one.
     pub environment: Option<EnvironmentInfo>,
     /// The firm files that did not read, in file-name order.
@@ -1125,15 +1245,17 @@ pub struct ProjectChain {
 
 /// Builds the [`ProjectChain`] of the project folder at `store`. The project's environment copy
 /// is read with [`load_environment`] (a refused copy refuses the chain, as a missing library
-/// would silently change which section a designation selects) and retagged as the project
-/// layer; the firm layer is loaded from `config_dir`'s `libraries/` (`None` is the current
-/// user's). The neutral environment joins last.
+/// would silently change which section, bolt or grade a designation selects) and retagged as
+/// the project layer; the firm layer is loaded from `config_dir`'s `libraries/` (`None` is the
+/// current user's). The neutral environment joins last. Every namespace — profiles, fasteners
+/// and materials — builds its own resolver over the same chain.
 pub fn project_library_chain(
     store: &std::path::Path,
     config_dir: Option<&std::path::Path>,
 ) -> Result<ProjectChain, Refusal> {
     let mut sources = Vec::new();
     let mut fastener_sources = Vec::new();
+    let mut material_sources = Vec::new();
     let mut environment = None;
     if let Some(file) = crate::project::project_environment_file(store) {
         let file = file
@@ -1149,16 +1271,23 @@ pub fn project_library_chain(
             layer: LAYER_PROJECT,
             ..s
         }));
+        material_sources.extend(copy.material_sources.into_iter().map(|s| Source {
+            layer: LAYER_PROJECT,
+            ..s
+        }));
     }
     let firm = load_firm(config_dir);
     let firm_refused = firm.refused;
     sources.extend(firm.sources);
     fastener_sources.extend(firm.fastener_sources);
-    append_neutral(&mut sources, &mut fastener_sources)?;
+    material_sources.extend(firm.material_sources);
+    append_neutral(&mut sources, &mut fastener_sources, &mut material_sources)?;
     let fastener_lookup = (!fastener_sources.is_empty()).then(|| Lookup::new(fastener_sources));
+    let material_lookup = (!material_sources.is_empty()).then(|| Lookup::new(material_sources));
     Ok(ProjectChain {
         lookup: Lookup::new(sources),
         fastener_lookup,
+        material_lookup,
         environment,
         firm_refused,
     })
@@ -1669,6 +1798,101 @@ mod tests {
         assert_eq!(error.code, ErrorCode::InvalidArgument);
     }
 
+    fn material_entry(name: &str, grade: &str, body: &str) -> String {
+        format!(
+            "        def Scope \"{name}\" {{\n            string steel:material:grade = \"{grade}\"\n{body}        }}\n"
+        )
+    }
+
+    fn material_library(entries: &[String]) -> String {
+        format!(
+            "{HEADER}def Scope \"Library\" {{\n    def Scope \"Materials\" {{\n{}    }}\n}}\n",
+            entries.concat()
+        )
+    }
+
+    const MATERIAL_BODY: &str = "            double steel:material:densityKgM3 = 7850\n            string steel:material:standard = \"EN 10025-2\"\n";
+
+    #[test]
+    fn a_material_entry_resolves_to_a_complete_named_definition() {
+        let named = format!(
+            "{MATERIAL_BODY}            string steel:material:displayName = \"Structural steel S355\"\n"
+        );
+        let text = material_library(&[
+            material_entry("A", "S235JR", MATERIAL_BODY),
+            material_entry("B", "S355J2", &named),
+        ]);
+        let loaded = load_material_bytes(text.clone().into_bytes()).unwrap();
+        assert_eq!(loaded.info.id, "t");
+        assert_eq!(loaded.entries.len(), 2);
+        let plain = loaded.entry("S235JR").unwrap();
+        let DefinitionRecord::Material {
+            density_kg_m3,
+            grade,
+            standard,
+            display_name,
+        } = &plain.record
+        else {
+            panic!("the entry is not a material definition");
+        };
+        assert_eq!(*density_kg_m3, Some(7850.0));
+        assert_eq!(grade.as_deref(), Some("S235JR"));
+        assert_eq!(standard.as_deref(), Some("EN 10025-2"));
+        // Without a declared display name the entry answers under its grade.
+        assert_eq!(display_name.as_deref(), Some("S235JR"));
+        let overridden = loaded.entry("S355J2").unwrap();
+        let DefinitionRecord::Material { display_name, .. } = &overridden.record else {
+            panic!("the entry is not a material definition");
+        };
+        assert_eq!(display_name.as_deref(), Some("Structural steel S355"));
+        // A profile loader never sees a material entry and the other way round.
+        assert_eq!(
+            load_text("p.usda", &text).unwrap().entries.len(),
+            0,
+            "the material entry is not a profile entry"
+        );
+        assert_eq!(
+            loaded.entry("S355").unwrap_err().code,
+            ErrorCode::NotFound,
+            "the grade is exact, never a near match"
+        );
+    }
+
+    #[test]
+    fn a_bad_material_entry_is_reported_and_the_others_load() {
+        // A grade without its density is refused; so is a density the definition's own rules
+        // refuse. Nothing is inferred or substituted.
+        let dense = format!("{MATERIAL_BODY}            double steel:material:densityKgM3 = -1\n");
+        let text = material_library(&[
+            material_entry("A", "S235JR", MATERIAL_BODY),
+            material_entry(
+                "B",
+                "NO-DENSITY",
+                "            string steel:material:standard = \"X\"\n",
+            ),
+            material_entry("C", "NEGATIVE", &dense),
+        ]);
+        let loaded = load_material_bytes(text.into_bytes()).unwrap();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.rejected.len(), 2);
+        assert_eq!(
+            loaded
+                .rejected
+                .iter()
+                .map(|r| r.designation.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("NO-DENSITY"), Some("NEGATIVE")]
+        );
+        assert_eq!(
+            loaded.entry("NO-DENSITY").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            loaded.entry("NEGATIVE").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
     #[test]
     fn an_entry_resolves_to_a_complete_named_definition() {
         let text = library(&[entry("A", "T-I300", I_BODY)]);
@@ -2071,6 +2295,136 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_europe_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/materials-en-10025.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "europe-en-10025-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 33);
+        // The complete structural steel grade sets of the EN 10025-2/-3/-4:2019 editions,
+        // S235 to S500, in the loader's designation order, each with its part and the pack
+        // density: part 2 grew in 2019 by the S460 qualities and S500J0 (and dropped S450J0,
+        // which is not shipped), part 4 by S500M/ML; part 3 is unchanged. The weathering
+        // steels of part 5 and the quenched and tempered flat products of part 6 are not in
+        // the pack.
+        let part2 = "EN 10025-2:2019";
+        let part3 = "EN 10025-3:2019";
+        let part4 = "EN 10025-4:2019";
+        let expected: [(&str, &str); 33] = [
+            ("S235J0", part2),
+            ("S235J2", part2),
+            ("S235JR", part2),
+            ("S275J0", part2),
+            ("S275J2", part2),
+            ("S275JR", part2),
+            ("S275M", part4),
+            ("S275ML", part4),
+            ("S275N", part3),
+            ("S275NL", part3),
+            ("S355J0", part2),
+            ("S355J2", part2),
+            ("S355JR", part2),
+            ("S355K2", part2),
+            ("S355M", part4),
+            ("S355ML", part4),
+            ("S355N", part3),
+            ("S355NL", part3),
+            ("S420M", part4),
+            ("S420ML", part4),
+            ("S420N", part3),
+            ("S420NL", part3),
+            ("S460J0", part2),
+            ("S460J2", part2),
+            ("S460JR", part2),
+            ("S460K2", part2),
+            ("S460M", part4),
+            ("S460ML", part4),
+            ("S460N", part3),
+            ("S460NL", part3),
+            ("S500J0", part2),
+            ("S500M", part4),
+            ("S500ML", part4),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_europe_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-en-10025.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "europe-en-10025-materials");
+        assert_eq!(materials.library.entries.len(), 33);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, s355) = lookup.find("S355J2").unwrap();
+        assert_eq!(source.library.info.id, "europe-en-10025-materials");
+        assert!(matches!(
+            &s355.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("EN 10025-2:2019")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no lowercase, no grade of another part or of the superseded 2004 edition.
+        for absent in ["S235", "S355", "s355j2", "S355K2+N", "S500N", "S450J0"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
@@ -2103,15 +2457,29 @@ mod tests {
             &fastener_entry("B", "F-1", BOLT_BODY),
             "\n        string \"bim:library:licence\" = \"MPL-2.0\"",
         );
+        // A material library whose source is missing rides the same provenance edge (#636).
+        let material = library(
+            "m",
+            "Materials",
+            &material_entry("C", "S235JR", MATERIAL_BODY),
+            "\n        string \"bim:library:source\" = \"s\"",
+        );
         write("profiles-nolicence.usda", &profile);
         write("profiles-complete.usda", &complete);
         write("fasteners-nosource.usda", &fastener);
-        let env = |profiles: &str, fasteners: Option<&str>| {
+        write("materials-nolicence.usda", &material);
+        let env = |profiles: &str, fasteners: Option<&str>, materials: Option<&str>| {
             format!(
-                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}\n    }}\n)\n",
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}{}\n    }}\n)\n",
                 match fasteners {
                     Some(name) => format!(
                         "\n        string[] \"bim:environment:fastener-libraries\" = [\"{name}\"]"
+                    ),
+                    None => String::new(),
+                },
+                match materials {
+                    Some(name) => format!(
+                        "\n        string[] \"bim:environment:material-libraries\" = [\"{name}\"]"
                     ),
                     None => String::new(),
                 }
@@ -2119,11 +2487,23 @@ mod tests {
         };
         write(
             "no-profile-licence.usda",
-            &env("profiles-nolicence.usda", None),
+            &env("profiles-nolicence.usda", None, None),
         );
         write(
             "no-fastener-source.usda",
-            &env("profiles-complete.usda", Some("fasteners-nosource.usda")),
+            &env(
+                "profiles-complete.usda",
+                Some("fasteners-nosource.usda"),
+                None,
+            ),
+        );
+        write(
+            "no-material-licence.usda",
+            &env(
+                "profiles-complete.usda",
+                None,
+                Some("materials-nolicence.usda"),
+            ),
         );
         let refused =
             load_environment(dir.join("no-profile-licence.usda").to_str().unwrap()).unwrap_err();
@@ -2138,6 +2518,13 @@ mod tests {
         assert!(
             refused.message.contains("source"),
             "the fastener library's missing record is named: {refused:?}"
+        );
+        let refused =
+            load_environment(dir.join("no-material-licence.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("licence"),
+            "the material library's missing record is named: {refused:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2406,6 +2793,279 @@ mod tests {
             "200UC41.7",
             "350UC153",
             "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_australia_hollows_read_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/hollows-as-nzs-1163.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "australia-asnzs-1163-hollows");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 145);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(_),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("AS/NZS 1163:2016"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires); for the hollows the closed form is the
+            // hollow formula of Appendix E with the corner radii the standard fixes for the
+            // series (2.0t to 3.0 mm, 2.5t above). The mass must be that area at 7850 kg/m3
+            // within the three significant figures the series publishes (worst 0.46 percent on
+            // SHS89x89x6.0).
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.01,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The CHS, RHS and SHS series exactly as AS/NZS 1163:2016 Appendix D publishes them:
+        // 66 + 41 + 38 designations. The mill stock lists carry sizes outside the standard's
+        // Appendix D (SHS 300x300 and smaller than 40x40, RHS 300x200 and 152x76, the heavier
+        // thicknesses of the small series); those follow the manufacturer, not the standard, and
+        // are not shipped here.
+        let mut expected = vec![
+            "CHS610x12.7",
+            "CHS610x9.5",
+            "CHS610x6.4",
+            "CHS508x12.7",
+            "CHS508x9.5",
+            "CHS508x6.4",
+            "CHS457x12.7",
+            "CHS457x9.5",
+            "CHS457x6.4",
+            "CHS406.4x12.7",
+            "CHS406.4x9.5",
+            "CHS406.4x6.4",
+            "CHS355.6x12.7",
+            "CHS355.6x9.5",
+            "CHS355.6x6.4",
+            "CHS323.9x12.7",
+            "CHS323.9x9.5",
+            "CHS323.9x6.4",
+            "CHS273.1x9.3",
+            "CHS273.1x6.4",
+            "CHS273.1x4.8",
+            "CHS219.1x8.2",
+            "CHS219.1x6.4",
+            "CHS219.1x4.8",
+            "CHS168.3x7.1",
+            "CHS168.3x6.4",
+            "CHS168.3x4.8",
+            "CHS165.1x5.4",
+            "CHS165.1x5",
+            "CHS165.1x3.5",
+            "CHS165.1x3",
+            "CHS139.7x5.4",
+            "CHS139.7x5",
+            "CHS139.7x3.5",
+            "CHS139.7x3",
+            "CHS114.3x6",
+            "CHS114.3x5.4",
+            "CHS114.3x4.8",
+            "CHS114.3x4.5",
+            "CHS114.3x3.6",
+            "CHS114.3x3.2",
+            "CHS101.6x5",
+            "CHS101.6x4",
+            "CHS101.6x3.2",
+            "CHS101.6x2.6",
+            "CHS88.9x5.9",
+            "CHS88.9x5.5",
+            "CHS88.9x5",
+            "CHS88.9x4.8",
+            "CHS88.9x4",
+            "CHS88.9x3.2",
+            "CHS88.9x2.6",
+            "CHS76.1x5.9",
+            "CHS76.1x4.5",
+            "CHS76.1x3.6",
+            "CHS76.1x3.2",
+            "CHS76.1x2.3",
+            "CHS60.3x5.4",
+            "CHS60.3x4.5",
+            "CHS60.3x3.6",
+            "CHS48.3x5.4",
+            "CHS48.3x4",
+            "CHS48.3x3.2",
+            "CHS42.4x4.9",
+            "CHS42.4x4",
+            "CHS42.4x3.2",
+            "RHS250x150x9",
+            "RHS250x150x6",
+            "RHS250x150x5",
+            "RHS200x100x9",
+            "RHS200x100x6",
+            "RHS200x100x5",
+            "RHS200x100x4",
+            "RHS150x100x6",
+            "RHS150x100x5",
+            "RHS150x100x4",
+            "RHS150x50x5",
+            "RHS150x50x4",
+            "RHS150x50x3",
+            "RHS125x75x5",
+            "RHS125x75x4",
+            "RHS125x75x3",
+            "RHS100x50x6",
+            "RHS100x50x5",
+            "RHS100x50x4",
+            "RHS100x50x3.5",
+            "RHS100x50x3",
+            "RHS100x50x2.5",
+            "RHS100x50x2",
+            "RHS75x50x4",
+            "RHS75x50x3",
+            "RHS75x50x2.5",
+            "RHS75x50x2",
+            "RHS75x25x2.5",
+            "RHS75x25x2",
+            "RHS75x25x1.6",
+            "RHS65x35x3",
+            "RHS65x35x2.5",
+            "RHS65x35x2",
+            "RHS50x25x3",
+            "RHS50x25x2.5",
+            "RHS50x25x2",
+            "RHS50x25x1.6",
+            "RHS50x20x3",
+            "RHS50x20x2.5",
+            "RHS50x20x2",
+            "RHS50x20x1.6",
+            "SHS250x250x9",
+            "SHS250x250x6",
+            "SHS200x200x9",
+            "SHS200x200x6",
+            "SHS200x200x5",
+            "SHS150x150x9",
+            "SHS150x150x6",
+            "SHS150x150x5",
+            "SHS125x125x9",
+            "SHS125x125x6",
+            "SHS125x125x5",
+            "SHS125x125x4",
+            "SHS100x100x9",
+            "SHS100x100x6",
+            "SHS100x100x5",
+            "SHS100x100x4",
+            "SHS100x100x3",
+            "SHS89x89x6",
+            "SHS89x89x5",
+            "SHS89x89x3.5",
+            "SHS75x75x6",
+            "SHS75x75x5",
+            "SHS75x75x4",
+            "SHS75x75x3.5",
+            "SHS75x75x3",
+            "SHS75x75x2.5",
+            "SHS65x65x3",
+            "SHS65x65x2.5",
+            "SHS65x65x2",
+            "SHS50x50x4",
+            "SHS50x50x3",
+            "SHS50x50x2.5",
+            "SHS50x50x2",
+            "SHS50x50x1.6",
+            "SHS40x40x4",
+            "SHS40x40x2.5",
+            "SHS40x40x2",
+            "SHS40x40x1.6",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, one per series. The SHS radius is the one
+        // the standard fixes (3.0 mm thickness or less: 2.0t; above: 2.5t).
+        let spot =
+            |designation: &str, family: SectionFamily, values: &[f64], area: f64, mass: f64| {
+                let entry = library.entry(designation).unwrap();
+                let DefinitionRecord::SectionProfile {
+                    shape: SectionShape::Parametric(p),
+                    section,
+                } = &entry.record
+                else {
+                    panic!("{designation} is not a parametric section");
+                };
+                assert_eq!(p.family(), family, "{designation}");
+                assert_eq!(p.values(), values, "{designation}");
+                assert_eq!(section.area_mm2, Some(area), "{designation}");
+                assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+            };
+        spot(
+            "SHS100x100x3",
+            SectionFamily::Rhs,
+            &[100.0, 100.0, 3.0, 6.0],
+            1140.0,
+            8.96,
+        );
+        spot(
+            "RHS200x100x9",
+            SectionFamily::Rhs,
+            &[200.0, 100.0, 9.0, 22.5],
+            4800.0,
+            37.7,
+        );
+        spot("CHS76.1x3.2", SectionFamily::Chs, &[76.1, 3.2], 733.0, 5.75);
+        for absent in [
+            "SHS300x300x8",
+            "SHS30x30x2",
+            "SHS20x20x1.6",
+            "SHS50x50x6",
+            "SHS65x65x6",
+            "RHS300x200x6",
+            "RHS400x200x8",
+            "RHS152x76x5",
+            "RHS150x100x8",
+            "CHS60.3x2.6",
+            "CHS114.3x2",
+            "RHS-100x60x4",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -3459,6 +4119,11 @@ mod tests {
             0,
             "no fastener half of a profile file"
         );
+        assert_eq!(
+            only_profiles.2.entries.len(),
+            0,
+            "no material half of a profile file"
+        );
         let only_bolts = load_firm_bytes(
             fastener_library(&[fastener_entry("B", "SYN-M12", BOLT_BODY)]).into_bytes(),
         )
@@ -3469,16 +4134,20 @@ mod tests {
             "no profile half of a fastener file"
         );
         assert_eq!(only_bolts.1.entries.len(), 1);
-        // Both parents in one file: every entry decodes by its own parent into its own half.
+        assert_eq!(only_bolts.2.entries.len(), 0);
+        // Every parent in one file: every entry decodes by its own parent into its own half.
         let mixed = format!(
-            "{}def Scope \"Library\" {{\n    def Scope \"Profiles\" {{\n{}    }}\n    def Scope \"Fasteners\" {{\n{}    }}\n}}\n",
+            "{}def Scope \"Library\" {{\n    def Scope \"Profiles\" {{\n{}    }}\n    def Scope \"Fasteners\" {{\n{}    }}\n    def Scope \"Materials\" {{\n{}    }}\n}}\n",
             HEADER.replace("    }\n)\n", "    }\n)\n\n"),
             entry("A", "F-1", I_BODY),
-            fastener_entry("B", "SYN-M12", BOLT_BODY)
+            fastener_entry("B", "SYN-M12", BOLT_BODY),
+            "        def Scope \"C\"\n        {\nstring steel:material:grade = \"S355\"\ndouble steel:material:densityKgM3 = 7850\n        }\n"
         );
         let mixed = load_firm_bytes(mixed.into_bytes()).unwrap();
         assert_eq!(mixed.0.entries.len(), 1);
         assert_eq!(mixed.1.entries.len(), 1);
+        assert_eq!(mixed.2.entries.len(), 1);
+        assert_eq!(mixed.2.entries[0].designation, "S355");
         assert_eq!(
             load_firm_bytes(b"not usd".to_vec()).unwrap_err().code,
             ErrorCode::InvalidArgument
@@ -3493,10 +4162,11 @@ mod tests {
             &config,
             "libraries/mixed.usda",
             &format!(
-                "{}def Scope \"Library\" {{\n    def Scope \"Profiles\" {{\n{}    }}\n    def Scope \"Fasteners\" {{\n{}    }}\n}}\n",
+                "{}def Scope \"Library\" {{\n    def Scope \"Profiles\" {{\n{}    }}\n    def Scope \"Fasteners\" {{\n{}    }}\n    def Scope \"Materials\" {{\n{}    }}\n}}\n",
                 HEADER.replace("    }\n)\n", "    }\n)\n\n"),
                 entry("A", "F-1", I_BODY),
-                fastener_entry("B", "SYN-M12", BOLT_BODY)
+                fastener_entry("B", "SYN-M12", BOLT_BODY),
+                "        def Scope \"C\"\n        {\nstring steel:material:grade = \"S355\"\ndouble steel:material:densityKgM3 = 7850\n        }\n"
             ),
         );
         let layer = load_firm(Some(&config));
@@ -3511,11 +4181,20 @@ mod tests {
         );
         assert_eq!(
             layer.fastener_sources[0].library.info.id, "t",
-            "both halves carry the file's own id"
+            "every half carries the file's own id"
         );
         assert_eq!(
             layer.fastener_sources[0].library.entries[0].designation,
             "SYN-M12"
+        );
+        assert_eq!(
+            layer.material_sources.len(),
+            1,
+            "the material half of the mixed file"
+        );
+        assert_eq!(
+            layer.material_sources[0].library.entries[0].designation,
+            "S355"
         );
         let lookup = Lookup::new(layer.sources);
         assert_eq!(
@@ -3526,6 +4205,11 @@ mod tests {
         assert_eq!(
             bolts.find("SYN-M12").map(|(_, e)| e.designation.as_str()),
             Ok("SYN-M12")
+        );
+        let grades = Lookup::new(layer.material_sources);
+        assert_eq!(
+            grades.find("S355").map(|(_, e)| e.designation.as_str()),
+            Ok("S355")
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3690,10 +4374,11 @@ mod tests {
         );
         let mut sources: Vec<Source> = Vec::new();
         let mut fasteners: Vec<Source> = Vec::new();
-        append_neutral(&mut sources, &mut fasteners).unwrap();
+        let mut materials: Vec<Source> = Vec::new();
+        append_neutral(&mut sources, &mut fasteners, &mut materials).unwrap();
         assert!(
-            fasteners.is_empty(),
-            "the neutral environment ships no fastener libraries"
+            fasteners.is_empty() && materials.is_empty(),
+            "the neutral environment ships no fastener or material libraries"
         );
         assert!(sources.iter().all(|s| s.layer == LAYER_NEUTRAL));
         let count = sources.len();
@@ -3708,7 +4393,7 @@ mod tests {
             layer: LAYER_PROJECT,
         }];
         let taken_count = taken.len();
-        append_neutral(&mut taken, &mut fasteners).unwrap();
+        append_neutral(&mut taken, &mut fasteners, &mut materials).unwrap();
         assert_eq!(
             taken.len(),
             taken_count,
@@ -3781,6 +4466,10 @@ mod tests {
         assert!(
             bare.fastener_lookup.is_none(),
             "no fastener layer of this chain declares bolts"
+        );
+        assert!(
+            chain.material_lookup.is_none() && bare.material_lookup.is_none(),
+            "no layer of this chain declares material libraries"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
