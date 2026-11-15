@@ -2963,6 +2963,174 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_russia_gost_8239_8240_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/russia/profiles-gost-8239-8240.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "russia-gost-8239-8240-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 35);
+        // Neither standard prints a per-row slope: the note under the clause 1 figure fixes the
+        // inner-face slope as a roll-pass range (8239: 6-12 %, 8240: 4-10 %), excluded from
+        // finished-product inspection by note 2, and the rows carry the middle of the range.
+        const I_SLOPE: f64 = 0.09;
+        const C_SLOPE: f64 = 0.07;
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            let (slope, range, standard, family) = match parametric.family() {
+                SectionFamily::TaperedI => (
+                    I_SLOPE,
+                    [0.06, 0.12],
+                    "GOST 8239-89",
+                    SectionFamily::TaperedI,
+                ),
+                SectionFamily::TaperedC => (
+                    C_SLOPE,
+                    [0.04, 0.10],
+                    "GOST 8240-89",
+                    SectionFamily::TaperedC,
+                ),
+                family => panic!("{}: unexpected family {family:?}", entry.designation),
+            };
+            assert_eq!(
+                parametric.values()[6],
+                slope,
+                "{}: the series slope",
+                entry.designation
+            );
+            assert_eq!(
+                section.standard.as_deref(),
+                Some(standard),
+                "{}",
+                entry.designation
+            );
+            // The exact closed-form area of the declared dimensions stays within 0.8 percent of
+            // the published catalogue area at the shipped slope (tighter than the D3 1 percent
+            // warning) and at both ends of the printed roll-pass range, so no slope the
+            // standards allow can push a row over the warning.
+            let declared = section.area_mm2.unwrap();
+            let exact = parametric.exact_area_mm2();
+            let gap = (declared - exact).abs() / declared;
+            assert!(
+                gap <= 0.008,
+                "{}: exact {exact} mm2 vs declared {declared} (gap {:.3} %)",
+                entry.designation,
+                gap * 100.0
+            );
+            let mut values = parametric.values().to_vec();
+            for end in range {
+                values[6] = end;
+                let exact = ParametricSection::new(family, values.clone())
+                    .unwrap()
+                    .exact_area_mm2();
+                let gap = (declared - exact).abs() / declared;
+                assert!(
+                    gap <= 0.008,
+                    "{} at slope {end}: exact {exact} mm2 vs declared {declared} (gap {:.3} %)",
+                    entry.designation,
+                    gap * 100.0
+                );
+            }
+            // The declared mass is the declared area at the standards' own 7.85 g/cm3 note,
+            // within the printed rounding. I60 is the one row whose printed mass corresponds to
+            // the unrounded roll-pass area instead of the printed one (0.785 x 138.0 is 108.33,
+            // the standard prints 108.00); the published pair is taken as-is.
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = declared * 7850.0 / 1.0e6;
+            if entry.designation == "I60" {
+                assert_eq!(mass, 108.0, "I60 carries the printed mass");
+            } else {
+                assert!(
+                    (mass - mass_from_area).abs() <= 0.08,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        // Both assortments exactly as the standards publish them: the 17 I-beam designations
+        // 10 to 60 and the 18 slope-series channels of table 1 (16a and 18a included), in the
+        // library's lexicographic designation order. The parallel-flange П series (table 2 of
+        // GOST 8240-89) is a different geometry family and ships with none of this pack.
+        assert_eq!(
+            designations,
+            [
+                "C10", "C12", "C14", "C16", "C16a", "C18", "C18a", "C20", "C22", "C24", "C27",
+                "C30", "C33", "C36", "C40", "C5", "C6.5", "C8", "I10", "I12", "I14", "I16", "I18",
+                "I20", "I22", "I24", "I27", "I30", "I33", "I36", "I40", "I45", "I50", "I55", "I60",
+            ]
+        );
+        // Spot checks against the transcribed values.
+        let spot = |designation: &str, values: [f64; 7], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "I10",
+            [100.0, 55.0, 4.5, 7.2, 7.0, 2.5, I_SLOPE],
+            1200.0,
+            9.46,
+        );
+        spot(
+            "I60",
+            [600.0, 190.0, 12.0, 17.8, 20.0, 8.0, I_SLOPE],
+            13800.0,
+            108.0,
+        );
+        spot(
+            "C16a",
+            [160.0, 68.0, 5.0, 9.0, 8.5, 3.5, C_SLOPE],
+            1950.0,
+            15.3,
+        );
+        // The assortment gaps: numbers the standards do not publish are refused, not silently
+        // substituted.
+        for absent in ["I11", "I21", "I25", "I32", "I65", "C15", "C24a", "C45"] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
     fn the_shipped_australia_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

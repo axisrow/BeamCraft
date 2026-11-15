@@ -76,14 +76,30 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         "--environment",
         ENVIRONMENT,
         "--limit",
-        "236",
+        "256",
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "russia");
-    assert_eq!(num(&listed, &["entry_count"]), 236.0);
+    assert_eq!(num(&listed, &["entry_count"]), 271.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
+    // The environment now lists 271 entries, over the 256-entry page cap, so the second page
+    // completes the listing before the per-entry assertions.
+    let mut entries = at(&listed, &["entries"]).array().unwrap().to_vec();
+    assert_eq!(entries.len(), 256);
+    let rest = f.ok(&[
+        "list-library",
+        "--environment",
+        ENVIRONMENT,
+        "--offset",
+        "256",
+        "--limit",
+        "256",
+    ]);
+    assert_eq!(num(&rest, &["entry_count"]), 271.0);
+    entries.extend(at(&rest, &["entries"]).array().unwrap().iter().cloned());
+    assert_eq!(entries.len(), 271);
     let libraries = at(&listed, &["libraries"]).array().unwrap();
-    assert_eq!(libraries.len(), 2);
+    assert_eq!(libraries.len(), 3);
     let info = at(&libraries[0], &["library"]);
     assert_eq!(text(info, "id"), "russia-gost-26020-profiles");
     assert_eq!(text(info, "version"), "2");
@@ -97,8 +113,14 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         !text(square_info, "source").is_empty(),
         "the source is declared"
     );
-    let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 236);
+    let inclined_info = at(&libraries[2], &["library"]);
+    assert_eq!(text(inclined_info, "id"), "russia-gost-8239-8240-profiles");
+    assert_eq!(text(inclined_info, "version"), "1");
+    assert_eq!(text(inclined_info, "licence"), "MPL-2.0");
+    assert!(
+        !text(inclined_info, "source").is_empty(),
+        "the source is declared"
+    );
     let b30_1 = entries
         .iter()
         .find(|e| text(e, "designation") == "30B1")
@@ -122,6 +144,28 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert_eq!(num(square, &["parameters_mm", "h"]), 60.0);
     assert_eq!(num(square, &["parameters_mm", "t"]), 3.0);
     assert_eq!(num(square, &["parameters_mm", "r"]), 6.0);
+    // The inclined-flange pack rides the tapered families as its third library: the mid-leg
+    // flange thickness and the roll-pass-range middle slope are carried per row.
+    let inclined = entries
+        .iter()
+        .find(|e| text(e, "designation") == "I30")
+        .unwrap();
+    assert_eq!(
+        text(inclined, "library_id"),
+        "russia-gost-8239-8240-profiles"
+    );
+    assert_eq!(num(inclined, &["parameters_mm", "h"]), 300.0);
+    assert_eq!(num(inclined, &["parameters_mm", "s"]), 6.5);
+    assert_eq!(num(inclined, &["parameters_mm", "t"]), 10.2);
+    assert_eq!(num(inclined, &["parameters_mm", "r"]), 12.0);
+    assert_eq!(num(inclined, &["parameters_mm", "r1"]), 5.0);
+    assert_eq!(num(inclined, &["parameters_mm", "k"]), 0.09);
+    let channel = entries
+        .iter()
+        .find(|e| text(e, "designation") == "C16a")
+        .unwrap();
+    assert_eq!(num(channel, &["parameters_mm", "b"]), 68.0);
+    assert_eq!(num(channel, &["parameters_mm", "k"]), 0.07);
 }
 
 #[test]
@@ -255,10 +299,56 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
     // 10200 mm2 x 3000 mm x 7850 kg/m3.
     close(num(&q, &["mass", "kg"]), 240.21, 1e-9);
 
-    // A designation the shipped series does not publish is refused, not silently substituted:
-    // 30K4 and 80Sh1 exist only in the newer GOST R 57837-2017, the inclined-flange series
-    // of GOST 8239-89 are not shipped, and GOST 30245-2003 publishes no 220 mm square at all.
-    for absent in ["30K4", "80Sh1", "220x220x10"] {
+    // An inclined-flange I beam of the third library: I30, catalogue area 4650 mm2, rides the
+    // tapered_i family.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "30000,0,0",
+        "--end",
+        "36000,0,0",
+        "--profile",
+        "I30",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 4650.0);
+    // 4650 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 219.015, 1e-9);
+
+    // An inclined-flange channel: C16a, catalogue area 1950 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "36000,0,0",
+        "--end",
+        "36000,0,3000",
+        "--profile",
+        "C16a",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 1950.0);
+    // 1950 mm2 x 3000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 45.9225, 1e-9);
+
+    // A designation the shipped series do not publish is refused, not silently substituted:
+    // 30K4 and 80Sh1 exist only in the newer GOST R 57837-2017, GOST 8239-89 publishes no 25
+    // and GOST 8240-89 no 24a (the a-variants are 16a and 18a only), and GOST 30245-2003
+    // publishes no 220 mm square at all.
+    for absent in ["30K4", "80Sh1", "I25", "C24a", "220x220x10"] {
         assert_eq!(
             f.code(&[
                 "create-member",
@@ -284,7 +374,7 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 5);
+    assert_eq!(members.len(), 7);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
