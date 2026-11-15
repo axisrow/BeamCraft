@@ -24,6 +24,7 @@ mod bolt_groups_view;
 mod bom;
 mod changeset;
 mod changeset_base;
+mod china_environment;
 mod command_evidence;
 mod compensation;
 mod construction;

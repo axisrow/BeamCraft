@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "china"
+        string "bim:environment:title" = "China (GB/T 706-2016)"
+        string[] "bim:environment:libraries" = ["profiles-gb-t-706.usda"]
+    }
+)

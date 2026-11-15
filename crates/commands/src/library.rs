@@ -2879,4 +2879,140 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_shipped_china_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/china/profiles-gb-t-706.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "china-gb-t-706-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 45);
+        // GB/T 706-2016 prints the I-beam slope exactly: 1:6.
+        const I_SLOPE: f64 = 1.0 / 6.0;
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::TaperedI);
+            assert_eq!(
+                parametric.values()[6],
+                I_SLOPE,
+                "{}: the I-beam slope is 1:6",
+                entry.designation
+            );
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("GB/T 706-2016"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires) and the declared mass must be that
+            // area at 7850 kg/m3 within the standard's published rounding. The mass prints
+            // with one decimal to 100 kg/m and as an integer above it (50b "101" is 101.42
+            // rounded), so 0.55 kg/m covers every row.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() <= 0.55,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The I-beam series exactly as table A.1 of GB/T 706-2016 publishes it: 45 designations,
+        // including the 2016-edition 25a/b beams and the 55 series beside the classic 56 series.
+        assert_eq!(
+            designations,
+            [
+                "I10", "I12", "I12.6", "I14", "I16", "I18", "I20a", "I20b", "I22a", "I22b", "I24a",
+                "I24b", "I25a", "I25b", "I27a", "I27b", "I28a", "I28b", "I30a", "I30b", "I30c",
+                "I32a", "I32b", "I32c", "I36a", "I36b", "I36c", "I40a", "I40b", "I40c", "I45a",
+                "I45b", "I45c", "I50a", "I50b", "I50c", "I55a", "I55b", "I55c", "I56a", "I56b",
+                "I56c", "I63a", "I63b", "I63c",
+            ]
+        );
+        // Spot checks against the transcribed values.
+        let spot = |designation: &str, values: [f64; 7], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "I10",
+            [100.0, 68.0, 4.5, 7.6, 6.5, 3.3, I_SLOPE],
+            1433.0,
+            11.3,
+        );
+        spot(
+            "I25a",
+            [250.0, 116.0, 8.0, 13.0, 10.0, 5.0, I_SLOPE],
+            4851.0,
+            38.1,
+        );
+        spot(
+            "I55a",
+            [550.0, 166.0, 12.5, 21.0, 14.5, 7.3, I_SLOPE],
+            13410.0,
+            105.0,
+        );
+        spot(
+            "I63c",
+            [630.0, 180.0, 17.0, 22.0, 15.0, 7.5, I_SLOPE],
+            17980.0,
+            141.0,
+        );
+        // The channel series of the same standard is not in this slice, and the series gaps the
+        // standard does not publish stay NOT_FOUND.
+        for absent in [
+            "C5", "C10", "I11", "I13", "I21", "I23", "I26", "I25c", "I29", "I31", "I33", "I38",
+            "I42", "I47", "I52", "I57", "I58", "I65",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
 }
