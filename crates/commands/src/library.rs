@@ -26,6 +26,12 @@
 //! library file is written only by [`add_entry`], which renders the whole library again and reads
 //! it back before it installs the file.
 //!
+//! Fastener libraries (A14.1, #668) and material libraries (#636) ride the same machinery under
+//! `/Library/Fasteners` and `/Library/Materials`: the fastener entries carry
+//! `steel:fastener:*` attributes, the material entries `steel:material:*` (grade, density,
+//! optional standard and display name), and both are admitted by the same rules, provenance
+//! included, when an environment lists them.
+//!
 //! Limits, none of them hidden: a project-level library is not read; the environment is chosen on
 //! the command line, there is no application setting or data directory yet; a bad entry is
 //! reported and skipped, while a duplicate designation refuses the whole library; the library
@@ -61,6 +67,8 @@ pub const MAX_LIBRARY_ENTRIES: usize = foreign::MAX_LIBRARY_ENTRIES;
 const ENTRY_PARENT: &str = "/Library/Profiles";
 /// Parent path of every fastener entry prim (A14.1).
 const FASTENER_ENTRY_PARENT: &str = "/Library/Fasteners";
+/// Parent path of every material entry prim (#636).
+const MATERIAL_ENTRY_PARENT: &str = "/Library/Materials";
 
 /// What the library file declares about itself and what was read.
 #[derive(Debug, Clone, PartialEq)]
@@ -353,6 +361,19 @@ pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
     load_bytes_as(bytes, FASTENER_ENTRY_PARENT, decode_fastener_record)
 }
 
+/// [`load`] for the material library at `path` (#636): the same layer format and loading rules,
+/// entries under `/Library/Materials` carrying `steel:material:*` attributes. The designation of
+/// an entry is its grade.
+pub fn load_material(path: &str) -> Result<Library, Refusal> {
+    check_source_path(path).map_err(command)?;
+    load_material_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
+}
+
+/// [`load_bytes`] for the bytes of a material library.
+pub fn load_material_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
+    load_bytes_as(bytes, MATERIAL_ENTRY_PARENT, decode_material_record)
+}
+
 /// [`load_bytes`] for one entry parent path and its entry decoder; everything else (layer
 /// budgets, identity, admission, refused-entry reporting) is shared with the profile loading.
 fn load_bytes_as(
@@ -439,11 +460,13 @@ fn load_bytes_as(
     })
 }
 
-/// The designation attribute of one entry kind: `steel:profile:designation` or
-/// `steel:fastener:designation`.
+/// The designation attribute of one entry kind: `steel:profile:designation`,
+/// `steel:fastener:designation` or `steel:material:grade`.
 fn designation_attribute(entry_parent: &str) -> &'static str {
     if entry_parent == FASTENER_ENTRY_PARENT {
         "steel:fastener:designation"
+    } else if entry_parent == MATERIAL_ENTRY_PARENT {
+        "steel:material:grade"
     } else {
         "steel:profile:designation"
     }
@@ -529,6 +552,34 @@ fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRe
     };
     spec.validate().map_err(command)?;
     Ok(DefinitionRecord::Fastener { spec })
+}
+
+/// The material definition of one entry prim, admitted by the F04 value rules (#636). The
+/// density and the grade are required; the standard and the display name are optional, and a
+/// display name that is not declared is the grade. Nothing is inferred from the grade: an
+/// unknown density is refused, never substituted.
+fn decode_material_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Refusal> {
+    let optional_text = |name: &str| -> Result<Option<String>, Refusal> {
+        field(prim, &format!("steel:material:{name}"), "string")
+            .map_err(as_input)?
+            .map(|v| {
+                text(v)
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid("a material label is not a string"))
+            })
+            .transpose()
+    };
+    let display_name = optional_text("displayName")?.unwrap_or_else(|| designation.to_owned());
+    let density = optional_number(prim, "steel:material:densityKgM3")?
+        .ok_or_else(|| invalid("a material entry has no density"))?;
+    let record = DefinitionRecord::Material {
+        density_kg_m3: Some(density),
+        grade: Some(designation.to_owned()),
+        standard: optional_text("standard")?,
+        display_name: Some(display_name),
+    };
+    record.validate().map_err(command)?;
+    Ok(record)
 }
 
 /// One library of a lookup, with the path it was read from.
@@ -665,6 +716,9 @@ pub struct Environment {
     /// The listed fastener libraries, strongest first (BC-ENV-002: bolts ride the same
     /// environment as profiles).
     pub fastener_sources: Vec<Source>,
+    /// The listed material libraries, strongest first (#636: grades ride the same environment
+    /// as profiles and bolts).
+    pub material_sources: Vec<Source>,
 }
 
 impl Environment {
@@ -675,11 +729,19 @@ impl Environment {
     pub fn fastener_lookup(&self) -> Lookup {
         Lookup::new(self.fastener_sources.clone())
     }
+
+    /// The resolver over the environment's material libraries, strongest first: the same
+    /// [`Lookup`] machinery answers a grade. The namespaces stay separate; a profile library
+    /// never answers a material lookup and the other way round.
+    #[must_use]
+    pub fn material_lookup(&self) -> Lookup {
+        Lookup::new(self.material_sources.clone())
+    }
 }
 
 /// Admits one listed library of an environment: its provenance is declared (`bim:library:source`
 /// and `bim:library:licence`, empty is undeclared) and its `bim:library:id` is new among every
-/// library of the environment, profile or fastener. A single-file `--library` needs no
+/// library of the environment, profile, fastener or material. A single-file `--library` needs no
 /// provenance, so the rule lives here, at the environment's edge.
 fn admit_library(
     sources: &mut Vec<Source>,
@@ -719,12 +781,12 @@ fn resolve_reference(directory: &std::path::Path, reference: &str) -> Result<Str
 /// Loads an environment file and every library it lists, in order.
 ///
 /// Each listed path is resolved against the directory of the environment file and loaded with
-/// [`load`] (profile libraries) or [`load_fastener`] (fastener libraries), so every library
-/// keeps its own bounds and admission. A library that cannot be loaded, one that declares no
-/// `source` or `licence`, or two listed libraries with the same `bim:library:id`, refuse the
-/// whole environment: a missing library would silently change which section or bolt a
-/// designation selects. The containment of a listed path is lexical; the files themselves are
-/// read like any `--library` file.
+/// [`load`] (profile libraries), [`load_fastener`] (fastener libraries) or [`load_material`]
+/// (material libraries), so every library keeps its own bounds and admission. A library that
+/// cannot be loaded, one that declares no `source` or `licence`, or two listed libraries with
+/// the same `bim:library:id`, refuse the whole environment: a missing library would silently
+/// change which section, bolt or grade a designation selects. The containment of a listed path
+/// is lexical; the files themselves are read like any `--library` file.
 pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     check_source_path(path).map_err(command)?;
     let bytes = read_file(path, MAX_ENVIRONMENT_BYTES).map_err(|code| match code {
@@ -753,11 +815,47 @@ pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
         let library = load_fastener(&resolved)?;
         admit_library(&mut fastener_sources, &mut ids, resolved, library)?;
     }
+    let mut material_sources: Vec<Source> = Vec::with_capacity(info.material_libraries.len());
+    for reference in &info.material_libraries {
+        let resolved = resolve_reference(&directory, reference)?;
+        let library = load_material(&resolved)?;
+        admit_library(&mut material_sources, &mut ids, resolved, library)?;
+    }
     Ok(Environment {
         info,
         sources,
         fastener_sources,
+        material_sources,
     })
+}
+
+/// The material lookup that a command names (#636): exactly one of a single `--library` file
+/// (a material library, no provenance required) or an `--environment` file (its material
+/// libraries in order), like [`open_lookup`] for profiles. The environment's own declarations
+/// are returned when one was named.
+///
+/// # Errors
+/// The same refusals as [`open_lookup`], with the material loading rules.
+pub fn open_material_lookup(
+    library: Option<&str>,
+    environment: Option<&str>,
+) -> Result<(Lookup, Option<EnvironmentInfo>), Refusal> {
+    match (library, environment) {
+        (Some(_), Some(_)) => Err(invalid("--library and --environment are alternatives")),
+        (None, None) => Err(invalid("--library or --environment is required")),
+        (Some(path), None) => Ok((
+            Lookup::new(vec![Source {
+                path: path.to_owned(),
+                library: load_material(path)?,
+            }]),
+            None,
+        )),
+        (None, Some(path)) => {
+            let loaded = load_environment(path)?;
+            let info = loaded.info.clone();
+            Ok((loaded.material_lookup(), Some(info)))
+        }
+    }
 }
 
 /// The lookup that a command names: exactly one of a single `--library` file or an
@@ -1313,6 +1411,101 @@ mod tests {
         assert_eq!(error.code, ErrorCode::InvalidArgument);
     }
 
+    fn material_entry(name: &str, grade: &str, body: &str) -> String {
+        format!(
+            "        def Scope \"{name}\" {{\n            string steel:material:grade = \"{grade}\"\n{body}        }}\n"
+        )
+    }
+
+    fn material_library(entries: &[String]) -> String {
+        format!(
+            "{HEADER}def Scope \"Library\" {{\n    def Scope \"Materials\" {{\n{}    }}\n}}\n",
+            entries.concat()
+        )
+    }
+
+    const MATERIAL_BODY: &str = "            double steel:material:densityKgM3 = 7850\n            string steel:material:standard = \"EN 10025-2\"\n";
+
+    #[test]
+    fn a_material_entry_resolves_to_a_complete_named_definition() {
+        let named = format!(
+            "{MATERIAL_BODY}            string steel:material:displayName = \"Structural steel S355\"\n"
+        );
+        let text = material_library(&[
+            material_entry("A", "S235JR", MATERIAL_BODY),
+            material_entry("B", "S355J2", &named),
+        ]);
+        let loaded = load_material_bytes(text.clone().into_bytes()).unwrap();
+        assert_eq!(loaded.info.id, "t");
+        assert_eq!(loaded.entries.len(), 2);
+        let plain = loaded.entry("S235JR").unwrap();
+        let DefinitionRecord::Material {
+            density_kg_m3,
+            grade,
+            standard,
+            display_name,
+        } = &plain.record
+        else {
+            panic!("the entry is not a material definition");
+        };
+        assert_eq!(*density_kg_m3, Some(7850.0));
+        assert_eq!(grade.as_deref(), Some("S235JR"));
+        assert_eq!(standard.as_deref(), Some("EN 10025-2"));
+        // Without a declared display name the entry answers under its grade.
+        assert_eq!(display_name.as_deref(), Some("S235JR"));
+        let overridden = loaded.entry("S355J2").unwrap();
+        let DefinitionRecord::Material { display_name, .. } = &overridden.record else {
+            panic!("the entry is not a material definition");
+        };
+        assert_eq!(display_name.as_deref(), Some("Structural steel S355"));
+        // A profile loader never sees a material entry and the other way round.
+        assert_eq!(
+            load_text("p.usda", &text).unwrap().entries.len(),
+            0,
+            "the material entry is not a profile entry"
+        );
+        assert_eq!(
+            loaded.entry("S355").unwrap_err().code,
+            ErrorCode::NotFound,
+            "the grade is exact, never a near match"
+        );
+    }
+
+    #[test]
+    fn a_bad_material_entry_is_reported_and_the_others_load() {
+        // A grade without its density is refused; so is a density the definition's own rules
+        // refuse. Nothing is inferred or substituted.
+        let dense = format!("{MATERIAL_BODY}            double steel:material:densityKgM3 = -1\n");
+        let text = material_library(&[
+            material_entry("A", "S235JR", MATERIAL_BODY),
+            material_entry(
+                "B",
+                "NO-DENSITY",
+                "            string steel:material:standard = \"X\"\n",
+            ),
+            material_entry("C", "NEGATIVE", &dense),
+        ]);
+        let loaded = load_material_bytes(text.into_bytes()).unwrap();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.rejected.len(), 2);
+        assert_eq!(
+            loaded
+                .rejected
+                .iter()
+                .map(|r| r.designation.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("NO-DENSITY"), Some("NEGATIVE")]
+        );
+        assert_eq!(
+            loaded.entry("NO-DENSITY").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            loaded.entry("NEGATIVE").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
     #[test]
     fn an_entry_resolves_to_a_complete_named_definition() {
         let text = library(&[entry("A", "T-I300", I_BODY)]);
@@ -1711,6 +1904,136 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_europe_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/materials-en-10025.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "europe-en-10025-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 33);
+        // The complete structural steel grade sets of the EN 10025-2/-3/-4:2019 editions,
+        // S235 to S500, in the loader's designation order, each with its part and the pack
+        // density: part 2 grew in 2019 by the S460 qualities and S500J0 (and dropped S450J0,
+        // which is not shipped), part 4 by S500M/ML; part 3 is unchanged. The weathering
+        // steels of part 5 and the quenched and tempered flat products of part 6 are not in
+        // the pack.
+        let part2 = "EN 10025-2:2019";
+        let part3 = "EN 10025-3:2019";
+        let part4 = "EN 10025-4:2019";
+        let expected: [(&str, &str); 33] = [
+            ("S235J0", part2),
+            ("S235J2", part2),
+            ("S235JR", part2),
+            ("S275J0", part2),
+            ("S275J2", part2),
+            ("S275JR", part2),
+            ("S275M", part4),
+            ("S275ML", part4),
+            ("S275N", part3),
+            ("S275NL", part3),
+            ("S355J0", part2),
+            ("S355J2", part2),
+            ("S355JR", part2),
+            ("S355K2", part2),
+            ("S355M", part4),
+            ("S355ML", part4),
+            ("S355N", part3),
+            ("S355NL", part3),
+            ("S420M", part4),
+            ("S420ML", part4),
+            ("S420N", part3),
+            ("S420NL", part3),
+            ("S460J0", part2),
+            ("S460J2", part2),
+            ("S460JR", part2),
+            ("S460K2", part2),
+            ("S460M", part4),
+            ("S460ML", part4),
+            ("S460N", part3),
+            ("S460NL", part3),
+            ("S500J0", part2),
+            ("S500M", part4),
+            ("S500ML", part4),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_europe_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-en-10025.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "europe-en-10025-materials");
+        assert_eq!(materials.library.entries.len(), 33);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, s355) = lookup.find("S355J2").unwrap();
+        assert_eq!(source.library.info.id, "europe-en-10025-materials");
+        assert!(matches!(
+            &s355.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("EN 10025-2:2019")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no lowercase, no grade of another part or of the superseded 2004 edition.
+        for absent in ["S235", "S355", "s355j2", "S355K2+N", "S500N", "S450J0"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
@@ -1743,15 +2066,29 @@ mod tests {
             &fastener_entry("B", "F-1", BOLT_BODY),
             "\n        string \"bim:library:licence\" = \"MPL-2.0\"",
         );
+        // A material library whose source is missing rides the same provenance edge (#636).
+        let material = library(
+            "m",
+            "Materials",
+            &material_entry("C", "S235JR", MATERIAL_BODY),
+            "\n        string \"bim:library:source\" = \"s\"",
+        );
         write("profiles-nolicence.usda", &profile);
         write("profiles-complete.usda", &complete);
         write("fasteners-nosource.usda", &fastener);
-        let env = |profiles: &str, fasteners: Option<&str>| {
+        write("materials-nolicence.usda", &material);
+        let env = |profiles: &str, fasteners: Option<&str>, materials: Option<&str>| {
             format!(
-                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}\n    }}\n)\n",
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}{}\n    }}\n)\n",
                 match fasteners {
                     Some(name) => format!(
                         "\n        string[] \"bim:environment:fastener-libraries\" = [\"{name}\"]"
+                    ),
+                    None => String::new(),
+                },
+                match materials {
+                    Some(name) => format!(
+                        "\n        string[] \"bim:environment:material-libraries\" = [\"{name}\"]"
                     ),
                     None => String::new(),
                 }
@@ -1759,11 +2096,23 @@ mod tests {
         };
         write(
             "no-profile-licence.usda",
-            &env("profiles-nolicence.usda", None),
+            &env("profiles-nolicence.usda", None, None),
         );
         write(
             "no-fastener-source.usda",
-            &env("profiles-complete.usda", Some("fasteners-nosource.usda")),
+            &env(
+                "profiles-complete.usda",
+                Some("fasteners-nosource.usda"),
+                None,
+            ),
+        );
+        write(
+            "no-material-licence.usda",
+            &env(
+                "profiles-complete.usda",
+                None,
+                Some("materials-nolicence.usda"),
+            ),
         );
         let refused =
             load_environment(dir.join("no-profile-licence.usda").to_str().unwrap()).unwrap_err();
@@ -1778,6 +2127,13 @@ mod tests {
         assert!(
             refused.message.contains("source"),
             "the fastener library's missing record is named: {refused:?}"
+        );
+        let refused =
+            load_environment(dir.join("no-material-licence.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("licence"),
+            "the material library's missing record is named: {refused:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2046,6 +2402,279 @@ mod tests {
             "200UC41.7",
             "350UC153",
             "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_australia_hollows_read_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/hollows-as-nzs-1163.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "australia-asnzs-1163-hollows");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 145);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(_),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("AS/NZS 1163:2016"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires); for the hollows the closed form is the
+            // hollow formula of Appendix E with the corner radii the standard fixes for the
+            // series (2.0t to 3.0 mm, 2.5t above). The mass must be that area at 7850 kg/m3
+            // within the three significant figures the series publishes (worst 0.46 percent on
+            // SHS89x89x6.0).
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.01,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The CHS, RHS and SHS series exactly as AS/NZS 1163:2016 Appendix D publishes them:
+        // 66 + 41 + 38 designations. The mill stock lists carry sizes outside the standard's
+        // Appendix D (SHS 300x300 and smaller than 40x40, RHS 300x200 and 152x76, the heavier
+        // thicknesses of the small series); those follow the manufacturer, not the standard, and
+        // are not shipped here.
+        let mut expected = vec![
+            "CHS610x12.7",
+            "CHS610x9.5",
+            "CHS610x6.4",
+            "CHS508x12.7",
+            "CHS508x9.5",
+            "CHS508x6.4",
+            "CHS457x12.7",
+            "CHS457x9.5",
+            "CHS457x6.4",
+            "CHS406.4x12.7",
+            "CHS406.4x9.5",
+            "CHS406.4x6.4",
+            "CHS355.6x12.7",
+            "CHS355.6x9.5",
+            "CHS355.6x6.4",
+            "CHS323.9x12.7",
+            "CHS323.9x9.5",
+            "CHS323.9x6.4",
+            "CHS273.1x9.3",
+            "CHS273.1x6.4",
+            "CHS273.1x4.8",
+            "CHS219.1x8.2",
+            "CHS219.1x6.4",
+            "CHS219.1x4.8",
+            "CHS168.3x7.1",
+            "CHS168.3x6.4",
+            "CHS168.3x4.8",
+            "CHS165.1x5.4",
+            "CHS165.1x5",
+            "CHS165.1x3.5",
+            "CHS165.1x3",
+            "CHS139.7x5.4",
+            "CHS139.7x5",
+            "CHS139.7x3.5",
+            "CHS139.7x3",
+            "CHS114.3x6",
+            "CHS114.3x5.4",
+            "CHS114.3x4.8",
+            "CHS114.3x4.5",
+            "CHS114.3x3.6",
+            "CHS114.3x3.2",
+            "CHS101.6x5",
+            "CHS101.6x4",
+            "CHS101.6x3.2",
+            "CHS101.6x2.6",
+            "CHS88.9x5.9",
+            "CHS88.9x5.5",
+            "CHS88.9x5",
+            "CHS88.9x4.8",
+            "CHS88.9x4",
+            "CHS88.9x3.2",
+            "CHS88.9x2.6",
+            "CHS76.1x5.9",
+            "CHS76.1x4.5",
+            "CHS76.1x3.6",
+            "CHS76.1x3.2",
+            "CHS76.1x2.3",
+            "CHS60.3x5.4",
+            "CHS60.3x4.5",
+            "CHS60.3x3.6",
+            "CHS48.3x5.4",
+            "CHS48.3x4",
+            "CHS48.3x3.2",
+            "CHS42.4x4.9",
+            "CHS42.4x4",
+            "CHS42.4x3.2",
+            "RHS250x150x9",
+            "RHS250x150x6",
+            "RHS250x150x5",
+            "RHS200x100x9",
+            "RHS200x100x6",
+            "RHS200x100x5",
+            "RHS200x100x4",
+            "RHS150x100x6",
+            "RHS150x100x5",
+            "RHS150x100x4",
+            "RHS150x50x5",
+            "RHS150x50x4",
+            "RHS150x50x3",
+            "RHS125x75x5",
+            "RHS125x75x4",
+            "RHS125x75x3",
+            "RHS100x50x6",
+            "RHS100x50x5",
+            "RHS100x50x4",
+            "RHS100x50x3.5",
+            "RHS100x50x3",
+            "RHS100x50x2.5",
+            "RHS100x50x2",
+            "RHS75x50x4",
+            "RHS75x50x3",
+            "RHS75x50x2.5",
+            "RHS75x50x2",
+            "RHS75x25x2.5",
+            "RHS75x25x2",
+            "RHS75x25x1.6",
+            "RHS65x35x3",
+            "RHS65x35x2.5",
+            "RHS65x35x2",
+            "RHS50x25x3",
+            "RHS50x25x2.5",
+            "RHS50x25x2",
+            "RHS50x25x1.6",
+            "RHS50x20x3",
+            "RHS50x20x2.5",
+            "RHS50x20x2",
+            "RHS50x20x1.6",
+            "SHS250x250x9",
+            "SHS250x250x6",
+            "SHS200x200x9",
+            "SHS200x200x6",
+            "SHS200x200x5",
+            "SHS150x150x9",
+            "SHS150x150x6",
+            "SHS150x150x5",
+            "SHS125x125x9",
+            "SHS125x125x6",
+            "SHS125x125x5",
+            "SHS125x125x4",
+            "SHS100x100x9",
+            "SHS100x100x6",
+            "SHS100x100x5",
+            "SHS100x100x4",
+            "SHS100x100x3",
+            "SHS89x89x6",
+            "SHS89x89x5",
+            "SHS89x89x3.5",
+            "SHS75x75x6",
+            "SHS75x75x5",
+            "SHS75x75x4",
+            "SHS75x75x3.5",
+            "SHS75x75x3",
+            "SHS75x75x2.5",
+            "SHS65x65x3",
+            "SHS65x65x2.5",
+            "SHS65x65x2",
+            "SHS50x50x4",
+            "SHS50x50x3",
+            "SHS50x50x2.5",
+            "SHS50x50x2",
+            "SHS50x50x1.6",
+            "SHS40x40x4",
+            "SHS40x40x2.5",
+            "SHS40x40x2",
+            "SHS40x40x1.6",
+        ];
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, one per series. The SHS radius is the one
+        // the standard fixes (3.0 mm thickness or less: 2.0t; above: 2.5t).
+        let spot =
+            |designation: &str, family: SectionFamily, values: &[f64], area: f64, mass: f64| {
+                let entry = library.entry(designation).unwrap();
+                let DefinitionRecord::SectionProfile {
+                    shape: SectionShape::Parametric(p),
+                    section,
+                } = &entry.record
+                else {
+                    panic!("{designation} is not a parametric section");
+                };
+                assert_eq!(p.family(), family, "{designation}");
+                assert_eq!(p.values(), values, "{designation}");
+                assert_eq!(section.area_mm2, Some(area), "{designation}");
+                assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+            };
+        spot(
+            "SHS100x100x3",
+            SectionFamily::Rhs,
+            &[100.0, 100.0, 3.0, 6.0],
+            1140.0,
+            8.96,
+        );
+        spot(
+            "RHS200x100x9",
+            SectionFamily::Rhs,
+            &[200.0, 100.0, 9.0, 22.5],
+            4800.0,
+            37.7,
+        );
+        spot("CHS76.1x3.2", SectionFamily::Chs, &[76.1, 3.2], 733.0, 5.75);
+        for absent in [
+            "SHS300x300x8",
+            "SHS30x30x2",
+            "SHS20x20x1.6",
+            "SHS50x50x6",
+            "SHS65x65x6",
+            "RHS300x200x6",
+            "RHS400x200x8",
+            "RHS152x76x5",
+            "RHS150x100x8",
+            "CHS60.3x2.6",
+            "CHS114.3x2",
+            "RHS-100x60x4",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -3046,6 +3675,247 @@ mod tests {
             "C5.5", "C7", "C9", "C11", "C13", "C13.5", "C15", "C17", "C18c", "C19", "C21", "C22c",
             "C23", "C26", "C29", "C31", "C33", "C41", "C45", "C63", "I11", "I13", "I21", "I23",
             "I26", "I25c", "I29", "I31", "I33", "I38", "I42", "I47", "I52", "I57", "I58", "I65",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_china_h_section_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/china/profiles-gb-t-11263.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "china-gb-t-11263-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 103);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // The HW/HM/HN flanges are parallel: the i_shape family, no slope, no toe radius.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("GB/T 11263-2017"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires) and the declared mass must be that
+            // area at 7850 kg/m3 within the standard's published rounding. The mass prints
+            // with one decimal to 100 kg/m and as an integer above it (HW400x400 "172" is
+            // 171.68 rounded), so 0.55 kg/m covers every row.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() <= 0.55,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The HW, HM and HN series exactly as table 1 of GB/T 11263-2017 publishes them: 103
+        // designations (the lookup lists them lexicographically). The thin-wall HT series
+        // (27 rows) and the HP pile series of the same table stay outside this pack.
+        assert_eq!(
+            designations,
+            [
+                "HM148x100",
+                "HM194x150",
+                "HM244x175",
+                "HM294x200",
+                "HM298x201",
+                "HM340x250",
+                "HM390x300",
+                "HM440x300",
+                "HM482x300",
+                "HM488x300",
+                "HM544x300",
+                "HM550x300",
+                "HM582x300",
+                "HM588x300",
+                "HM594x302",
+                "HN1000x300",
+                "HN1008x302",
+                "HN100x50",
+                "HN125x60",
+                "HN150x75",
+                "HN175x90",
+                "HN198x99",
+                "HN200x100",
+                "HN248x124",
+                "HN250x125",
+                "HN298x149",
+                "HN300x150",
+                "HN346x174",
+                "HN350x175",
+                "HN396x199",
+                "HN400x150",
+                "HN400x200",
+                "HN446x150",
+                "HN446x199",
+                "HN450x151",
+                "HN450x200",
+                "HN470x150",
+                "HN475x151.5",
+                "HN482x153.5",
+                "HN492x150",
+                "HN496x199",
+                "HN500x152",
+                "HN500x200",
+                "HN504x153",
+                "HN506x201",
+                "HN546x199",
+                "HN550x200",
+                "HN596x199",
+                "HN600x200",
+                "HN606x201",
+                "HN625x198.5",
+                "HN630x200",
+                "HN638x202",
+                "HN646x299",
+                "HN650x300",
+                "HN656x301",
+                "HN692x300",
+                "HN700x300",
+                "HN734x299",
+                "HN742x300",
+                "HN750x300",
+                "HN758x303",
+                "HN792x300",
+                "HN800x300",
+                "HN834x298",
+                "HN842x299",
+                "HN850x300",
+                "HN858x301",
+                "HN890x299",
+                "HN900x300",
+                "HN912x302",
+                "HN970x297",
+                "HN980x298",
+                "HN990x298",
+                "HW100x100",
+                "HW125x125",
+                "HW150x150",
+                "HW175x175",
+                "HW200x200",
+                "HW200x204",
+                "HW244x252",
+                "HW250x250",
+                "HW250x255",
+                "HW294x302",
+                "HW300x300",
+                "HW300x305",
+                "HW338x351",
+                "HW344x348",
+                "HW344x354",
+                "HW350x350",
+                "HW350x357",
+                "HW388x402",
+                "HW394x398",
+                "HW394x405",
+                "HW400x400",
+                "HW400x408",
+                "HW414x405",
+                "HW428x407",
+                "HW458x417",
+                "HW492x465",
+                "HW498x432",
+                "HW502x465",
+                "HW502x470",
+            ]
+        );
+        // Spot checks against the transcribed values.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("HW100x100", [100.0, 100.0, 6.0, 8.0, 8.0], 2158.0, 16.9);
+        spot(
+            "HM594x302",
+            [594.0, 302.0, 14.0, 23.0, 13.0],
+            21710.0,
+            170.0,
+        );
+        spot(
+            "HN1008x302",
+            [1008.0, 302.0, 21.0, 40.0, 18.0],
+            43930.0,
+            345.0,
+        );
+        // The 625x200 and 650x300 groups where a 2017-labeled web transcription disagrees with
+        // the official text: the 2017 foreword changes no table 1 value against the 2010
+        // printing, so the official values stand (HN630x200 tw 13, not 15).
+        spot(
+            "HN630x200",
+            [630.0, 200.0, 13.0, 20.0, 13.0],
+            15820.0,
+            124.0,
+        );
+        spot(
+            "HN646x299",
+            [646.0, 299.0, 10.0, 15.0, 13.0],
+            15280.0,
+            120.0,
+        );
+        // The HT thin-wall series, the HP pile series and the depths no series publishes stay
+        // NOT_FOUND, and the bare prefix without the series letter is no designation.
+        for absent in [
+            "HT100x50",
+            "HT200x100",
+            "HP200x200",
+            "HP250x250",
+            "H200x100",
+            "HW110x110",
+            "HM160x150",
+            "HN225x125",
+            "HW500x500",
+            "HN550x300",
+            "HW498x417",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,

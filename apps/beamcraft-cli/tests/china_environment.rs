@@ -76,20 +76,25 @@ fn the_shipped_china_environment_lists_its_sections_and_provenance() {
         "--environment",
         ENVIRONMENT,
         "--limit",
-        "128",
+        "256",
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "china");
-    assert_eq!(num(&listed, &["entry_count"]), 86.0);
+    assert_eq!(num(&listed, &["entry_count"]), 189.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
-    let library = &at(&listed, &["libraries"]).array().unwrap()[0];
-    let info = at(library, &["library"]);
+    let libraries = at(&listed, &["libraries"]).array().unwrap();
+    assert_eq!(libraries.len(), 2);
+    let info = at(&libraries[0], &["library"]);
     assert_eq!(text(info, "id"), "china-gb-t-706-profiles");
     assert_eq!(text(info, "version"), "2");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
+    assert_eq!(
+        text(at(&libraries[1], &["library"]), "id"),
+        "china-gb-t-11263-profiles"
+    );
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 86);
+    assert_eq!(entries.len(), 189);
     let i10 = entries
         .iter()
         .find(|e| text(e, "designation") == "I10")
@@ -113,6 +118,25 @@ fn the_shipped_china_environment_lists_its_sections_and_provenance() {
         .unwrap();
     assert_eq!(num(c5, &["parameters_mm", "h"]), 50.0);
     assert_eq!(num(c5, &["parameters_mm", "k"]), 1.0 / 10.0);
+    // The H-section pack of GB/T 11263-2017: parallel flanges, so tw and tf instead of the
+    // tapered family's s, t, r1 and slope.
+    let hw100 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "HW100x100")
+        .unwrap();
+    assert_eq!(text(hw100, "library_id"), "china-gb-t-11263-profiles");
+    assert_eq!(num(hw100, &["parameters_mm", "h"]), 100.0);
+    assert_eq!(num(hw100, &["parameters_mm", "tw"]), 6.0);
+    assert_eq!(num(hw100, &["parameters_mm", "tf"]), 8.0);
+    assert_eq!(num(hw100, &["area_mm2"]), 2158.0);
+    let hn1008 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "HN1008x302")
+        .unwrap();
+    assert_eq!(num(hn1008, &["parameters_mm", "h"]), 1008.0);
+    assert_eq!(num(hn1008, &["parameters_mm", "b"]), 302.0);
+    assert_eq!(num(hn1008, &["area_mm2"]), 43930.0);
+    assert_eq!(num(hn1008, &["mass_per_meter_kg"]), 345.0);
 }
 
 #[test]
@@ -241,11 +265,39 @@ fn a_project_created_with_the_china_environment_resolves_its_designations() {
     assert_eq!(num(&q, &["section_area_mm2"]), 9104.0);
     close(num(&q, &["mass", "kg"]), 428.7984, 1e-9);
 
+    // The GB/T 11263-2017 H-section pack of the same environment resolves through one series
+    // designation per family: HW100x100 (2158 mm2), HM594x302 (21710 mm2) and the deepest
+    // narrow beam HN1000x300 (39510 mm2), each as a 4 m column.
+    for (profile, area) in [
+        ("HW100x100", 2158.0),
+        ("HM594x302", 21710.0),
+        ("HN1000x300", 39510.0),
+    ] {
+        let made = f.ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "column",
+            "--start",
+            "16000,0,4000",
+            "--end",
+            "16000,0,8000",
+            "--profile",
+            profile,
+            "--material",
+            "Steel",
+        ]);
+        let q = at(&made, &["member", "quantities"]).clone();
+        assert_eq!(text(&q, "area_source"), "catalogue", "{profile}");
+        assert_eq!(num(&q, &["section_area_mm2"]), area, "{profile}");
+    }
+
     // A designation the shipped series does not publish is refused, not silently substituted:
     // the channel series has no 18c or 22c variant (the official table leaves them out; the
     // flawed web transcription printed blank cells there), the I-beam series has no I33, and
-    // the H-sections (GB/T 11263-2017) are a separate pack.
-    for absent in ["C18c", "C22c", "I33", "H200x100"] {
+    // the thin-wall (HT) and pile (HP) series of GB/T 11263-2017 are not in the H-section pack.
+    for absent in ["C18c", "C22c", "I33", "H200x100", "HT200x100", "HP250x250"] {
         assert_eq!(
             f.code(&[
                 "create-member",
@@ -271,7 +323,7 @@ fn a_project_created_with_the_china_environment_resolves_its_designations() {
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 5);
+    assert_eq!(members.len(), 8);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
