@@ -30,6 +30,9 @@ pub const ENVIRONMENTS_DIR: &str = "environments";
 /// Name of the folder of the user's own libraries, in the user's settings directory beside its
 /// [`ENVIRONMENTS_DIR`].
 pub const LIBRARIES_DIR: &str = "libraries";
+/// The id of the shipped neutral environment: the built-in fallback layer every lookup reaches
+/// when no stronger layer declares a designation.
+pub const NEUTRAL_ENVIRONMENT_ID: &str = "blank";
 /// Largest environment file, in bytes.
 pub const MAX_ENVIRONMENT_BYTES: usize = 1024 * 1024;
 /// Most libraries one environment may list, per list (profile and fastener); more is
@@ -266,14 +269,40 @@ pub fn environment_folders(
 /// The folder of the user's own libraries: `libraries/` under the application data directory
 /// (`config_dir`, or the settings directory of the current user when `config_dir` is `None`),
 /// beside its [`ENVIRONMENTS_DIR`]. The folder is where a person keeps library files of their
-/// own; the programs never create or write it, and no lookup reads it yet — the user-owned
-/// layer above the environment of the Layering work will.
+/// own; the programs never create or write it, and no environment update ever touches it — it
+/// is the user-owned firm layer of the lookup.
 #[must_use]
 pub fn libraries_dir(config_dir: Option<&Path>) -> Option<PathBuf> {
     config_dir
         .map(Path::to_path_buf)
         .or_else(settings::default_dir)
         .map(|dir| dir.join(LIBRARIES_DIR))
+}
+
+/// The library files of the firm layer, in file-name order: every regular file of
+/// [`libraries_dir`] whose name ends in `.usda` or `.usdc` (case-insensitive), at most
+/// [`MAX_SCANNED`] of them. A missing or unreadable folder is no files; every other file there
+/// (a note, a backup copy) is ignored by the scan and never reported.
+#[must_use]
+pub fn firm_library_files(config_dir: Option<&Path>) -> Vec<PathBuf> {
+    let Some(dir) = libraries_dir(config_dir) else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .take(MAX_SCANNED)
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("usda") || e.eq_ignore_ascii_case("usdc"))
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 /// The file of the environment `id` among `folders`: the first ready one that no earlier
@@ -599,6 +628,41 @@ mod tests {
         assert_eq!(
             libraries_dir(None),
             settings::default_dir().map(|d| d.join(LIBRARIES_DIR))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn firm_library_files_are_sorted_library_files_only() {
+        let dir = scratch("firm-files");
+        let libraries = dir.join(LIBRARIES_DIR);
+        fs::create_dir_all(libraries.join("nested")).unwrap();
+        fs::write(libraries.join("b.usda"), "x").unwrap();
+        fs::write(libraries.join("a.USDA"), "x").unwrap();
+        fs::write(libraries.join("c.usdc"), "x").unwrap();
+        fs::write(libraries.join("notes.txt"), "x").unwrap();
+        fs::write(libraries.join("d.partial.usda"), "x").unwrap();
+        fs::write(libraries.join("nested/e.usda"), "x").unwrap();
+        let found = firm_library_files(Some(&dir));
+        let names: Vec<String> = found
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(
+            names,
+            ["a.USDA", "b.usda", "c.usdc", "d.partial.usda"],
+            "sorted by name, library extensions only, no subfolder descent"
+        );
+        assert!(found.iter().all(|p| p.starts_with(&libraries)));
+        // A missing folder is no files, and the scan never creates anything.
+        assert_eq!(
+            firm_library_files(Some(&dir.join("absent"))),
+            Vec::<PathBuf>::new()
+        );
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "only libraries/ was made by the test"
         );
         let _ = fs::remove_dir_all(&dir);
     }

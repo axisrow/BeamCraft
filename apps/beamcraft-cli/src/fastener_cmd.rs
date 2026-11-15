@@ -178,6 +178,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let lookup = Lookup::new(vec![Source {
         path: (*path).to_owned(),
         library,
+        layer: beamcraft_commands::library::LAYER_LIBRARY,
     }]);
     let (_source, entry) = lookup.find(designation)?;
     let DefinitionRecord::Fastener { spec } = &entry.record else {

@@ -26,11 +26,22 @@
 //! library file is written only by [`add_entry`], which renders the whole library again and reads
 //! it back before it installs the file.
 //!
-//! Limits, none of them hidden: a project-level library is not read; the environment is chosen on
-//! the command line, there is no application setting or data directory yet; a bad entry is
-//! reported and skipped, while a duplicate designation refuses the whole library; the library
-//! provenance is reported with the entry but not stored in the definition; the layer engine runs
-//! in this process (no LEW-03 containment), as for every other command.
+//! The Layering work adds the layers above the environment. Every [`Source`] of a lookup names
+//! its layer, strongest first: the user library named on the command line, the user-owned firm
+//! layer (`libraries/` in the application data, loaded by [`load_firm`], never written by the
+//! programs and never touched by an environment update), then the chosen libraries. A project's
+//! own copy of its environment is the project layer of [`project_library_chain`], and the
+//! shipped neutral environment ([`neutral_environment`]) is the built-in fallback every project
+//! chain ends with. When a weaker layer declares a designation a stronger one already answers,
+//! [`Lookup::shadowed`] reports it with both layers. Fastener entries ride the same machinery in
+//! their own namespace ([`Environment::fastener_lookup`], [`ProjectChain::fastener_lookup`]);
+//! material libraries join the same chain when they arrive.
+//!
+//! Limits, none of them hidden: a bad entry is reported and skipped, while a duplicate
+//! designation refuses the whole library; a firm file that does not read is reported and skipped
+//! by [`load_firm`], never silently dropped; the library provenance is reported with the entry
+//! but not stored in the definition; the layer engine runs in this process (no LEW-03
+//! containment), as for every other command.
 
 use crate::definition::{DefinitionRecord, field};
 use crate::plate::{decode_polygon, decode_polygons, number, text};
@@ -61,6 +72,21 @@ pub const MAX_LIBRARY_ENTRIES: usize = foreign::MAX_LIBRARY_ENTRIES;
 const ENTRY_PARENT: &str = "/Library/Profiles";
 /// Parent path of every fastener entry prim (A14.1).
 const FASTENER_ENTRY_PARENT: &str = "/Library/Fasteners";
+
+/// The layer of a source that was named on the command line: an explicit single library.
+pub const LAYER_LIBRARY: &str = "library";
+/// The layer of the user library named on the command line: the strongest source of a lookup.
+pub const LAYER_USER_LIBRARY: &str = "user-library";
+/// The layer of the user-owned firm libraries (`libraries/` in the application data): above the
+/// environment, below the project, never written by the programs.
+pub const LAYER_FIRM: &str = "firm";
+/// The layer of a project's own copy of its environment.
+pub const LAYER_PROJECT: &str = "project";
+/// The layer of a chosen environment's libraries.
+pub const LAYER_ENVIRONMENT: &str = "environment";
+/// The layer of the shipped neutral environment: the built-in fallback every project chain
+/// ends with.
+pub const LAYER_NEUTRAL: &str = "neutral";
 
 /// What the library file declares about itself and what was read.
 #[derive(Debug, Clone, PartialEq)]
@@ -338,7 +364,7 @@ fn open_layer(bytes: Vec<u8>, not_self_contained: &'static str) -> Result<OpenLa
 
 /// [`load`] for bytes that were already read (at most 8 MiB, checked again here).
 pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
-    load_bytes_as(bytes, ENTRY_PARENT, decode_record)
+    load_bytes_as(bytes, Some(ENTRY_PARENT), decode_record).map(|(library, _)| library)
 }
 
 /// [`load`] for the fastener library at `path` (A14.1): the same layer format and
@@ -350,16 +376,33 @@ pub fn load_fastener(path: &str) -> Result<Library, Refusal> {
 
 /// [`load_bytes`] for the bytes of a fastener library.
 pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
-    load_bytes_as(bytes, FASTENER_ENTRY_PARENT, decode_fastener_record)
+    load_bytes_as(bytes, Some(FASTENER_ENTRY_PARENT), decode_fastener_record)
+        .map(|(library, _)| library)
 }
 
-/// [`load_bytes`] for one entry parent path and its entry decoder; everything else (layer
-/// budgets, identity, admission, refused-entry reporting) is shared with the profile loading.
+/// [`load_bytes`] for a firm-layer file, whose entries may sit under either entry parent: the
+/// profile and fastener admission runs in one pass over the same opened layer, and the second
+/// answer says whether any admitted entry is a fastener (a file without entries is a profile
+/// library). A mixed file is not refused here; its entries decode by their own parent.
+pub fn load_firm_bytes(bytes: Vec<u8>) -> Result<(Library, bool), Refusal> {
+    load_bytes_as(bytes, None, decode_record)
+}
+
+/// [`load_firm_bytes`] for the library file at `path`.
+pub fn load_firm_file(path: &str) -> Result<(Library, bool), Refusal> {
+    check_source_path(path).map_err(command)?;
+    load_firm_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
+}
+
+/// [`load_bytes`] for one entry parent path (or `None` for a firm file, where both entry
+/// parents are admitted and each prim decodes by its own) and the profile entry decoder; the
+/// layer budgets, identity, admission and refused-entry reporting are shared with the profile
+/// loading. The boolean answers whether any admitted entry is a fastener.
 fn load_bytes_as(
     bytes: Vec<u8>,
-    entry_parent: &str,
+    entry_parent: Option<&str>,
     decode: fn(&Prim, &str) -> Result<DefinitionRecord, Refusal>,
-) -> Result<Library, Refusal> {
+) -> Result<(Library, bool), Refusal> {
     if bytes.len() > MAX_LIBRARY_BYTES {
         return Err(io_error(ErrorCode::LimitExceeded));
     }
@@ -380,10 +423,14 @@ fn load_bytes_as(
     let mut rejected = Vec::new();
     let mut seen = BTreeSet::new();
     let mut count = 0usize;
-    for prim in prims
-        .iter()
-        .filter(|p| p.path.rsplit_once('/').map(|(parent, _)| parent) == Some(entry_parent))
-    {
+    let mut any_fastener = false;
+    for prim in prims.iter().filter(|p| {
+        let parent = p.path.rsplit_once('/').map(|(parent, _)| parent);
+        match entry_parent {
+            Some(one) => parent == Some(one),
+            None => parent == Some(ENTRY_PARENT) || parent == Some(FASTENER_ENTRY_PARENT),
+        }
+    }) {
         count += 1;
         if count > MAX_LIBRARY_ENTRIES {
             return Err(refuse(
@@ -391,7 +438,17 @@ fn load_bytes_as(
                 "the library has more than 4096 entries",
             ));
         }
-        let designation = match required_text(prim, designation_attribute(entry_parent), "string") {
+        let fastener_prim = entry_parent.is_none()
+            && prim.path.rsplit_once('/').map(|(parent, _)| parent) == Some(FASTENER_ENTRY_PARENT);
+        if fastener_prim {
+            any_fastener = true;
+        }
+        let attribute = if fastener_prim {
+            "steel:fastener:designation"
+        } else {
+            designation_attribute(entry_parent.unwrap_or(ENTRY_PARENT))
+        };
+        let designation = match required_text(prim, attribute, "string") {
             Ok(text) if label_is_valid(text) => text.to_owned(),
             Ok(_) | Err(_) => {
                 rejected.push(RejectedEntry {
@@ -417,7 +474,12 @@ fn load_bytes_as(
             });
             continue;
         }
-        match decode(prim, &designation) {
+        let decoded = if fastener_prim {
+            decode_fastener_record(prim, &designation)
+        } else {
+            decode(prim, &designation)
+        };
+        match decoded {
             Ok(record) => entries.push(LibraryEntry {
                 prim_path: prim.path.clone(),
                 designation,
@@ -432,11 +494,14 @@ fn load_bytes_as(
         }
     }
     entries.sort_by(|a, b| a.designation.cmp(&b.designation));
-    Ok(Library {
-        info,
-        entries,
-        rejected,
-    })
+    Ok((
+        Library {
+            info,
+            entries,
+            rejected,
+        },
+        any_fastener,
+    ))
 }
 
 /// The designation attribute of one entry kind: `steel:profile:designation` or
@@ -531,13 +596,15 @@ fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRe
     Ok(DefinitionRecord::Fastener { spec })
 }
 
-/// One library of a lookup, with the path it was read from.
+/// One library of a lookup, with the path it was read from and the layer it sits in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Source {
     /// The path the library was read from: as given, or resolved against its environment file.
     pub path: String,
     /// The loaded library.
     pub library: Library,
+    /// The layer the library sits in, one of the [`LAYER_LIBRARY`] family of constants.
+    pub layer: &'static str,
 }
 
 /// A designation that a stronger library already provides; the weaker entry is never used.
@@ -547,8 +614,12 @@ pub struct Shadowed {
     pub designation: String,
     /// `bim:library:id` of the stronger library, whose entry (or refusal) answers a lookup.
     pub used_library: String,
+    /// The layer of the stronger library.
+    pub used_layer: &'static str,
     /// `bim:library:id` of the weaker library that has the same designation.
     pub shadowed_library: String,
+    /// The layer of the weaker library.
+    pub shadowed_layer: &'static str,
 }
 
 /// Libraries in lookup order, strongest first.
@@ -565,6 +636,9 @@ enum Slot<'a> {
     Entry(&'a Source, &'a LibraryEntry),
     Refused,
 }
+
+/// One designation's answering library id, its layer, and the entry or refusal behind it.
+type Answered<'a> = BTreeMap<&'a str, (&'a str, &'static str, Slot<'a>)>;
 
 impl Lookup {
     /// A lookup over these libraries, strongest first.
@@ -593,8 +667,8 @@ impl Lookup {
         ))
     }
 
-    fn slots(&self) -> (BTreeMap<&str, (&str, Slot<'_>)>, Vec<Shadowed>) {
-        let mut slots: BTreeMap<&str, (&str, Slot<'_>)> = BTreeMap::new();
+    fn slots(&self) -> (Answered<'_>, Vec<Shadowed>) {
+        let mut slots: Answered<'_> = BTreeMap::new();
         let mut shadowed = Vec::new();
         for source in &self.sources {
             let id = source.library.info.id.as_str();
@@ -612,14 +686,16 @@ impl Lookup {
                 );
             for (designation, entry) in declared {
                 match slots.get(designation) {
-                    Some((winner, _)) => shadowed.push(Shadowed {
+                    Some((winner, winner_layer, _)) => shadowed.push(Shadowed {
                         designation: designation.to_owned(),
                         used_library: (*winner).to_owned(),
+                        used_layer: winner_layer,
                         shadowed_library: id.to_owned(),
+                        shadowed_layer: source.layer,
                     }),
                     None => {
                         let slot = entry.map_or(Slot::Refused, |e| Slot::Entry(source, e));
-                        slots.insert(designation, (id, slot));
+                        slots.insert(designation, (id, source.layer, slot));
                     }
                 }
             }
@@ -635,7 +711,7 @@ impl Lookup {
         self.slots()
             .0
             .into_values()
-            .filter_map(|(_, slot)| match slot {
+            .filter_map(|(_, _, slot)| match slot {
                 Slot::Entry(source, entry) => Some((source, entry)),
                 Slot::Refused => None,
             })
@@ -703,7 +779,11 @@ fn admit_library(
         ));
     }
     ids.push(library.info.id.clone());
-    sources.push(Source { path, library });
+    sources.push(Source {
+        path,
+        library,
+        layer: LAYER_ENVIRONMENT,
+    });
     Ok(())
 }
 
@@ -760,16 +840,36 @@ pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     })
 }
 
+/// A lookup a command opened, with its provenance: the resolver, the environment declarations
+/// when one was named, and the firm files that did not read (reported, never silently dropped).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenedLookup {
+    /// The resolver over the layered sources, strongest first.
+    pub lookup: Lookup,
+    /// The environment's own declarations, when an environment was named.
+    pub environment: Option<EnvironmentInfo>,
+    /// The firm files that did not read, in file-name order.
+    pub firm_refused: Vec<FirmFileRefused>,
+}
+
 /// The lookup that a command names: exactly one of a single `--library` file or an
 /// `--environment` file (its libraries in order), with an optional `--user-library` file that is
 /// consulted before either. Never a hidden global; with none of them it is `INVALID_ARGUMENT`.
 /// The environment's own declarations are returned when one was named.
+///
+/// A single `--library` names every source exactly: no firm layer joins it, so `list-library
+/// --library FILE` shows the one file. An `--environment` is the layered lookup: the firm
+/// libraries of `config_dir` (or of the application data when `config_dir` is `None`) are
+/// consulted between an optional `--user-library` and the environment's own libraries, and a
+/// firm file that does not read is reported in [`OpenedLookup::firm_refused`] and skipped.
 pub fn open_lookup(
     library: Option<&str>,
     environment: Option<&str>,
     user_library: Option<&str>,
-) -> Result<(Lookup, Option<EnvironmentInfo>), Refusal> {
+    config_dir: Option<&std::path::Path>,
+) -> Result<OpenedLookup, Refusal> {
     let mut environment_info = None;
+    let mut firm_refused = Vec::new();
     let base = match (library, environment) {
         (Some(_), Some(_)) => {
             return Err(invalid("--library and --environment are alternatives"));
@@ -780,6 +880,7 @@ pub fn open_lookup(
         (Some(path), None) => vec![Source {
             path: path.to_owned(),
             library: load(path)?,
+            layer: LAYER_LIBRARY,
         }],
         (None, Some(path)) => {
             let loaded = load_environment(path)?;
@@ -787,16 +888,18 @@ pub fn open_lookup(
             loaded.sources
         }
     };
-    let mut sources = Vec::with_capacity(base.len().saturating_add(1));
+    let mut sources = Vec::new();
     if let Some(path) = user_library {
         let user = Source {
             path: path.to_owned(),
             library: load(path)?,
+            layer: LAYER_USER_LIBRARY,
         };
         // The same identity twice would make the library ids of entries and shadow records
         // ambiguous, so it is refused for a single library as it is for an environment.
         if base
             .iter()
+            .chain(sources.iter())
             .any(|s| s.library.info.id == user.library.info.id)
         {
             return Err(invalid(
@@ -805,8 +908,206 @@ pub fn open_lookup(
         }
         sources.push(user);
     }
+    if environment.is_some() {
+        let firm = load_firm(config_dir);
+        firm_refused = firm.refused;
+        sources.extend(firm.sources);
+    }
     sources.extend(base);
-    Ok((Lookup::new(sources), environment_info))
+    Ok(OpenedLookup {
+        lookup: Lookup::new(sources),
+        environment: environment_info,
+        firm_refused,
+    })
+}
+
+/// One firm file that did not read; the file is skipped and the other files load.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FirmFileRefused {
+    /// The library file's path.
+    pub path: String,
+    /// Stable F04 code of the refusal.
+    pub code: ErrorCode,
+    /// Fixed explanation.
+    pub message: &'static str,
+}
+
+/// The user-owned firm layer: the library files of `libraries/`, loaded, with the files that
+/// did not read reported instead of dropped.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FirmLayer {
+    /// The firm profile libraries, in file-name order.
+    pub sources: Vec<Source>,
+    /// The firm fastener libraries, in file-name order.
+    pub fastener_sources: Vec<Source>,
+    /// The firm files that did not read, in file-name order.
+    pub refused: Vec<FirmFileRefused>,
+}
+
+/// Loads the user-owned firm layer: every library file [`session::environment::firm_library_files`]
+/// finds in `config_dir`'s `libraries/` (or in the current user's, when `config_dir` is `None`),
+/// in file-name order. A file whose entries live under `/Library/Fasteners` joins
+/// [`FirmLayer::fastener_sources`], every other file joins [`FirmLayer::sources`]; a file that
+/// does not read, a non-UTF-8 name, or a second file of a `bim:library:id` already taken is
+/// reported in [`FirmLayer::refused`] and skipped — a firm file is never allowed to break the
+/// layers above or below it, and never silently ignored either. The firm layer is the user's
+/// own: nothing here writes a file, and no environment update ever touches it.
+#[must_use]
+pub fn load_firm(config_dir: Option<&std::path::Path>) -> FirmLayer {
+    let mut layer = FirmLayer::default();
+    let mut ids: Vec<String> = Vec::new();
+    for file in session::environment::firm_library_files(config_dir) {
+        let Some(path) = file.to_str() else {
+            layer.refused.push(FirmFileRefused {
+                path: file.to_string_lossy().into_owned(),
+                code: ErrorCode::InvalidArgument,
+                message: "the firm library path is not UTF-8",
+            });
+            continue;
+        };
+        let loaded = load_firm_file(path);
+        match loaded {
+            Ok((library, fastener)) => {
+                if ids.contains(&library.info.id) {
+                    layer.refused.push(FirmFileRefused {
+                        path: path.to_owned(),
+                        code: ErrorCode::InvalidArgument,
+                        message: "two firm libraries have the same bim:library:id",
+                    });
+                    continue;
+                }
+                ids.push(library.info.id.clone());
+                let source = Source {
+                    path: path.to_owned(),
+                    library,
+                    layer: LAYER_FIRM,
+                };
+                if fastener {
+                    layer.fastener_sources.push(source);
+                } else {
+                    layer.sources.push(source);
+                }
+            }
+            Err(error) => layer.refused.push(FirmFileRefused {
+                path: path.to_owned(),
+                code: error.code,
+                message: error.message,
+            }),
+        }
+    }
+    layer
+}
+
+/// The shipped neutral environment, loaded: the built-in fallback layer a project chain ends
+/// with. `None` when the program ships no [`session::environment::NEUTRAL_ENVIRONMENT_ID`]
+/// environment where it looks for its built-in ones.
+pub fn neutral_environment() -> Result<Option<Environment>, Refusal> {
+    let folders: Vec<_> = session::environment::builtin_environment_dirs()
+        .into_iter()
+        .map(|dir| (dir, "builtin"))
+        .collect();
+    let Some(file) = session::environment::find_environment(
+        &folders,
+        session::environment::NEUTRAL_ENVIRONMENT_ID,
+    ) else {
+        return Ok(None);
+    };
+    let path = file
+        .to_str()
+        .ok_or_else(|| invalid("the neutral environment path is not UTF-8"))?;
+    load_environment(path).map(Some)
+}
+
+/// Appends the neutral environment's libraries as the last, weakest layer of a chain. A neutral
+/// library whose `bim:library:id` is already in the chain is skipped: a project seeded from the
+/// neutral environment carries its byte-identical copy already, and a self-shadowing report of
+/// identical ids would be noise.
+pub fn append_neutral(
+    sources: &mut Vec<Source>,
+    fastener_sources: &mut Vec<Source>,
+) -> Result<(), Refusal> {
+    let Some(neutral) = neutral_environment()? else {
+        return Ok(());
+    };
+    for source in neutral.sources {
+        let id = &source.library.info.id;
+        if !sources.iter().any(|s| &s.library.info.id == id) {
+            sources.push(Source {
+                layer: LAYER_NEUTRAL,
+                ..source
+            });
+        }
+    }
+    for source in neutral.fastener_sources {
+        let id = &source.library.info.id;
+        if !fastener_sources.iter().any(|s| &s.library.info.id == id) {
+            fastener_sources.push(Source {
+                layer: LAYER_NEUTRAL,
+                ..source
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The layered lookup of one project: the project's own copy of its environment (the project
+/// layer), then the firm libraries of the application data, then the built-in neutral
+/// environment. The strongest first; a designation the model already defines never reaches this
+/// chain, because the model layer answers before it. A project whose environment copy is absent
+/// resolves from firm and neutral alone; `environment` carries the copy's declarations when it
+/// is present, and `firm_refused` names the firm files that did not read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectChain {
+    /// The resolver over the profile libraries of the chain, strongest first.
+    pub lookup: Lookup,
+    /// The resolver over the fastener libraries of the chain, strongest first; `None` when no
+    /// layer of the chain declares a fastener library.
+    pub fastener_lookup: Option<Lookup>,
+    /// The project environment copy's own declarations, when the project carries one.
+    pub environment: Option<EnvironmentInfo>,
+    /// The firm files that did not read, in file-name order.
+    pub firm_refused: Vec<FirmFileRefused>,
+}
+
+/// Builds the [`ProjectChain`] of the project folder at `store`. The project's environment copy
+/// is read with [`load_environment`] (a refused copy refuses the chain, as a missing library
+/// would silently change which section a designation selects) and retagged as the project
+/// layer; the firm layer is loaded from `config_dir`'s `libraries/` (`None` is the current
+/// user's). The neutral environment joins last.
+pub fn project_library_chain(
+    store: &std::path::Path,
+    config_dir: Option<&std::path::Path>,
+) -> Result<ProjectChain, Refusal> {
+    let mut sources = Vec::new();
+    let mut fastener_sources = Vec::new();
+    let mut environment = None;
+    if let Some(file) = crate::project::project_environment_file(store) {
+        let file = file
+            .to_str()
+            .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
+        let copy = load_environment(file)?;
+        environment = Some(copy.info);
+        sources.extend(copy.sources.into_iter().map(|s| Source {
+            layer: LAYER_PROJECT,
+            ..s
+        }));
+        fastener_sources.extend(copy.fastener_sources.into_iter().map(|s| Source {
+            layer: LAYER_PROJECT,
+            ..s
+        }));
+    }
+    let firm = load_firm(config_dir);
+    let firm_refused = firm.refused;
+    sources.extend(firm.sources);
+    fastener_sources.extend(firm.fastener_sources);
+    append_neutral(&mut sources, &mut fastener_sources)?;
+    let fastener_lookup = (!fastener_sources.is_empty()).then(|| Lookup::new(fastener_sources));
+    Ok(ProjectChain {
+        lookup: Lookup::new(sources),
+        fastener_lookup,
+        environment,
+        firm_refused,
+    })
 }
 
 /// The identity of a library that [`add_entry`] creates.
@@ -1214,6 +1515,7 @@ pub fn add_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     const HEADER: &str = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n        string \"bim:library:id\" = \"t\"\n    }\n)\n";
 
@@ -1378,6 +1680,7 @@ mod tests {
         Source {
             path: path.to_owned(),
             library: load_text(path, &text).unwrap(),
+            layer: LAYER_LIBRARY,
         }
     }
 
@@ -1401,7 +1704,9 @@ mod tests {
             [Shadowed {
                 designation: "X-1".into(),
                 used_library: "strong".into(),
+                used_layer: LAYER_LIBRARY,
                 shadowed_library: "weak".into(),
+                shadowed_layer: LAYER_LIBRARY,
             }]
         );
     }
@@ -1413,6 +1718,7 @@ mod tests {
         let strong = Source {
             path: "a".into(),
             library: load_text("a", &text).unwrap(),
+            layer: LAYER_LIBRARY,
         };
         let lookup = Lookup::new(vec![strong, source("b", "weak", &[("P", "X-1")])]);
         assert_eq!(
@@ -3014,5 +3320,319 @@ mod tests {
                 "{absent} is not in the shipped series"
             );
         }
+    }
+
+    fn env_layer(profiles: &str, fasteners: Option<&str>) -> String {
+        format!(
+            "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [{profiles}]{}\n    }}\n)\n",
+            match fasteners {
+                Some(list) =>
+                    format!("\n        string[] \"bim:environment:fastener-libraries\" = [{list}]"),
+                None => String::new(),
+            }
+        )
+    }
+
+    fn provenance(id: &str) -> String {
+        format!(
+            "        string \"bim:library:id\" = \"{id}\"\n        string \"bim:library:source\" = \"Contributor-original synthetic values for tests\"\n        string \"bim:library:licence\" = \"MPL-2.0\"\n"
+        )
+    }
+
+    /// Writes `text` under `dir/name`, creating folders, and answers the absolute path.
+    fn put(dir: &Path, name: &str, text: &str) -> String {
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, text).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("library-firm-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_firm_file_classifies_by_its_own_entries() {
+        let profiles = load_firm_bytes(library(&[entry("A", "F-1", I_BODY)]).into_bytes()).unwrap();
+        assert!(!profiles.1, "profile entries make a profile library");
+        let bolts = load_firm_bytes(
+            fastener_library(&[fastener_entry("B", "SYN-M12", BOLT_BODY)]).into_bytes(),
+        )
+        .unwrap();
+        assert!(bolts.1, "fastener entries make a fastener library");
+        assert_eq!(bolts.0.entries.len(), 1);
+        // Both parents in one file: every entry decodes by its own parent.
+        let mixed = format!(
+            "{}def Scope \"Library\" {{\n    def Scope \"Profiles\" {{\n{}    }}\n    def Scope \"Fasteners\" {{\n{}    }}\n}}\n",
+            HEADER.replace("    }\n)\n", "    }\n)\n\n"),
+            entry("A", "F-1", I_BODY),
+            fastener_entry("B", "SYN-M12", BOLT_BODY)
+        );
+        let mixed = load_firm_bytes(mixed.into_bytes()).unwrap();
+        assert!(mixed.1);
+        assert_eq!(mixed.0.entries.len(), 2);
+        assert_eq!(
+            load_firm_bytes(b"not usd".to_vec()).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn the_firm_layer_loads_in_order_reports_and_writes_nothing() {
+        let dir = scratch("layer");
+        let config = dir.join("config");
+        // Files load in file-name order: the bolt file takes its id first, the second file of
+        // the same id is refused as a duplicate.
+        put(
+            &config,
+            "libraries/a-bolts.usda",
+            &fastener_library(&[fastener_entry("B", "SYN-M12", BOLT_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("firm-bolts"),
+            ),
+        );
+        put(
+            &config,
+            "libraries/again.usda",
+            &library(&[entry("A", "F-2", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("firm-profiles"),
+            ),
+        );
+        put(
+            &config,
+            "libraries/z-profiles.usda",
+            &library(&[entry("A", "F-ONLY", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("firm-profiles"),
+            ),
+        );
+        put(&config, "libraries/garbage.usda", "not usd");
+        let bolts_before = std::fs::read(config.join("libraries/a-bolts.usda")).unwrap();
+        let layer = load_firm(Some(&config));
+        let names: Vec<&str> = layer
+            .sources
+            .iter()
+            .map(|s| s.library.info.id.as_str())
+            .collect();
+        assert_eq!(names, ["firm-profiles"]);
+        assert_eq!(
+            layer.sources[0].layer, LAYER_FIRM,
+            "every firm source names its layer"
+        );
+        let bolts: Vec<&str> = layer
+            .fastener_sources
+            .iter()
+            .map(|s| s.library.info.id.as_str())
+            .collect();
+        assert_eq!(
+            bolts,
+            ["firm-bolts"],
+            "fastener entries join their own list"
+        );
+        let refused: Vec<&str> = layer
+            .refused
+            .iter()
+            .map(|r| r.path.rsplit('/').next().unwrap())
+            .collect();
+        assert_eq!(
+            refused,
+            ["garbage.usda", "z-profiles.usda"],
+            "the unreadable file and the duplicate id, in file-name order"
+        );
+        assert_eq!(layer.refused[0].code, ErrorCode::InvalidArgument);
+        assert_eq!(
+            std::fs::read(config.join("libraries/a-bolts.usda")).unwrap(),
+            bolts_before,
+            "loading never writes a firm file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_firm_layer_shadows_an_environment_and_names_both_layers() {
+        let dir = scratch("shadow");
+        let config = dir.join("config");
+        put(
+            &dir,
+            "libs/p.usda",
+            &library(&[entry("A", "X-1", I_BODY), entry("B", "ENV-ONLY", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("env-lib"),
+            ),
+        );
+        let env = put(&dir, "env.usda", &env_layer("\"libs/p.usda\"", None));
+        put(
+            &config,
+            "libraries/mine.usda",
+            &library(&[entry("A", "X-1", I_BODY), entry("B", "FIRM-ONLY", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("firm-lib"),
+            ),
+        );
+        let opened = open_lookup(None, Some(&env), None, Some(&config)).unwrap();
+        assert_eq!(opened.environment.unwrap().id, "e");
+        assert!(opened.firm_refused.is_empty());
+        assert_eq!(opened.lookup.find("X-1").unwrap().0.layer, LAYER_FIRM);
+        assert_eq!(
+            opened.lookup.find("ENV-ONLY").unwrap().0.layer,
+            LAYER_ENVIRONMENT
+        );
+        assert_eq!(opened.lookup.find("FIRM-ONLY").unwrap().0.layer, LAYER_FIRM);
+        assert_eq!(
+            opened.lookup.shadowed_for("X-1"),
+            [Shadowed {
+                designation: "X-1".into(),
+                used_library: "firm-lib".into(),
+                used_layer: LAYER_FIRM,
+                shadowed_library: "env-lib".into(),
+                shadowed_layer: LAYER_ENVIRONMENT,
+            }]
+        );
+        // A single --library lookup names every source exactly: no firm layer joins it.
+        let alone = open_lookup(
+            Some(dir.join("libs/p.usda").to_str().unwrap()),
+            None,
+            None,
+            Some(&config),
+        )
+        .unwrap();
+        assert_eq!(alone.lookup.sources().len(), 1);
+        assert_eq!(alone.lookup.sources()[0].layer, LAYER_LIBRARY);
+        assert!(alone.firm_refused.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_firm_file_that_does_not_read_is_reported_not_fatal() {
+        let dir = scratch("refused");
+        let config = dir.join("config");
+        put(&config, "libraries/broken.usda", "not usd");
+        put(
+            &dir,
+            "libs/p.usda",
+            &library(&[entry("A", "ENV-ONLY", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("env-lib"),
+            ),
+        );
+        let env = put(&dir, "env.usda", &env_layer("\"libs/p.usda\"", None));
+        let opened = open_lookup(None, Some(&env), None, Some(&config)).unwrap();
+        assert_eq!(
+            opened.lookup.find("ENV-ONLY").unwrap().0.layer,
+            LAYER_ENVIRONMENT
+        );
+        assert_eq!(opened.firm_refused.len(), 1);
+        assert_eq!(opened.firm_refused[0].code, ErrorCode::InvalidArgument);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_neutral_layer_fills_the_gaps_and_skips_taken_ids() {
+        let neutral = neutral_environment().unwrap().unwrap();
+        assert_eq!(
+            neutral.info.id,
+            session::environment::NEUTRAL_ENVIRONMENT_ID,
+            "the shipped neutral environment is the fallback layer"
+        );
+        let mut sources: Vec<Source> = Vec::new();
+        let mut fasteners: Vec<Source> = Vec::new();
+        append_neutral(&mut sources, &mut fasteners).unwrap();
+        assert!(
+            fasteners.is_empty(),
+            "the neutral environment ships no fastener libraries"
+        );
+        assert!(sources.iter().all(|s| s.layer == LAYER_NEUTRAL));
+        let count = sources.len();
+        assert!(
+            count > 0,
+            "the shipped neutral environment has profile libraries"
+        );
+        // A chain that already holds a library of the same id takes no neutral copy of it.
+        let mut taken = vec![Source {
+            path: "copy".into(),
+            library: sources[0].library.clone(),
+            layer: LAYER_PROJECT,
+        }];
+        let taken_count = taken.len();
+        append_neutral(&mut taken, &mut fasteners).unwrap();
+        assert_eq!(
+            taken.len(),
+            taken_count,
+            "the id already in the chain is skipped"
+        );
+        assert_eq!(sources.len(), count);
+    }
+
+    #[test]
+    fn the_project_chain_orders_project_firm_and_neutral() {
+        let dir = scratch("chain");
+        let config = dir.join("config");
+        let store = dir.join("store");
+        // The project's copy of its environment: one profile library, one fastener library,
+        // both listed by contained relative references next to the environment file.
+        put(
+            &store,
+            "environment/p.usda",
+            &library(&[entry("A", "X-1", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("copy-lib"),
+            ),
+        );
+        put(
+            &store,
+            "environment/b.usda",
+            &fastener_library(&[fastener_entry("B", "SYN-M12", BOLT_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("copy-bolts"),
+            ),
+        );
+        put(
+            &store,
+            "environment/environment.usda",
+            &env_layer("\"p.usda\"", Some("\"b.usda\"")),
+        );
+        // A firm profile library of the same designation: the project copy is stronger.
+        put(
+            &config,
+            "libraries/mine.usda",
+            &library(&[entry("A", "X-1", I_BODY), entry("B", "FIRM-ONLY", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("firm-lib"),
+            ),
+        );
+        let chain = project_library_chain(&store, Some(&config)).unwrap();
+        let layers: Vec<&str> = chain.lookup.sources().iter().map(|s| s.layer).collect();
+        assert_eq!(
+            layers,
+            [LAYER_PROJECT, LAYER_FIRM, LAYER_NEUTRAL],
+            "the project copy, then firm, then the neutral fallback"
+        );
+        assert_eq!(chain.lookup.find("X-1").unwrap().0.layer, LAYER_PROJECT);
+        assert_eq!(chain.lookup.find("FIRM-ONLY").unwrap().0.layer, LAYER_FIRM);
+        assert_eq!(
+            chain.lookup.shadowed_for("X-1").len(),
+            1,
+            "the firm entry of the same designation is reported, the neutral one does not declare it"
+        );
+        assert!(chain.environment.is_some());
+        assert!(chain.firm_refused.is_empty());
+        // Fasteners ride the same chain in their own namespace.
+        let bolts = chain.fastener_lookup.unwrap();
+        assert_eq!(bolts.find("SYN-M12").unwrap().0.layer, LAYER_PROJECT);
+        // A project without a copy resolves from firm and neutral alone.
+        let bare = project_library_chain(&dir.join("no-copy"), Some(&config)).unwrap();
+        assert!(bare.environment.is_none());
+        let layers: Vec<&str> = bare.lookup.sources().iter().map(|s| s.layer).collect();
+        assert_eq!(layers, [LAYER_FIRM, LAYER_NEUTRAL]);
+        assert!(
+            bare.fastener_lookup.is_none(),
+            "no fastener layer of this chain declares bolts"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
