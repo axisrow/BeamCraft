@@ -5353,11 +5353,14 @@ mod tests {
         assert_eq!(library.entries.len(), 102);
         // The slope column prints the angle the inner flange face makes with the flange plane
         // (parallel rows print 90 degrees); every row carries k = tan of the angle over 90
-        // degrees, as printed: 8 (MB, SC, the deep LB rows), 6 (WB, HB, the MC and deep LC
-        // rows), 4 (HB) or 1.5 degrees (JB, the shallow LB and LC rows) over the perpendicular.
-        // The legacy IS 808:1989 edition prints the same column as "flange slope, max", a
-        // roll-pass maximum, so unlike the GB/T 706 tables there is no tighter-than-D3 bound:
-        // the declared areas reproduce at the printed slope within 0.8 percent (the worst rows
+        // degrees, as printed. The shipped rows split as: 8 degrees - MB, SC and the heavy
+        // WB200x52.09 row; 6 degrees - the other WB rows, the provisional LBP175/LBP200, MC,
+        // LC225 and deeper, and LCP125-LCP300; 4 degrees - HB; 1.5 degrees - JB, JC, the other
+        // LB rows (LB75-LB200 with LBP100) and the shallow plain LC rows (LC75-LC200). The deep
+        // LB rows that also print 8 degrees are the excluded toe-fit rows. The legacy
+        // IS 808:1989 edition prints the same column as "flange slope, max", a roll-pass
+        // maximum, so unlike the GB/T 706 tables there is no tighter-than-D3 bound: the
+        // declared areas reproduce at the printed slope within 0.8 percent (the worst rows
         // MB500, JB175 and JC125 sit 0.54 to 0.76 percent above the closed form).
         let k98 = 8.0_f64.to_radians().tan();
         let k96 = 6.0_f64.to_radians().tan();
