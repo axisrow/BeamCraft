@@ -112,6 +112,7 @@ mod resolve;
 mod revision;
 mod russia_environment;
 mod russia_fasteners;
+mod russia_materials;
 mod schedules;
 mod schedules_store;
 mod sections;

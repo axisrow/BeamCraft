@@ -29,7 +29,11 @@ saved setting.
   channels through the `tapered_i` and `tapered_c` families (the slopes the standards print
   as roll-pass ranges 6–12 % and 4–10 % carry as data per row), and the
   GOST 7798-70 hex-bolt fastener set (M12/16/20/24, the environment's fastener library,
-  BC-ENV-002); `environments/australia/` (2026-11-15) holds the
+  BC-ENV-002) and, since 2026-11-15, a material library with the complete grade set of
+  GOST 27772-2015 (fourteen grades, the designations in the standard's own Cyrillic form,
+  where the leading С of «сталь строительная» is part of the standard's designation and is
+  not Latinized the way the profile series letters are);
+  `environments/australia/` (2026-11-15) holds the
   AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series,
   `environments/india/` holds the IS 808:2021
   narrow (NPB) and wide (WPB) parallel flange beam series and, since 2026-11-15, the IS 3757

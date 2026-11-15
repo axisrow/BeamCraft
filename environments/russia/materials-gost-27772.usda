@@ -1,0 +1,104 @@
+#usda 1.0
+(
+    doc = "BeamCraft Russia structural steel grades: the complete grade set of GOST 27772-2015 (rolled products for construction steel structures), clause 4.1: С235, С245, С255, С345, С345К, С355, С355-1, С355К, С355П, С390, С390-1, С440, С550, С590. The designations are the standard's own Cyrillic forms — the leading letter is the Cyrillic С (U+0421), not the Latin C or the transliteration S — where С means structural construction steel, the number is the conventional yield strength in N/mm2, 1 a chemistry variant, К an increased corrosion resistance, П an increased fire resistance. Re-entered by hand as our own data; no text or table is copied from the standard. The density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1; СП 16.13330). Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "russia-gost-27772-materials"
+        string "bim:library:title" = "GOST 27772-2015 structural steel grades"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standard GOST 27772-2015 clause 4.1 grade designations, the complete 2015 grade set, cross-checked against a second independent full text, re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "S235"
+        {
+            string steel:material:grade = "С235"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S245"
+        {
+            string steel:material:grade = "С245"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S255"
+        {
+            string steel:material:grade = "С255"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S345"
+        {
+            string steel:material:grade = "С345"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S345K"
+        {
+            string steel:material:grade = "С345К"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355"
+        {
+            string steel:material:grade = "С355"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355_1"
+        {
+            string steel:material:grade = "С355-1"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355K"
+        {
+            string steel:material:grade = "С355К"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355P"
+        {
+            string steel:material:grade = "С355П"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S390"
+        {
+            string steel:material:grade = "С390"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S390_1"
+        {
+            string steel:material:grade = "С390-1"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S440"
+        {
+            string steel:material:grade = "С440"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S550"
+        {
+            string steel:material:grade = "С550"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S590"
+        {
+            string steel:material:grade = "С590"
+            string steel:material:standard = "GOST 27772-2015"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}
