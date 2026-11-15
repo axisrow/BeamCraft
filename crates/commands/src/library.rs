@@ -2641,6 +2641,113 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_canada_csa_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/canada/materials-csa-g4021.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "canada-csa-g4021-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 7);
+        // The complete weldable category of CSA G40.20-13/G40.21-13 in the loader's
+        // designation order: the metric W series, the number the minimum yield strength in
+        // MPa and W the weldable category. 380W is available only as hollow structural
+        // sections, angles and bars, the scope note the standard's grade table carries; the
+        // impact-tested, atmospheric-corrosion-resistant and quenched-and-tempered categories
+        // are not in the pack.
+        let csa = "CSA G40.20-13/G40.21-13";
+        let expected: [(&str, &str); 7] = [
+            ("260W", csa),
+            ("300W", csa),
+            ("350W", csa),
+            ("380W", csa),
+            ("400W", csa),
+            ("480W", csa),
+            ("550W", csa),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_canada_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/canada/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-csa-g4021.usda"]
+        );
+        // The grades-only environment the #697 mechanism admits: no profile or fastener
+        // libraries, one material source.
+        assert_eq!(environment.sources.len(), 0);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "canada-csa-g4021-materials");
+        assert_eq!(materials.library.entries.len(), 7);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, grade_350) = lookup.find("350W").unwrap();
+        assert_eq!(source.library.info.id, "canada-csa-g4021-materials");
+        assert!(matches!(
+            &grade_350.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("CSA G40.20-13/G40.21-13")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // level, no imperial-ksi designation of the same grade, no other category (the
+        // impact-tested 350WT and the weathering 350A of the same strength level included),
+        // no lowercase and no strength level outside the standard's set.
+        for absent in [
+            "350", "50W", "44W", "350WT", "350A", "350R", "w350", "600W", "700W",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
