@@ -76,20 +76,25 @@ fn the_shipped_india_environment_lists_its_sections_and_provenance() {
         "--environment",
         ENVIRONMENT,
         "--limit",
-        "100",
+        "256",
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "india");
-    assert_eq!(num(&listed, &["entry_count"]), 70.0);
+    assert_eq!(num(&listed, &["entry_count"]), 122.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
-    let library = &at(&listed, &["libraries"]).array().unwrap()[0];
-    let info = at(library, &["library"]);
+    let libraries = at(&listed, &["libraries"]).array().unwrap();
+    assert_eq!(libraries.len(), 2);
+    let info = at(&libraries[0], &["library"]);
     assert_eq!(text(info, "id"), "india-is808-npb-profiles");
     assert_eq!(text(info, "version"), "1");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
+    assert_eq!(
+        text(at(&libraries[1], &["library"]), "id"),
+        "india-is808-wpb-100-260-profiles"
+    );
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 70);
+    assert_eq!(entries.len(), 122);
     let npb300 = entries
         .iter()
         .find(|e| text(e, "designation") == "NPB300x150x42.24")
@@ -97,6 +102,16 @@ fn the_shipped_india_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(npb300, "library_id"), "india-is808-npb-profiles");
     assert_eq!(num(npb300, &["parameters_mm", "h"]), 300.0);
     assert_eq!(num(npb300, &["parameters_mm", "tw"]), 7.1);
+    let wpb250 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "WPB250x250x67.22")
+        .unwrap();
+    assert_eq!(
+        text(wpb250, "library_id"),
+        "india-is808-wpb-100-260-profiles"
+    );
+    assert_eq!(num(wpb250, &["parameters_mm", "h"]), 247.0);
+    assert_eq!(num(wpb250, &["parameters_mm", "tw"]), 11.0);
 }
 
 #[test]
@@ -194,4 +209,60 @@ fn a_project_created_with_the_india_environment_resolves_its_designations() {
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
         assert_eq!(text(at(stored, &["mass"]), "freshness"), "current");
     }
+}
+
+#[test]
+fn the_shipped_india_wpb_100_260_library_lists_and_resolves() {
+    let f = Fixture::new();
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../environments/india/profiles-is808-wpb-100-260.usda"
+    );
+    let listed = f.ok(&["list-library", "--library", library, "--limit", "100"]);
+    assert_eq!(text(&listed, "outcome"), "library");
+    assert_eq!(num(&listed, &["entry_count"]), 52.0);
+    let entries = at(&listed, &["entries"]).array().unwrap();
+    assert_eq!(entries.len(), 52);
+    let wpb250 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "WPB250x250x67.22")
+        .unwrap();
+    assert_eq!(num(wpb250, &["area_mm2"]), 8560.0);
+    assert_eq!(num(wpb250, &["mass_per_meter_kg"]), 67.22);
+
+    let created = f.ok(&[
+        "create-project",
+        "--parent",
+        &f.path("models"),
+        "--name",
+        "India WPB Model",
+        "--actor-id",
+        ACTOR,
+        "--config-dir",
+        &f.path("config"),
+        "--environment",
+        "india",
+    ]);
+    let store = text(at(&created, &["project"]), "path");
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "0,0,0",
+        "--end",
+        "6000,0,0",
+        "--profile",
+        "WPB200x200x61.30",
+        "--material",
+        "Steel",
+    ]);
+    assert_eq!(text(&made, "outcome"), "member_created");
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 7800.0);
+    // 7800 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 367.38, 1e-9);
 }
