@@ -21,6 +21,7 @@ mod guard;
 pub mod hook;
 pub mod instance;
 pub mod rebase;
+pub mod record;
 mod reference;
 /// The surface a discipline crate's hooks use to author and validate through this platform.
 pub mod seam;
@@ -127,6 +128,14 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:annotation:attribute=string;bim:annotation:text=string;bim:annotation:endMm=double3;bim:annotation:pinDigest=string[](sha256 each);",
     "a dimension stores from+to;a mark anchor+attribute;a leader anchor+text+endMm;one pinDigest per anchor is the",
     "addressed body's full-mesh digest at placement;anchors are verbatim feature ids, never re-numbered or re-bound;",
+    "no material or Geometry;placement=identity\n",
+    "record=/World/Records/REC_<uuid7-32>;bim:elementKind=record;kind=component;bim:discipline=token(steel);",
+    "bim:record:type=token(joint_intent|gap_requirement);bim:record:scope=string[](uuid7 each,2..=256,distinct);",
+    "bim:record:weldConnections=string[](optional,<a>|<b>|weld per declared connection);",
+    "bim:record:contactConnections=string[](optional,<a>|<b>|contact per declared connection);",
+    "bim:record:a=string;bim:record:b=string;bim:record:permittedMinMm=double;bim:record:permittedMaxMm=double;bim:record:toleranceMm=double;",
+    "an intent stores its scope and declared pairs,each unordered pair at most once,connections per kind stored separately;",
+    "a gap requirement stores its judged pair with min<=max,all values bounded and non-negative;",
     "no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
     "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",
@@ -332,6 +341,9 @@ pub enum Shape {
     /// D06 annotation: a hand-placed dimension, mark or leader whose anchors are stored
     /// qualified FeatureId texts. No engineering body; its placement must be the identity.
     Annotation(beamcraft_model::annotation::Annotation),
+    /// Q03 recorded input: a declared joint intent or a recorded gap requirement. No
+    /// engineering body; its placement must be the identity.
+    Record(beamcraft_model::record::Record),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
     /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
     /// placement must be the identity: the elevation is a value, never a pose.
@@ -1135,6 +1147,7 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,
         Shape::Annotation(_) => ElementCategory::Annotation,
+        Shape::Record(_) => ElementCategory::Record,
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {

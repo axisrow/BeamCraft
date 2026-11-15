@@ -41,6 +41,7 @@ pub mod presentation;
 pub mod presets;
 pub mod query;
 pub mod rebase;
+pub mod record;
 pub mod reference;
 pub mod scene;
 pub mod scope;

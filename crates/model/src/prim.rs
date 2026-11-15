@@ -22,13 +22,15 @@ pub enum ElementCategory {
     Construction,
     /// D06 annotation: a dimension, mark or leader bound to features.
     Annotation,
+    /// Q03 recorded input: a joint intent or a gap requirement.
+    Record,
     /// Read-only foreign model wrapper.
     Reference,
 }
 
 impl ElementCategory {
     /// Every supported element category.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Part,
         Self::Assembly,
         Self::Connection,
@@ -36,6 +38,7 @@ impl ElementCategory {
         Self::Grid,
         Self::Construction,
         Self::Annotation,
+        Self::Record,
         Self::Reference,
     ];
 
@@ -49,6 +52,7 @@ impl ElementCategory {
             "grid" => Some(Self::Grid),
             "construction" => Some(Self::Construction),
             "annotation" => Some(Self::Annotation),
+            "record" => Some(Self::Record),
             "reference" => Some(Self::Reference),
             _ => None,
         }
@@ -64,6 +68,7 @@ impl ElementCategory {
             Self::Grid => "/World/Grids/GRD_",
             Self::Construction => "/World/Construction/CNS_",
             Self::Annotation => "/World/Annotations/ANN_",
+            Self::Record => "/World/Records/REC_",
             Self::Reference => "/World/References/REF_",
         }
     }

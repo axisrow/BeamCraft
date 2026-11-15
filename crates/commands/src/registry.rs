@@ -36,6 +36,8 @@ pub enum Route {
     Views,
     /// The annotation commands.
     Annotation,
+    /// The Q03 recorded-input commands.
+    Record,
     /// The history inspection and compaction commands.
     History,
     /// The reference model commands.
@@ -2334,6 +2336,34 @@ pub const COMMANDS: &[Command] = &[
         Route::Annotation,
         "annotation",
         "annotation-list",
+        Access::Read,
+        Ids::None,
+        &[req("--store", "ROOT")],
+    ),
+    entry(
+        Route::Record,
+        "record",
+        "record-create",
+        Access::Write,
+        Ids::Common,
+        &[
+            req("--store", "ROOT"),
+            req("--name", "TEXT"),
+            req("--kind", "joint_intent|gap_requirement"),
+            req("--new-id", "UUID"),
+            opt("--scope", "UUID,UUID,..."),
+            opt("--connection", "UUID:WELD|CONTACT:UUID"),
+            opt("--gap-a", "UUID"),
+            opt("--gap-b", "UUID"),
+            opt("--gap-min", "MM"),
+            opt("--gap-max", "MM"),
+            opt("--gap-tolerance", "MM"),
+        ],
+    ),
+    entry(
+        Route::Record,
+        "record",
+        "record-list",
         Access::Read,
         Ids::None,
         &[req("--store", "ROOT")],

@@ -35,6 +35,7 @@ mod numbering;
 mod pick;
 mod plate;
 mod rebase;
+mod record;
 mod reference;
 mod revision;
 mod schedules;
@@ -75,6 +76,7 @@ const SECTIONS: &[&str] = &[
     grid::HELP,
     construction::HELP,
     annotation::HELP,
+    record::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,
@@ -112,6 +114,7 @@ pub(crate) fn print() {
 pub(crate) fn for_family(family: &str) -> String {
     let sections: &[&str] = match family {
         "annotation" => &[annotation::HELP],
+        "record" => &[record::HELP],
         "assembly" => &[assembly::HELP],
         "attribute" => &[attribute::HELP],
         "blobs" => &[blobs::HELP],

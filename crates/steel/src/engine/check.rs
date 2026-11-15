@@ -234,71 +234,13 @@ pub fn range_threshold(
     }
 }
 
-/// The declared kind of one joint-intent connection (contract section 5).
-/// Bolted kinds are refused at admission in v0.1 and arrive with the
-/// fastener slices, so no variant exists for them here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionKind {
-    /// The parts must be joined by a weld element.
-    Weld,
-    /// The parts must be in physical contact within the product tolerance.
-    Contact,
-}
-
-impl ConnectionKind {
-    /// The stable token of the kind.
-    pub const fn token(self) -> &'static str {
-        match self {
-            Self::Weld => "weld",
-            Self::Contact => "contact",
-        }
-    }
-}
-
-/// One declared connection of the joint intent (contract section 5): two
-/// distinct part elements and the declared kind.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeclaredConnection {
-    /// One side of the declared connection.
-    pub a: ElementId,
-    /// The other side, distinct from `a`.
-    pub b: ElementId,
-    /// What the owner declared must join the parts.
-    pub kind: ConnectionKind,
-}
-
-/// The joint intent as plain rule input (contract section 5): the elements
-/// that form the joint and the declared connections. v0.1 has no recorded
-/// intent yet — the recorded-inputs persistence of a later slice carries it
-/// into the store; until then a caller without intent passes `None` and the
-/// connectivity rules are not applicable for any element (contract section
-/// 5: an established absence, never an unknown).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct JointIntent {
-    /// The element ids that form the joint.
-    pub scope: Vec<ElementId>,
-    /// The declared connections between scoped elements.
-    pub connections: Vec<DeclaredConnection>,
-}
-
-/// The recorded gap requirement for one declared weld connection (contract
-/// section 4.1): the permitted local gap range with the tolerance on the
-/// comparison, and the owner as the only v0.1 basis — no normative
-/// permitted-gap rule is supported (contract section 3.3). `permitted_min_mm`
-/// must not exceed `permitted_max_mm`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GapRequirement {
-    /// One side of the declared weld connection the requirement judges.
-    pub a: ElementId,
-    /// The other side, distinct from `a`.
-    pub b: ElementId,
-    /// The permitted minimum local gap in millimetres.
-    pub permitted_min_mm: f64,
-    /// The permitted maximum local gap in millimetres.
-    pub permitted_max_mm: f64,
-    /// The recorded tolerance on the comparison (contract section 7.3).
-    pub tolerance_mm: f64,
-}
+/// The recorded-input types of the contract (sections 4.1 and 5): the joint
+/// intent, its declared connections and the gap requirements. They are model
+/// data (`beamcraft_model::record`, kind `record`), stored through explicit
+/// commands and read back as plain rule input; the engine never infers them.
+pub use beamcraft_model::record::{
+    ConnectionKind, DeclaredConnection, GapRequirement, JointIntent,
+};
 
 /// The weld facts the connectivity rules consume: which two parts a weld
 /// element connects, and the authored path when the weld carries one (the
@@ -488,25 +430,36 @@ pub fn weld_gap_mm(
 
 /// The connectivity rules over the recorded inputs (contract sections 2.1
 /// and 5). With no joint intent the rules are not applicable for any element
-/// and no finding is produced — the report says so in coverage. Connections
-/// with a target outside the checked scope are not checked, like any element
-/// outside it; a scoped connection whose target is not an evaluated part of
-/// the checked revision reports `unknown` (`target_unresolved`) and the
-/// missing inputs named, never a guessed verdict (contract section 4.3).
+/// and no finding is produced — the report says so in coverage. A connection
+/// is judged when its parts are inside the checked scope, or when a part is
+/// a declared joint member the model does not carry at all — that one
+/// resolves to `unknown` (`target_unresolved`) with the inputs named, never
+/// a guessed verdict (contract section 4.3). A declared member that exists
+/// in the model but lies outside the checked scope leaves the connection
+/// unjudged, like any element outside it: a subtree check of one joint
+/// member never reports findings about its other members.
 pub fn connectivity_findings(
     inputs: &RecordedInputs,
     bodies: &[ElementBody],
     scope: &[ElementId],
+    model_elements: &[ElementId],
     tolerance_mm: f64,
 ) -> Vec<ConnectivityFinding> {
     let Some(intent) = &inputs.intent else {
         return Vec::new();
     };
+    let declared = |id: &ElementId| intent.scope.iter().any(|member| member == id);
     let mut findings = Vec::new();
     for connection in &intent.connections {
-        if scope.binary_search(&connection.a).is_err()
-            || scope.binary_search(&connection.b).is_err()
-        {
+        // Inside the checked scope, or declared and absent from the model —
+        // the ghost case the resolution below reports unresolved. A declared
+        // member the model does carry but the checked scope omits is outside
+        // the checked scope like any element, not unresolved.
+        let judged = |id: &ElementId| {
+            scope.binary_search(id).is_ok()
+                || (declared(id) && model_elements.binary_search(id).is_err())
+        };
+        if !judged(&connection.a) || !judged(&connection.b) {
             continue;
         }
         let body_of = |id: &ElementId| bodies.iter().find(|b| &b.id == id);
@@ -1259,6 +1212,7 @@ mod tests {
             &RecordedInputs::default(),
             &[a, b],
             &[id(1), id(2)],
+            &[id(1), id(2)],
             CONTACT_TOLERANCE_MM,
         );
         assert!(findings.is_empty());
@@ -1270,6 +1224,7 @@ mod tests {
         let findings = connectivity_findings(
             &intent(vec![weld_pair()]),
             &[a.clone(), b.clone()],
+            &[id(1), id(2)],
             &[id(1), id(2)],
             CONTACT_TOLERANCE_MM,
         );
@@ -1292,6 +1247,7 @@ mod tests {
             &intent(vec![weld_pair()]),
             &[a, b],
             &[id(1), id(2)],
+            &[id(1), id(2)],
             CONTACT_TOLERANCE_MM,
         );
         assert_eq!(findings.len(), 1);
@@ -1304,8 +1260,13 @@ mod tests {
         let (a, b) = stacked_pair();
         let mut inputs = intent(vec![weld_pair()]);
         inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.0]]))];
-        let findings =
-            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
         // The connection is satisfied: no PART_UNCONNECTED, and the gap
         // question stays unknown with the missing rule named.
         assert_eq!(findings.len(), 1);
@@ -1326,8 +1287,13 @@ mod tests {
             permitted_max_mm: 0.2,
             tolerance_mm: 0.05,
         }];
-        let findings =
-            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
         assert_eq!(findings[0].missing_inputs, vec!["attachment_unvalidated"]);
@@ -1352,8 +1318,13 @@ mod tests {
         let mut inputs = intent(vec![weld_pair()]);
         inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.15]]))];
         inputs.gaps = vec![gap_requirement.clone()];
-        let findings =
-            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
         assert_eq!(findings[0].status, "fail");
@@ -1370,8 +1341,13 @@ mod tests {
         }];
         let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
         let b = plate_at(2, 0.0, 0.0, 10.3).unwrap();
-        let findings =
-            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
         assert!(findings.is_empty());
     }
 
@@ -1390,8 +1366,13 @@ mod tests {
             permitted_max_mm: 0.2,
             tolerance_mm: 0.1,
         }];
-        let findings =
-            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].status, "unknown");
         assert_eq!(findings[0].missing_inputs, vec!["indeterminate"]);
@@ -1411,6 +1392,7 @@ mod tests {
             &intent(vec![contact_pair.clone()]),
             &[a, b],
             &[id(1), id(2)],
+            &[id(1), id(2)],
             CONTACT_TOLERANCE_MM,
         );
         assert!(findings.is_empty());
@@ -1420,6 +1402,7 @@ mod tests {
         let findings = connectivity_findings(
             &intent(vec![contact_pair]),
             &[a, b],
+            &[id(1), id(2)],
             &[id(1), id(2)],
             CONTACT_TOLERANCE_MM,
         );
@@ -1444,6 +1427,7 @@ mod tests {
             &intent(connections.clone()),
             &[a.clone(), b.clone()],
             &[id(1), id(2)],
+            &[id(1), id(2)],
             CONTACT_TOLERANCE_MM,
         );
         assert_eq!(findings.len(), 2);
@@ -1458,6 +1442,7 @@ mod tests {
             &intent(connections),
             &[a, b],
             &[id(1), id(2), id(3)],
+            &[id(1), id(2)],
             CONTACT_TOLERANCE_MM,
         );
         let unresolved = findings
@@ -1467,5 +1452,42 @@ mod tests {
         assert_eq!(unresolved.rule, "PART_UNCONNECTED");
         assert_eq!(unresolved.status, "unknown");
         assert_eq!(unresolved.elements, vec![id(1), id(3)]);
+    }
+
+    #[test]
+    fn a_declared_member_outside_the_checked_scope_is_never_unresolved() {
+        // Subtree semantics: the checked scope holds one joint member, the
+        // other exists and is evaluated in the model — the connection is not
+        // judged at all, like any connection outside the checked scope, and
+        // the narrowed check stays quiet about its other members.
+        let (a, b) = stacked_pair();
+        let findings = connectivity_findings(
+            &intent(vec![weld_pair()]),
+            &[a.clone(), b.clone()],
+            &[id(1)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert!(findings.is_empty());
+        // The ghost stays unresolved under the same subtree scope: declared
+        // and absent from the model is judged and reports unknown.
+        let connections = vec![
+            weld_pair(),
+            DeclaredConnection {
+                a: id(1),
+                b: id(3),
+                kind: ConnectionKind::Contact,
+            },
+        ];
+        let findings = connectivity_findings(
+            &intent(connections),
+            &[a, b],
+            &[id(1)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].missing_inputs, vec!["target_unresolved"]);
+        assert_eq!(findings[0].elements, vec![id(1), id(3)]);
     }
 }

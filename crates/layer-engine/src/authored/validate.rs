@@ -1386,6 +1386,7 @@ pub(super) fn changes(
                                     | "grid"
                                     | "construction"
                                     | "annotation"
+                                    | "record"
                             )
                     }
                     Change::PartOf { .. } => is_part_kind(kind) || matches!(kind, "assembly"),
@@ -1749,6 +1750,17 @@ pub(super) fn changes(
                             return Err(invalid());
                         }
                     }
+                    Shape::Record(r) => {
+                        record::validate_record(r)?;
+                        if e.id != r.id.to_string()
+                            || e.name != r.name
+                            || e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(invalid());
+                        }
+                    }
                 }
                 if let Some(d) = e.material {
                     reads.insert(Footprint {
@@ -1844,6 +1856,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 Shape::Grid(g) => grid::validate_record(g),
                 Shape::Construction(o) => construction::validate_record(o),
                 Shape::Annotation(a) => annotation::validate_record(a),
+                Shape::Record(r) => record::validate_record(r),
             }
         }
         Change::Grid { grid: g, .. } => grid::validate_record(g),

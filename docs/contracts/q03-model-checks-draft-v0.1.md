@@ -237,6 +237,20 @@ joint is **not** locally attached: the dependent checks (clearance, gap) are `un
 reason `attachment_unvalidated`, while independent checks (the corner requirement, clash,
 completeness) are unaffected. A path stored on the weld is a hint for the validation, not proof.
 
+### 5.2 Recorded shape (slice 3, 2026-11-15)
+
+Joint intent and gap requirements are stored as elements of kind `record`
+(`/World/Records/REC_<uuid7>`), created only by `record-create` and removed only by
+`delete-element`. An intent record carries its declared scope and its declared
+connections — the pairs, one unordered pair at most once, stored per kind
+(`weld | contact`). A gap requirement record names its judged declared pair with the
+permitted range and the tolerance; the owner basis is fixed in v0.1 and carries no
+separate field. Connection notes (section 5, `note?`) are not stored in v0.1. A model
+may declare several intents: their scopes merge and their connections concatenate into
+the check input. Declared ids are stored verbatim and are not required to exist at
+declaration: an id that names no evaluated part reports `target_unresolved`
+(section 4.3), and the record is never rewritten.
+
 ## 6. Rule context and provenance
 
 A **rule context** names the standards a project's checks are judged against:
@@ -298,6 +312,17 @@ The requirements any implementation must satisfy:
   geometry. Geometry or method the implementation does not support reports `unknown` with the
   reason and the affected elements; bent/curved parts and holes near the joint require
   demonstrated support in slice 2, not an assumption.
+
+**Validated in slice 3 (2026-11-15).** Local weld attachment and the local gap are measured
+against the two final evaluated meshes with the kernel's exact point-to-triangle distances: a
+weld is locally attached only when every authored path point lies within the product tolerance
+of both surfaces — the near-threshold rule decides the band edges, and a pathless A06 weld has
+no placed solid at the joint, so it is never locally attached. The local gap of an attached
+weld is the smallest summed point-to-surface distance of the path points: the opening the weld
+bridges at the declared contact. Both measurements are sample-based like the depth
+measurement: a surface region no sample reaches can only make the true distance smaller, and
+a permitted range beyond roughly twice the contact tolerance can never be satisfied by an
+attached weld; both ceilings are recorded here.
 
 ### 7.2 Two tolerance layers, kept separate
 

@@ -22,6 +22,7 @@ pub mod id;
 pub mod level;
 pub mod limits;
 pub mod prim;
+pub mod record;
 pub mod reference;
 pub mod schedule;
 pub mod sheet;

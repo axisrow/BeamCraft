@@ -52,6 +52,7 @@ pub mod plate_draft;
 pub mod preset;
 pub mod project;
 mod publication;
+pub mod record;
 pub mod reference;
 mod reference_view;
 pub mod registry;
