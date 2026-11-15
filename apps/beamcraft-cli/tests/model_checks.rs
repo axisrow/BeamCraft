@@ -119,7 +119,7 @@ fn finding_of<'a>(reply: &'a Json, rule: &str) -> &'a Json {
     list(reply, "findings")
         .iter()
         .find(|f| text(f, "rule") == rule)
-        .unwrap_or_else(|| panic!("{rule} finding missing from {reply:?}"))
+        .expect("the rule finding is missing from the reply")
 }
 
 fn element_layer(id: &str) -> String {

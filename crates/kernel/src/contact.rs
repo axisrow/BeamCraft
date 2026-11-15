@@ -640,7 +640,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn a_point_is_classified_or_left_unresolved() {
         let shell = cube([0.0; 3], 10.0);
         assert_eq!(
