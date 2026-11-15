@@ -3161,7 +3161,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "china-gb-t-706-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -3180,9 +3180,10 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 45);
-        // GB/T 706-2016 prints the I-beam slope exactly: 1:6.
+        assert_eq!(library.entries.len(), 86);
+        // GB/T 706-2016 prints the slopes exactly: 1:6 for the I-beams, 1:10 for the channels.
         const I_SLOPE: f64 = 1.0 / 6.0;
+        const C_SLOPE: f64 = 1.0 / 10.0;
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -3192,17 +3193,34 @@ mod tests {
             else {
                 panic!("{} is not a parametric section", entry.designation);
             };
-            assert_eq!(parametric.family(), SectionFamily::TaperedI);
+            let (slope, identity_k, series) = match parametric.family() {
+                SectionFamily::TaperedI => (I_SLOPE, 0.615, "I"),
+                SectionFamily::TaperedC => (C_SLOPE, 0.3075, "C"),
+                family => panic!("{}: unexpected family {family:?}", entry.designation),
+            };
             assert_eq!(
                 parametric.values()[6],
-                I_SLOPE,
-                "{}: the I-beam slope is 1:6",
+                slope,
+                "{}: the {series} slope",
                 entry.designation
             );
             assert_eq!(
                 section.standard.as_deref(),
                 Some("GB/T 706-2016"),
                 "{}",
+                entry.designation
+            );
+            // The table's own identity A = h*s + 2*t*(b - s) + k*(r^2 - r1^2) -- the standard's
+            // slope coefficient, 0.615 (I) or 0.3075 (C) -- reproduces every published area of
+            // both tables within 0.17 %, so a slip in any transcribed dimension breaks here,
+            // before the section geometry is even consulted.
+            let v = parametric.values();
+            let identity =
+                v[0] * v[2] + 2.0 * v[3] * (v[1] - v[2]) + identity_k * (v[4] * v[4] - v[5] * v[5]);
+            let declared = section.area_mm2.unwrap();
+            assert!(
+                (identity - declared).abs() <= 0.002 * declared,
+                "{}: identity area {identity} mm2 vs declared {declared}",
                 entry.designation
             );
             // The closed-form area of the declared dimensions must match the declared catalogue
@@ -3225,11 +3243,17 @@ mod tests {
             );
             designations.push(entry.designation.clone());
         }
-        // The I-beam series exactly as table A.1 of GB/T 706-2016 publishes it: 45 designations,
-        // including the 2016-edition 25a/b beams and the 55 series beside the classic 56 series.
+        // Both series exactly as tables A.1 and A.2 of GB/T 706-2016 publish them: 45 I-beam
+        // designations (the 2016-edition 25a/b beams and the 55 series beside the classic 56
+        // series) and 41 channel designations (the 2016-edition 24c/25/27c/28c channels), in
+        // the library's lexicographic designation order.
         assert_eq!(
             designations,
             [
+                "C10", "C12", "C12.6", "C14a", "C14b", "C16a", "C16b", "C18a", "C18b", "C20a",
+                "C20b", "C22a", "C22b", "C24a", "C24b", "C24c", "C25a", "C25b", "C25c", "C27a",
+                "C27b", "C27c", "C28a", "C28b", "C28c", "C30a", "C30b", "C30c", "C32a", "C32b",
+                "C32c", "C36a", "C36b", "C36c", "C40a", "C40b", "C40c", "C5", "C6.3", "C6.5", "C8",
                 "I10", "I12", "I12.6", "I14", "I16", "I18", "I20a", "I20b", "I22a", "I22b", "I24a",
                 "I24b", "I25a", "I25b", "I27a", "I27b", "I28a", "I28b", "I30a", "I30b", "I30c",
                 "I32a", "I32b", "I32c", "I36a", "I36b", "I36c", "I40a", "I40b", "I40c", "I45a",
@@ -3275,11 +3299,26 @@ mod tests {
             17980.0,
             141.0,
         );
-        // The channel series of the same standard is not in this slice, and the series gaps the
-        // standard does not publish stay NOT_FOUND.
+        spot("C5", [50.0, 37.0, 4.5, 7.0, 7.0, 3.5, C_SLOPE], 692.5, 5.44);
+        spot(
+            "C25c",
+            [250.0, 82.0, 11.0, 12.0, 12.0, 6.0, C_SLOPE],
+            4491.0,
+            35.3,
+        );
+        spot(
+            "C40c",
+            [400.0, 104.0, 14.5, 18.0, 18.0, 9.0, C_SLOPE],
+            9104.0,
+            71.5,
+        );
+        // The series gaps the standard does not publish stay NOT_FOUND -- for the channels
+        // including the b/c variants the flawed web transcription left blank: the official
+        // table A.2 has no channel 18c or 22c.
         for absent in [
-            "C5", "C10", "I11", "I13", "I21", "I23", "I26", "I25c", "I29", "I31", "I33", "I38",
-            "I42", "I47", "I52", "I57", "I58", "I65",
+            "C5.5", "C7", "C9", "C11", "C13", "C13.5", "C15", "C17", "C18c", "C19", "C21", "C22c",
+            "C23", "C26", "C29", "C31", "C33", "C41", "C45", "C63", "I11", "I13", "I21", "I23",
+            "I26", "I25c", "I29", "I31", "I33", "I38", "I42", "I47", "I52", "I57", "I58", "I65",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
