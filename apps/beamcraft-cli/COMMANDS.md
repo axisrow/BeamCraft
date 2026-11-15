@@ -155,12 +155,12 @@ write.
 
 ```text
 define-profile --store ROOT [--width MM] [--height MM]
-    [--family i_shape|channel|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom] [--h MM]
-    [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--c MM] [--d MM] [--outer X,Y;X,Y;...]
-    [--cavity X,Y;...|X,Y;...] [--library FILE] [--environment FILE] [--user-library FILE]
-    [--designation TEXT] [--standard TEXT] [--area-mm2 N] [--mass-per-meter-kg N]
-    [--surface-per-meter-m2 N] [--name TEXT] [--revision-id UUID] [--actor-id UUID]
-    [--project-id UUID] [--workspace-id UUID]
+    [--family i_shape|channel|tapered_i|tapered_c|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom]
+    [--h MM] [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--r1 MM] [--c MM] [--d MM] [--s MM]
+    [--k N] [--outer X,Y;X,Y;...] [--cavity X,Y;...|X,Y;...] [--library FILE] [--environment FILE]
+    [--user-library FILE] [--designation TEXT] [--standard TEXT] [--area-mm2 N]
+    [--mass-per-meter-kg N] [--surface-per-meter-m2 N] [--name TEXT] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### define-fastener
@@ -206,10 +206,11 @@ write.
 
 ```text
 add-library --library FILE --designation TEXT [--library-id TEXT] [--title TEXT] [--width MM]
-    [--height MM] [--family i_shape|channel|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom]
-    [--h MM] [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--c MM] [--d MM]
-    [--outer X,Y;X,Y;...] [--cavity X,Y;X,Y;...|X,Y;X,Y;...] [--standard TEXT] [--area-mm2 N]
-    [--mass-per-meter-kg N] [--surface-per-meter-m2 N]
+    [--height MM]
+    [--family i_shape|channel|tapered_i|tapered_c|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom]
+    [--h MM] [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--r1 MM] [--c MM] [--d MM] [--s MM]
+    [--k N] [--outer X,Y;X,Y;...] [--cavity X,Y;X,Y;...|X,Y;X,Y;...] [--standard TEXT]
+    [--area-mm2 N] [--mass-per-meter-kg N] [--surface-per-meter-m2 N]
 ```
 
 ## member

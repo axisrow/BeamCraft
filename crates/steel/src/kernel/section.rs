@@ -5,12 +5,14 @@
 //!
 //! [`outline`] turns an admitted `model::section::SectionShape` into a G05 profile (one
 //! counter-clockwise outer contour and clockwise cavities) in the section plane, centred on the
-//! centre of the section's bounding box: width along `X`, height along `Y`. Every family has
-//! axis-aligned straight edges, so each corner is either sharp or a quarter arc whose centre is
-//! `P - r*d1 + r*d2` (`d1`, `d2` the unit directions of the edges into and out of the sharp corner
-//! `P`); concave root fillets and convex bends use the same rule, and the inner and outer bends
-//! of a cold-formed section share their centre because the inner polygon is the outer one offset
-//! by the thickness.
+//! centre of the section's bounding box: width along `X`, height along `Y`. Every family except
+//! the tapered-flange ones has axis-aligned straight edges, so each corner is either sharp or a
+//! quarter arc whose centre is `P - r*d1 + r*d2` (`d1`, `d2` the unit directions of the edges
+//! into and out of the sharp corner `P`); concave root fillets and convex bends use the same
+//! rule, and the inner and outer bends of a cold-formed section share their centre because the
+//! inner polygon is the outer one offset by the thickness. The tapered-flange families have
+//! inclined inner flange faces, so their root and toe fillets are arcs of less than a quarter
+//! turn between a vertical and an oblique face, built from the exact face lines.
 //!
 //! Two representations come from one shape (owner decision of 2026-10-18):
 //!
@@ -350,7 +352,258 @@ fn corners(section: &ParametricSection) -> Result<(Vec<Corner>, f64, f64), Secti
     Ok(list)
 }
 
-/// The outline of an admitted section shape in the requested representation.
+/// One exact line of the tapered outline: an inner flange face `face_k*x + y = c`, in
+/// bounding-box coordinates before the centring shift, with `f = sqrt(1 + k^2)` of its slope
+/// magnitude and `empty_above` whether the empty side of the face is its positive side.
+struct Face {
+    c: f64,
+    k: f64,
+    f: f64,
+    empty_above: bool,
+}
+
+impl Face {
+    /// The y of a fillet centre at `x`: on the empty side of the face for a root fillet, on the
+    /// material side (inside the flange) for a toe fillet, both at distance `r`.
+    fn centre_y(&self, x: f64, r: f64, empty: bool) -> f64 {
+        let side = if empty == self.empty_above { r } else { -r };
+        self.c - self.k * x + side * self.f
+    }
+
+    /// The foot of the perpendicular from the fillet centre onto the face (the tangent point).
+    fn tangent(&self, centre: Point2, r: f64, empty: bool) -> Point2 {
+        let toward = if empty == self.empty_above { -r } else { r };
+        Point2::new(
+            centre.x + toward * self.k / self.f,
+            centre.y + toward / self.f,
+        )
+    }
+}
+
+/// A fillet arc of at least `min_steps` chords from `begin` to `end` about `centre`, vertices
+/// on the arc, the short way round, the end point exact. The per-chord rotation comes from
+/// repeated exact half angles of the whole arc (square roots only), so the outline stays free
+/// of platform trigonometry and bit-stable across platforms; the chord count is a power of two
+/// and never below the requested bound, so the sagitta stays within the quarter-arc budget the
+/// caller asked for.
+fn fillet_arc(
+    centre: Point2,
+    radius: f64,
+    begin: Point2,
+    end: Point2,
+    min_steps: usize,
+) -> Vec<Point2> {
+    let unit = |p: &Point2| {
+        let (dx, dy) = (p.x - centre.x, p.y - centre.y);
+        Point2::new(dx / radius, dy / radius)
+    };
+    let from = unit(&begin);
+    let to = unit(&end);
+    // Cosine and sine of the whole (minor) arc: the dot and the absolute cross product of the
+    // unit directions.
+    let dot = (from.x * to.x + from.y * to.y).min(1.0);
+    let cross = from.x * to.y - from.y * to.x;
+    let (mut c, mut s) = (dot, cross.abs());
+    let mut chords = 1usize;
+    while chords < min_steps.max(1) {
+        // Half-angle formulas: both halves come from the same previous cosine.
+        let next_c = ((1.0 + c) / 2.0).sqrt();
+        s = ((1.0 - c) / 2.0).sqrt();
+        c = next_c;
+        chords *= 2;
+    }
+    let s = if cross < 0.0 { -s } else { s };
+    let mut points = Vec::with_capacity(chords.saturating_add(1));
+    let mut u = from;
+    for _ in 0..chords {
+        points.push(Point2::new(
+            centre.x + radius * u.x,
+            centre.y + radius * u.y,
+        ));
+        u = Point2::new(u.x * c - u.y * s, u.x * s + u.y * c);
+    }
+    points.push(end);
+    points
+}
+
+/// The outer contour of an admitted tapered-flange section (GB/T 706 I-beam or channel shape,
+/// GOST 8239 / 8240, EN 10365 UPN), centred on the middle of its `b` by `h` bounding box:
+/// vertical end faces, inner faces of slope `k` rising toward the web, `t` the flange
+/// thickness at the middle of the leg (GB/T 706 "middle leg thickness"), `r` the root fillets
+/// and `r1` the toe fillets, every outer corner sharp. A zero radius leaves the sharp corner;
+/// each arc takes `forced_segments / 4` chords when given, else a quarter of the
+/// [`detailed_arcs`] count of the larger radius.
+fn tapered_outline(
+    section: &ParametricSection,
+    forced_segments: Option<u64>,
+) -> Result<Vec<Point2>, SectionFailure> {
+    let (family, &[h, b, s, t, r, r1, k]) = (section.family(), section.values()) else {
+        return Err(contour_failure());
+    };
+    // The I has a web of width s centred in the flange (legs of (b - s) / 2 per side and two
+    // web faces); the channel has its web on the -X side (one web face at s, one leg b - s).
+    let (xw0, xw1, leg, i_shape) = match family {
+        SectionFamily::TaperedI => ((b - s) / 2.0, (b + s) / 2.0, (b - s) / 2.0, true),
+        _ => (0.0, s, b - s, false),
+    };
+    // The taper changes the thickness by k * leg / 2 from the middle of the leg to its ends.
+    let taper = k * leg / 2.0;
+    let (root, toe) = (t + taper, t - taper);
+    let f = (1.0 + k * k).sqrt();
+    // The four inner faces, each through its toe and root corners: the bottom-right face
+    // y = toe + k (b - x) falls toward the right end, the top-right face rises as its mirror;
+    // the left faces (an I only) mirror them in x.
+    let face_br = Face {
+        c: toe + k * b,
+        k,
+        f,
+        empty_above: true,
+    };
+    let face_tr = Face {
+        c: h - toe - k * b,
+        k: -k,
+        f,
+        empty_above: false,
+    };
+    let face_tl = Face {
+        c: h - toe,
+        k,
+        f,
+        empty_above: false,
+    };
+    let face_bl = Face {
+        c: toe,
+        k: -k,
+        f,
+        empty_above: true,
+    };
+    let steps = match (r > 0.0 || r1 > 0.0, forced_segments) {
+        (false, _) => 0,
+        (true, Some(n)) => usize::try_from(n / 4).map_err(|_| contour_failure())?,
+        (true, None) => {
+            usize::try_from(segments_for(r.max(r1))? / 4).map_err(|_| contour_failure())?
+        }
+    };
+    let mut points = Vec::new();
+    points.push(Point2::new(0.0, 0.0));
+    points.push(Point2::new(b, 0.0));
+    // Bottom flange, right end: the toe fillet (end face into the inclined face), then the
+    // root fillet (inclined face into the web face).
+    if r1 > 0.0 {
+        let centre = Point2::new(b - r1, face_br.centre_y(b - r1, r1, false));
+        points.extend(fillet_arc(
+            centre,
+            r1,
+            Point2::new(b, centre.y),
+            face_br.tangent(centre, r1, false),
+            steps,
+        ));
+    } else {
+        points.push(Point2::new(b, toe));
+    }
+    if r > 0.0 {
+        let centre = Point2::new(xw1 + r, face_br.centre_y(xw1 + r, r, true));
+        points.extend(fillet_arc(
+            centre,
+            r,
+            face_br.tangent(centre, r, true),
+            Point2::new(xw1, centre.y),
+            steps,
+        ));
+    } else {
+        points.push(Point2::new(xw1, root));
+    }
+    // Top flange, right side: the root fillet (web face into the inclined face), then the toe
+    // fillet (inclined face into the end face).
+    if r > 0.0 {
+        let centre = Point2::new(xw1 + r, face_tr.centre_y(xw1 + r, r, true));
+        points.extend(fillet_arc(
+            centre,
+            r,
+            Point2::new(xw1, centre.y),
+            face_tr.tangent(centre, r, true),
+            steps,
+        ));
+    } else {
+        points.push(Point2::new(xw1, h - root));
+    }
+    if r1 > 0.0 {
+        let centre = Point2::new(b - r1, face_tr.centre_y(b - r1, r1, false));
+        points.extend(fillet_arc(
+            centre,
+            r1,
+            face_tr.tangent(centre, r1, false),
+            Point2::new(b, centre.y),
+            steps,
+        ));
+    } else {
+        points.push(Point2::new(b, h - toe));
+    }
+    points.push(Point2::new(b, h));
+    points.push(Point2::new(0.0, h));
+    if i_shape {
+        // Top flange, left end: the toe fillet, then the root fillet (the traversal runs back
+        // down the web face), mirrored in x about the section centre.
+        if r1 > 0.0 {
+            let centre = Point2::new(r1, face_tl.centre_y(r1, r1, false));
+            points.extend(fillet_arc(
+                centre,
+                r1,
+                Point2::new(0.0, centre.y),
+                face_tl.tangent(centre, r1, false),
+                steps,
+            ));
+        } else {
+            points.push(Point2::new(0.0, h - toe));
+        }
+        if r > 0.0 {
+            let centre = Point2::new(xw0 - r, face_tl.centre_y(xw0 - r, r, true));
+            points.extend(fillet_arc(
+                centre,
+                r,
+                face_tl.tangent(centre, r, true),
+                Point2::new(xw0, centre.y),
+                steps,
+            ));
+        } else {
+            points.push(Point2::new(xw0, h - root));
+        }
+        // Bottom flange, left side: the root fillet (web face into the inclined face), then the
+        // toe fillet (inclined face into the end face).
+        if r > 0.0 {
+            let centre = Point2::new(xw0 - r, face_bl.centre_y(xw0 - r, r, true));
+            points.extend(fillet_arc(
+                centre,
+                r,
+                Point2::new(xw0, centre.y),
+                face_bl.tangent(centre, r, true),
+                steps,
+            ));
+        } else {
+            points.push(Point2::new(xw0, root));
+        }
+        if r1 > 0.0 {
+            let centre = Point2::new(r1, face_bl.centre_y(r1, r1, false));
+            points.extend(fillet_arc(
+                centre,
+                r1,
+                face_bl.tangent(centre, r1, false),
+                Point2::new(0.0, centre.y),
+                steps,
+            ));
+        } else {
+            points.push(Point2::new(0.0, toe));
+        }
+    }
+    // Centre the outline on the middle of its bounding box, like every family.
+    for p in &mut points {
+        p.x -= b / 2.0;
+        p.y -= h / 2.0;
+    }
+    points.dedup();
+    Ok(points)
+}
+
 ///
 /// The shape is admitted again here (the kernel never trusts a caller's admission), so a refused
 /// value is [`SectionFailure::Shape`] with its F04 code. A custom outline keeps its authored point
@@ -433,6 +686,18 @@ fn parametric_outline_with(
     } else {
         section.clone()
     };
+    if let (SectionFamily::TaperedI | SectionFamily::TaperedC, &[h, b, .., r, r1, _]) =
+        (used.family(), used.values())
+    {
+        let outer = tapered_outline(&used, forced_segments)?;
+        return Ok(SectionOutline {
+            outer,
+            cavities: Vec::new(),
+            width_mm: b,
+            height_mm: h,
+            approximated: r > 0.0 || r1 > 0.0 || simplified,
+        });
+    }
     let radius = used.values().last().copied().unwrap_or(0.0);
     let (mut list, width, height) = corners(&used)?;
     shift(&mut list, width, height);
@@ -693,6 +958,14 @@ mod tests {
         vec![
             family(SectionFamily::IShape, &[298.0, 149.0, 5.5, 8.0, 13.0]),
             family(SectionFamily::Channel, &[200.0, 80.0, 6.0, 10.0, 10.0]),
+            family(
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 1.0 / 6.0],
+            ),
+            family(
+                SectionFamily::TaperedC,
+                &[50.0, 37.0, 4.5, 7.0, 7.0, 3.5, 0.1],
+            ),
             family(SectionFamily::Angle, &[100.0, 75.0, 8.0, 10.0]),
             family(SectionFamily::Rhs, &[150.0, 100.0, 5.0, 10.0]),
             family(SectionFamily::Rhs, &[150.0, 100.0, 8.0, 6.0]),

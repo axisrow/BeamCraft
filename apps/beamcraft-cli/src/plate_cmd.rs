@@ -176,8 +176,11 @@ const DEFINE_PROFILE_OPTIONS: &[&str] = &[
     "--tf",
     "--t",
     "--r",
+    "--r1",
     "--c",
     "--d",
+    "--s",
+    "--k",
     "--outer",
     "--cavity",
     "--designation",
@@ -198,7 +201,8 @@ const DEFINE_PROFILE_OPTIONS: &[&str] = &[
 /// The `define-profile` options that describe a section family or a custom outline, never a
 /// rectangle: without `--family` they would otherwise be ignored.
 const SECTION_ONLY_OPTIONS: &[&str] = &[
-    "--h", "--b", "--tw", "--tf", "--t", "--r", "--c", "--d", "--outer", "--cavity",
+    "--h", "--b", "--tw", "--tf", "--t", "--r", "--r1", "--c", "--d", "--s", "--k", "--outer",
+    "--cavity",
 ];
 
 /// The `define-fastener` options (A14.1): the definition takes every value from one fastener
@@ -827,7 +831,9 @@ fn candidate_json(digest: &ContentDigest, record: &DefinitionRecord) -> Json {
 /// and optional `--cavity "X,Y;...|X,Y;..."` (each clockwise). The rectangle's `--width` and
 /// `--height` do not combine with a family, and no parameter of another family is accepted.
 fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionShape> {
-    let parameters = ["--h", "--b", "--tw", "--tf", "--t", "--r", "--c", "--d"];
+    let parameters = [
+        "--h", "--b", "--tw", "--tf", "--t", "--r", "--r1", "--c", "--d", "--s", "--k",
+    ];
     if options.contains_key("--width") || options.contains_key("--height") {
         return Err(invalid(
             "--width and --height describe a rectangle, not a family",

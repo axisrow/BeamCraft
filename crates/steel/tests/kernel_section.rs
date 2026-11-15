@@ -208,6 +208,14 @@ fn cold_formed_area_is_thickness_times_centre_line() {
 fn every_outline_is_centred_on_its_bounding_box() {
     for (family, values) in [
         (SectionFamily::Channel, &[200.0, 80.0, 6.0, 10.0, 10.0][..]),
+        (
+            SectionFamily::TaperedI,
+            &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 1.0 / 6.0],
+        ),
+        (
+            SectionFamily::TaperedC,
+            &[50.0, 37.0, 4.5, 7.0, 7.0, 3.5, 0.1],
+        ),
         (SectionFamily::Angle, &[100.0, 80.0, 8.0, 10.0]),
         (SectionFamily::LippedZ, &[200.0, 60.0, 18.0, 2.0, 3.0]),
         (SectionFamily::Omega, &[40.0, 30.0, 20.0, 0.8, 1.0]),
@@ -289,6 +297,14 @@ fn a_horizontal_i_beam_is_a_certified_shell_in_the_member_frame() {
 fn every_family_builds_a_member_in_both_representations() {
     for (family, values) in [
         (SectionFamily::Channel, &[200.0, 80.0, 6.0, 10.0, 10.0][..]),
+        (
+            SectionFamily::TaperedI,
+            &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 1.0 / 6.0],
+        ),
+        (
+            SectionFamily::TaperedC,
+            &[50.0, 37.0, 4.5, 7.0, 7.0, 3.5, 0.1],
+        ),
         (SectionFamily::Angle, &[100.0, 80.0, 8.0, 10.0]),
         (SectionFamily::Rhs, &[200.0, 100.0, 6.0, 12.0]),
         (SectionFamily::Chs, &[168.0, 5.0]),

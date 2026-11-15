@@ -14,7 +14,8 @@
 //! `bim:library:id` (required) and optional `title`, `version`, `source` and `licence`; each
 //! entry is a prim `/Library/Profiles/<name>` with `steel:profile:designation` (string),
 //! `steel:profile:family` (token: `rectangle`, a section family or `custom`), one
-//! `steel:profile:<parameter>Mm` double per family parameter (a rectangle has `h` and `b`; a
+//! `steel:profile:<parameter>Mm` double per family parameter (a rectangle has `h` and `b`; the
+//! dimensionless slope of a tapered family is `steel:profile:k`; a
 //! custom outline has `outerPointsMm` and optional `cavityPointsMm` with `cavityVertexCounts`),
 //! and optional declared `standard`, `areaMm2`, `massPerMeterKg` and `surfacePerMeterM2`.
 //!
@@ -48,6 +49,7 @@ use steel::model::definition::SectionProperties;
 use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use steel::model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
+    profile_attribute,
 };
 
 /// Largest library file, in bytes.
@@ -297,7 +299,7 @@ fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Ref
             let values = family
                 .parameters()
                 .iter()
-                .map(|name| required_number(prim, &format!("steel:profile:{name}Mm")))
+                .map(|name| required_number(prim, &profile_attribute(name)))
                 .collect::<Result<Vec<_>, _>>()?;
             DefinitionRecord::SectionProfile {
                 shape: SectionShape::Parametric(
@@ -884,7 +886,7 @@ fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, Re
                 .iter()
                 .zip(parametric.values())
             {
-                lines.push(format!("double steel:profile:{name}Mm = {value}"));
+                lines.push(format!("double {} = {value}", profile_attribute(name)));
             }
             section
         }

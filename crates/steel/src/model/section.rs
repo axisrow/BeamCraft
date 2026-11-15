@@ -10,10 +10,14 @@
 //! designation lookup here: a library entry resolves to these values before they reach the model.
 //!
 //! Every parametric family is placed in the section plane with width along `X` and height along
-//! `Y`. Hot-rolled families carry a root (fillet) radius `r`; hollow sections carry the outer
-//! corner radius; cold-formed families have one constant thickness `t` and an inner bend radius
-//! `r`. A radius of zero is a sharp corner. Family geometry follows public engineering
-//! descriptions (EN 10365, ASTM A6, EN 10162); no dimension table is used.
+//! `Y`. Hot-rolled families carry a root (fillet) radius `r`; the tapered-flange families
+//! additionally carry the toe radius `r1` and the inner-face slope `k` (rise over run; the
+//! standard's `1:6` is `k = 1/6`), and `t` is the mean flange thickness at the middle of the
+//! leg, as those standards print it; hollow sections carry the outer corner radius; cold-formed
+//! families have one constant thickness `t` and an inner bend radius `r`. A radius of zero is a
+//! sharp corner, a slope of zero is a parallel flange. Family geometry follows public
+//! engineering descriptions (EN 10365, ASTM A6, EN 10162, GB/T 706-2016); no dimension table is
+//! used.
 
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_model::command::CommandError;
@@ -34,6 +38,13 @@ pub enum SectionFamily {
     IShape,
     /// Hot-rolled parallel-flange channel, web on the `-X` side: `h, b, tw, tf, r`.
     Channel,
+    /// Doubly symmetric hot-rolled tapered-flange I section (GB/T 706 工字钢, GOST 8239,
+    /// ASTM S style): `h, b, s, t, r, r1, k`. The inner flange faces rise at the slope `k`
+    /// toward the web; `t` is the mean (middle-of-leg) flange thickness.
+    TaperedI,
+    /// Hot-rolled tapered-flange channel, web on the `-X` side (GB/T 706 槽钢, GOST 8240,
+    /// EN 10365 UPN style): `h, b, s, t, r, r1, k`.
+    TaperedC,
     /// Hot-rolled angle, legs along `-X` and `-Y` sides: `h, b, t, r`.
     Angle,
     /// Rectangular or square hollow section: `h, b, t, r` (`r` is the outer corner radius).
@@ -52,9 +63,11 @@ pub enum SectionFamily {
 
 impl SectionFamily {
     /// Every family, in token order of this enumeration.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::IShape,
         Self::Channel,
+        Self::TaperedI,
+        Self::TaperedC,
         Self::Angle,
         Self::Rhs,
         Self::Chs,
@@ -69,6 +82,8 @@ impl SectionFamily {
         match self {
             Self::IShape => "i_shape",
             Self::Channel => "channel",
+            Self::TaperedI => "tapered_i",
+            Self::TaperedC => "tapered_c",
             Self::Angle => "angle",
             Self::Rhs => "rhs",
             Self::Chs => "chs",
@@ -88,16 +103,22 @@ impl SectionFamily {
     pub const fn parameters(self) -> &'static [&'static str] {
         match self {
             Self::IShape | Self::Channel => &["h", "b", "tw", "tf", "r"],
+            Self::TaperedI | Self::TaperedC => &["h", "b", "s", "t", "r", "r1", "k"],
             Self::Angle | Self::Rhs | Self::PlainC => &["h", "b", "t", "r"],
             Self::Chs => &["d", "t"],
             Self::LippedC | Self::LippedZ | Self::Omega => &["h", "b", "c", "t", "r"],
         }
     }
 
-    /// Whether the family's last parameter is a radius that the simplified representation
-    /// drops (every family except the circular hollow section).
-    pub const fn has_radius(self) -> bool {
-        !matches!(self, Self::Chs)
+    /// The names of the radius parameters the simplified representation drops. Every hot-rolled
+    /// family drops its fillet radii (a zero radius is a sharp corner); the circular hollow
+    /// section has none.
+    pub const fn radius_parameters(self) -> &'static [&'static str] {
+        match self {
+            Self::Chs => &[],
+            Self::TaperedI | Self::TaperedC => &["r", "r1"],
+            _ => &["r"],
+        }
     }
 }
 
@@ -113,7 +134,25 @@ fn invalid(field: &'static str, message: &'static str) -> CommandError {
     CommandError::new(ErrorCode::InvalidArgument, field, message)
 }
 
-/// Field token of a parameter, for example `tw_mm`.
+/// Per-fillet area coefficient of a tapered flange, `g(k) = cot(pi/4 + alpha/2) - (pi/4 -
+/// alpha/2)` with `alpha = atan(k)`: a fillet of radius `r` between a vertical face and an
+/// inner flange face of slope `k` changes the sharp area by `g(k) * r^2` (`1 - pi/4` at
+/// `k = 0`). The cot term comes from `cos(alpha)` by half-angle square roots; the linear term
+/// needs `atan`, which is platform trigonometry. That is acceptable here because the value
+/// feeds the reported quantities (P-Mass, the D3 comparison), never the stored outline: the
+/// kernel's tapered outline uses half-angle rotations only and carries no trigonometry.
+fn fillet(k: f64) -> f64 {
+    let root = (1.0 + k * k).sqrt();
+    let cos = 1.0 / root;
+    // alpha is in [0, pi/2), so both half-angle values are non-negative.
+    let half_cos = ((1.0 + cos) / 2.0).sqrt();
+    let half_sin = ((1.0 - cos) / 2.0).sqrt();
+    let cot = (half_cos - half_sin) / (half_cos + half_sin);
+    cot - (core::f64::consts::FRAC_PI_4 - k.atan() / 2.0)
+}
+
+/// Field token of a parameter, for example `tw_mm`. The slope `k` is dimensionless, so its
+/// field carries no unit suffix.
 fn field_of(name: &str) -> &'static str {
     match name {
         "h" => "h_mm",
@@ -122,9 +161,21 @@ fn field_of(name: &str) -> &'static str {
         "tf" => "tf_mm",
         "t" => "t_mm",
         "r" => "r_mm",
+        "r1" => "r1_mm",
         "c" => "c_mm",
         "d" => "d_mm",
+        "s" => "s_mm",
+        "k" => "k",
         _ => "profile",
+    }
+}
+
+/// The stored attribute name of one family parameter: `steel:profile:<name>Mm` for a length,
+/// `steel:profile:<name>` for the dimensionless slope `k`.
+pub fn profile_attribute(name: &str) -> String {
+    match name {
+        "k" => "steel:profile:k".to_owned(),
+        other => format!("steel:profile:{other}Mm"),
     }
 }
 
@@ -151,14 +202,15 @@ impl ParametricSection {
         &self.values
     }
 
-    /// The same section with its radius set to zero: the outline of the simplified
-    /// representation. A family without a radius is returned unchanged.
+    /// The same section with every radius parameter set to zero: the outline of the simplified
+    /// representation. The slope of a tapered family is real geometry and is kept. A family
+    /// without a radius is returned unchanged.
     pub fn without_radius(&self) -> Self {
         let mut values = self.values.clone();
-        if self.family.has_radius()
-            && let Some(last) = values.last_mut()
-        {
-            *last = 0.0;
+        for (name, value) in self.family.parameters().iter().zip(values.iter_mut()) {
+            if self.family.radius_parameters().contains(name) {
+                *value = 0.0;
+            }
         }
         Self {
             family: self.family,
@@ -186,15 +238,15 @@ impl ParametricSection {
             ));
         }
         for (name, value) in named() {
-            let radius = *name == "r";
-            if radius && *value == 0.0 {
+            let droppable = matches!(*name, "r" | "r1" | "k");
+            if droppable && *value == 0.0 {
                 continue;
             }
             if *value < ABSOLUTE_FLOOR_MM {
                 return Err(invalid(
                     field_of(name),
-                    if radius {
-                        "radius is negative or below the geometric floor"
+                    if droppable {
+                        "value is negative or below the geometric floor"
                     } else {
                         "section dimension is below the geometric floor"
                     },
@@ -207,12 +259,20 @@ impl ParametricSection {
     /// The exact area of the section in mm2 from its parameters (P-Mass): the closed-form area
     /// of the sharp-cornered shape corrected by the true circular arcs, never a polygon.
     ///
-    /// Every radius in a family is a quarter circle between two perpendicular straight edges, so a
-    /// convex bend removes and a concave root fillet adds exactly `(1 - pi/4) * r^2`. A cold-formed
-    /// bend pair (inner radius `r`, outer radius `r + t`) therefore changes the sharp area by
-    /// `(1 - pi/4) * (r^2 - (r + t)^2)`; the outer radius of a rectangular hollow section is `r`
-    /// and its inner radius is `r - t` (sharp when `r <= t`), as the kernel generates them. A
-    /// circular hollow section is `pi * t * (d - t)`. The value is only meaningful for admitted
+    /// Every radius in a parallel-faced family is a quarter circle between two perpendicular
+    /// straight edges, so a convex bend removes and a concave root fillet adds exactly
+    /// `(1 - pi/4) * r^2`. A cold-formed bend pair (inner radius `r`, outer radius `r + t`)
+    /// therefore changes the sharp area by `(1 - pi/4) * (r^2 - (r + t)^2)`; the outer radius of
+    /// a rectangular hollow section is `r` and its inner radius is `r - t` (sharp when
+    /// `r <= t`), as the kernel generates them. A circular hollow section is
+    /// `pi * t * (d - t)`.
+    ///
+    /// A tapered-flange family has inclined inner flange faces: with the slope `k` (rise over
+    /// run, `alpha = atan(k)`) a fillet between the vertical end or web face and the inclined
+    /// face spans the angle `pi/2 - alpha` and changes the sharp area by
+    /// `g(k) * r^2` with `g(k) = cot(pi/4 + alpha/2) - (pi/4 - alpha/2)`, which is
+    /// `1 - pi/4` at `k = 0`. Each of the four (I) or two (C) root fillets adds `g(k) * r^2`
+    /// and each toe fillet removes `g(k) * r1^2`. The value is only meaningful for admitted
     /// values; a wrong number of values gives `0.0`.
     pub fn exact_area_mm2(&self) -> f64 {
         const K: f64 = 1.0 - core::f64::consts::FRAC_PI_4;
@@ -230,6 +290,12 @@ impl ParametricSection {
             }
             (SectionFamily::Channel, &[h, b, tw, tf, r]) => {
                 2.0 * b * tf + (h - 2.0 * tf) * tw + 2.0 * K * r * r
+            }
+            (SectionFamily::TaperedI, &[h, b, s, t, r, r1, k]) => {
+                h * s + 2.0 * t * (b - s) + 4.0 * fillet(k) * (r * r - r1 * r1)
+            }
+            (SectionFamily::TaperedC, &[h, b, s, t, r, r1, k]) => {
+                h * s + 2.0 * t * (b - s) + 2.0 * fillet(k) * (r * r - r1 * r1)
             }
             (SectionFamily::Angle, &[h, b, t, r]) => t * (h + b - t) + K * r * r,
             (SectionFamily::Rhs, &[h, b, t, r]) => {
@@ -282,6 +348,58 @@ impl ParametricSection {
                     2.0 * (tf + r) < h,
                     "r_mm",
                     "root radius does not fit the web",
+                )
+            }
+            (SectionFamily::TaperedI, &[h, b, s, t, r, r1, k]) => {
+                // The flange thins toward the toe over a leg of (b - s) / 2 per side; t sits at
+                // the middle of the leg (GB/T 706 middle leg thickness).
+                let taper = k * (b - s) / 4.0;
+                let (root, toe) = (t + taper, t - taper);
+                rule(2.0 * root < h, "t_mm", "flanges leave no web")?;
+                rule(s < b, "s_mm", "web is not narrower than the flange")?;
+                rule(
+                    s + 2.0 * r < b,
+                    "r_mm",
+                    "root radius does not fit the flange",
+                )?;
+                rule(
+                    2.0 * (root + r) < h,
+                    "r_mm",
+                    "root radius does not fit the web",
+                )?;
+                rule(
+                    toe >= ABSOLUTE_FLOOR_MM,
+                    "t_mm",
+                    "slope consumes the toe thickness",
+                )?;
+                rule(
+                    r1 < toe,
+                    "r1_mm",
+                    "toe radius does not fit the toe thickness",
+                )
+            }
+            (SectionFamily::TaperedC, &[h, b, s, t, r, r1, k]) => {
+                // One flange per side of the web: the leg runs (b - s) from the web face to the
+                // toe, and t sits at its middle.
+                let taper = k * (b - s) / 2.0;
+                let (root, toe) = (t + taper, t - taper);
+                rule(2.0 * root < h, "t_mm", "flanges leave no web")?;
+                rule(s < b, "s_mm", "web is not narrower than the flange")?;
+                rule(s + r < b, "r_mm", "root radius does not fit the flange")?;
+                rule(
+                    2.0 * (root + r) < h,
+                    "r_mm",
+                    "root radius does not fit the web",
+                )?;
+                rule(
+                    toe >= ABSOLUTE_FLOOR_MM,
+                    "t_mm",
+                    "slope consumes the toe thickness",
+                )?;
+                rule(
+                    r1 < toe,
+                    "r1_mm",
+                    "toe radius does not fit the toe thickness",
                 )
             }
             (SectionFamily::Angle, &[h, b, t, r]) => {
@@ -563,6 +681,54 @@ mod tests {
     }
 
     #[test]
+    fn tapered_flange_areas_reduce_to_the_parallel_forms_at_zero_slope() {
+        // A zero slope and a zero toe radius are exactly the parallel-flange families.
+        close(
+            area(
+                SectionFamily::TaperedI,
+                &[298.0, 149.0, 5.5, 8.0, 13.0, 0.0, 0.0],
+            ),
+            area(SectionFamily::IShape, &[298.0, 149.0, 5.5, 8.0, 13.0]),
+        );
+        close(
+            area(
+                SectionFamily::TaperedC,
+                &[200.0, 80.0, 6.0, 10.0, 10.0, 0.0, 0.0],
+            ),
+            area(SectionFamily::Channel, &[200.0, 80.0, 6.0, 10.0, 10.0]),
+        );
+        // The toe fillets remove exactly the same per-fillet area as the root fillets add,
+        // so a tapered I with r1 = r has the sharp trapezoid area.
+        close(
+            area(
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 7.6, 6.5, 6.5, 1.0 / 6.0],
+            ),
+            100.0 * 4.5 + 2.0 * 7.6 * 63.5,
+        );
+        // The slope coefficient degrades continuously: a tiny slope changes the area by a
+        // tiny amount (GB/T 706 I 10 dimensions).
+        let flat = area(
+            SectionFamily::TaperedI,
+            &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 0.0],
+        );
+        let tapered = area(
+            SectionFamily::TaperedI,
+            &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 1.0 / 6.0],
+        );
+        assert!(
+            (flat - tapered).abs() < 0.01 * flat,
+            "flat {flat} tapered {tapered}"
+        );
+        // A steeper slope removes more toe material and adds less root material: the area drops.
+        let steeper = area(
+            SectionFamily::TaperedI,
+            &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 0.2],
+        );
+        assert!(steeper < tapered, "steeper {steeper} tapered {tapered}");
+    }
+
+    #[test]
     fn a_custom_area_is_the_shoelace_area_whatever_the_winding() {
         let outer = vec![[0.0, 0.0], [100.0, 0.0], [100.0, 50.0], [0.0, 50.0]];
         let cavity = vec![[10.0, 10.0], [10.0, 20.0], [30.0, 20.0], [30.0, 10.0]];
@@ -608,9 +774,17 @@ mod tests {
 
     #[test]
     fn synthetic_sections_of_every_family_are_admitted() {
-        let ok: [(SectionFamily, &[f64]); 9] = [
+        let ok: [(SectionFamily, &[f64]); 11] = [
             (SectionFamily::IShape, &[300.0, 150.0, 7.0, 10.0, 15.0]),
             (SectionFamily::Channel, &[200.0, 80.0, 6.0, 10.0, 10.0]),
+            (
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 1.0 / 6.0],
+            ),
+            (
+                SectionFamily::TaperedC,
+                &[50.0, 37.0, 4.5, 7.0, 7.0, 3.5, 0.1],
+            ),
             (SectionFamily::Angle, &[100.0, 80.0, 8.0, 10.0]),
             (SectionFamily::Rhs, &[200.0, 100.0, 6.0, 12.0]),
             (SectionFamily::Chs, &[168.0, 5.0]),
@@ -625,6 +799,14 @@ mod tests {
         // A zero radius is a sharp corner, never a floor violation.
         assert_eq!(
             check(SectionFamily::IShape, &[300.0, 150.0, 7.0, 10.0, 0.0]),
+            Ok(())
+        );
+        // A zero slope is a parallel flange, and both tapered radii may be sharp together.
+        assert_eq!(
+            check(
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 7.6, 0.0, 0.0, 0.0]
+            ),
             Ok(())
         );
     }
@@ -652,11 +834,31 @@ mod tests {
             check(i, &[300.0, 150.0, 7.0, 10.0, 0.0005]),
             Err((ErrorCode::InvalidArgument, "r_mm"))
         );
+        // The slope is finite, capped and floored like a dimension, but may be exactly zero.
+        let t = SectionFamily::TaperedI;
+        let base = [100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 0.0];
+        assert_eq!(
+            check(t, &[f64::NAN, 68.0, 4.5, 7.6, 6.5, 3.3, 0.0]),
+            Err((ErrorCode::NonFiniteNumber, "h_mm"))
+        );
+        assert_eq!(
+            check(t, &[100.0, 2e6, 4.5, 7.6, 6.5, 3.3, 0.0]),
+            Err((ErrorCode::LimitExceeded, "b_mm"))
+        );
+        assert_eq!(
+            check(t, &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, -0.5]),
+            Err((ErrorCode::InvalidArgument, "k"))
+        );
+        assert_eq!(
+            check(t, &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 0.000_05]),
+            Err((ErrorCode::InvalidArgument, "k"))
+        );
+        assert_eq!(check(t, &base), Ok(()));
     }
 
     #[test]
     fn family_consistency_rules_name_the_parameter() {
-        let cases: [(SectionFamily, &[f64], &str); 12] = [
+        let cases: [(SectionFamily, &[f64], &str); 21] = [
             (
                 SectionFamily::IShape,
                 &[20.0, 150.0, 7.0, 10.0, 0.0],
@@ -676,6 +878,55 @@ mod tests {
                 SectionFamily::Channel,
                 &[100.0, 50.0, 6.0, 10.0, 45.0],
                 "r_mm",
+            ),
+            // Tapered I: the root thickness of the 48 mm flange leaves no web at h 100.
+            (
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 48.0, 6.5, 3.3, 1.0 / 6.0],
+                "t_mm",
+            ),
+            (
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 68.0, 7.6, 6.5, 3.3, 1.0 / 6.0],
+                "s_mm",
+            ),
+            (
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 7.6, 32.0, 3.3, 1.0 / 6.0],
+                "r_mm",
+            ),
+            // A squat section whose root fillets cannot both fit the web height.
+            (
+                SectionFamily::TaperedI,
+                &[60.0, 68.0, 4.5, 7.6, 25.0, 0.0, 1.0 / 6.0],
+                "r_mm",
+            ),
+            // A slope of 3 (300 percent) consumes the toe thickness of the 7.6 mm flange.
+            (
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 3.0],
+                "t_mm",
+            ),
+            // The toe radius must stay below the toe thickness (4.954 mm here).
+            (
+                SectionFamily::TaperedI,
+                &[100.0, 68.0, 4.5, 7.6, 6.5, 5.0, 1.0 / 6.0],
+                "r1_mm",
+            ),
+            (
+                SectionFamily::TaperedC,
+                &[50.0, 37.0, 4.5, 24.0, 7.0, 3.5, 0.1],
+                "t_mm",
+            ),
+            (
+                SectionFamily::TaperedC,
+                &[50.0, 37.0, 4.5, 7.0, 33.0, 3.5, 0.1],
+                "r_mm",
+            ),
+            (
+                SectionFamily::TaperedC,
+                &[50.0, 37.0, 4.5, 7.0, 7.0, 8.0, 0.1],
+                "r1_mm",
             ),
             (SectionFamily::Angle, &[100.0, 8.0, 8.0, 0.0], "t_mm"),
             (SectionFamily::Angle, &[100.0, 80.0, 8.0, 73.0], "r_mm"),
@@ -713,6 +964,15 @@ mod tests {
         );
         let chs = ParametricSection::new(SectionFamily::Chs, vec![168.0, 5.0]);
         assert_eq!(chs.clone().map(|c| c.without_radius()), chs);
+        // A tapered section drops both radii and keeps the slope: the taper is real geometry.
+        let t = ParametricSection::new(
+            SectionFamily::TaperedI,
+            vec![100.0, 68.0, 4.5, 7.6, 6.5, 3.3, 1.0 / 6.0],
+        );
+        assert_eq!(
+            t.map(|s| s.without_radius()).map(|s| s.values().to_vec()),
+            Ok(vec![100.0, 68.0, 4.5, 7.6, 0.0, 0.0, 1.0 / 6.0])
+        );
     }
 
     #[test]

@@ -29,6 +29,7 @@ mod non_box_features;
 mod plate_contour;
 mod ruled;
 mod sweep;
+mod tapered_flange;
 mod unsupported_plate;
 
 /// With `autotests = false` a suite file missing from the list above would never build or run,
