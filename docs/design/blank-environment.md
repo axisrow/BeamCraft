@@ -44,7 +44,10 @@ saved setting.
   (2026-11-15) holds the GB/T 706-2016 tapered-flange I-beam and channel series through the
   `tapered_i` and `tapered_c` section families and, since 2026-11-15, the GB/T 5782 hex-bolt
   fastener set (M12/16/20/24, the environment's fastener library, BC-ENV-002; see
-  `ATTRIBUTION.md`).
+  `ATTRIBUTION.md`), and `environments/usa/` (2026-11-15) holds, so far, only a material
+  library with the ASTM grades A36, A992 and the complete A572 Grade 42–65 set — the USA
+  profile pack waits on the #649 provenance audit, so the environment lists no profile or
+  fastener libraries and the grades are its whole content.
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or
