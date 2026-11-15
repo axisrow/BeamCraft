@@ -77,20 +77,20 @@ fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "europe");
-    assert_eq!(num(&listed, &["entry_count"]), 121.0);
+    assert_eq!(num(&listed, &["entry_count"]), 139.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let library = &at(&listed, &["libraries"]).array().unwrap()[0];
     let info = at(library, &["library"]);
     assert_eq!(text(info, "id"), "europe-en-10365-profiles");
     assert_eq!(
         text(info, "title"),
-        "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, UPE)"
+        "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, UPE, UPN)"
     );
-    assert_eq!(text(info, "version"), "2");
+    assert_eq!(text(info, "version"), "3");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 121);
+    assert_eq!(entries.len(), 139);
     let ipe300 = entries
         .iter()
         .find(|e| text(e, "designation") == "IPE300")
@@ -108,6 +108,19 @@ fn the_shipped_europe_environment_lists_its_sections_and_provenance() {
     assert_eq!(num(upe100, &["parameters_mm", "tw"]), 4.5);
     assert_eq!(num(upe100, &["parameters_mm", "tf"]), 7.5);
     assert_eq!(num(upe100, &["parameters_mm", "r"]), 10.0);
+    // The UPN channels ship as the pack's taper-flange channel series: the parameters carry
+    // the web s, the mid-leg flange thickness t, both radii and the dimensionless slope.
+    let upn100 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "UPN100")
+        .unwrap();
+    assert_eq!(num(upn100, &["parameters_mm", "h"]), 100.0);
+    assert_eq!(num(upn100, &["parameters_mm", "b"]), 50.0);
+    assert_eq!(num(upn100, &["parameters_mm", "s"]), 6.0);
+    assert_eq!(num(upn100, &["parameters_mm", "t"]), 8.5);
+    assert_eq!(num(upn100, &["parameters_mm", "r"]), 8.5);
+    assert_eq!(num(upn100, &["parameters_mm", "r1"]), 4.5);
+    assert_eq!(num(upn100, &["parameters_mm", "k"]), 0.08);
 }
 
 #[test]
@@ -195,9 +208,34 @@ fn a_project_created_with_the_europe_environment_resolves_its_designations() {
     // 1250 mm2 x 6000 mm x 7850 kg/m3.
     close(num(&q, &["mass", "kg"]), 58.875, 1e-9);
 
+    // A designation of the taper-flange channel series: UPN100, catalogue area 1350 mm2. The
+    // declared area wins for the quantities and the taper-flange outline draws without a
+    // declared-area warning.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "16000,0,0",
+        "--end",
+        "22000,0,0",
+        "--profile",
+        "UPN100",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 1350.0);
+    // 1350 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 63.585, 1e-9);
+
     // A designation the series does not publish is refused, not silently substituted: no IPE 250
-    // and no UPE 250 exist (the channel sequence steps 240 to 270).
-    for absent_profile in ["IPE250", "UPE250"] {
+    // and no UPE 250 exist (the channel sequence steps 240 to 270), and the UPN series steps
+    // 300 to 320 without a 270 or 330.
+    for absent_profile in ["IPE250", "UPE250", "UPN270", "UPN330"] {
         assert_eq!(
             f.code(&[
                 "create-member",
@@ -222,7 +260,7 @@ fn a_project_created_with_the_europe_environment_resolves_its_designations() {
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 3);
+    assert_eq!(members.len(), 4);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");

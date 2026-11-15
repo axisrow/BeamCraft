@@ -5,7 +5,7 @@
 //! section profile specs (P02.2). The material, which every discipline has, stays in
 //! [`beamcraft_model::definition`].
 
-use crate::model::section::SectionShape;
+use crate::model::section::{AreaConvention, SectionShape};
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::definition::declared_label;
@@ -33,6 +33,10 @@ pub struct SectionProperties {
     /// Readable name shown in listings and used to select the definition by name (A07.2). Part
     /// of the definition content, so another name is another digest. A label only.
     pub display_name: Option<String>,
+    /// The convention the declared area was published in (owner decision of 2026-11-15): the
+    /// D3 declared-area check compares against the same convention's reference. Part of the
+    /// definition content, so another convention is another digest.
+    pub area_convention: AreaConvention,
 }
 
 impl SectionProperties {
@@ -150,6 +154,20 @@ impl RectangleProfileSpec {
                 "declared surface differs from the perimeter",
             ));
         }
+        Self::admit_area_convention(&self.section)
+    }
+
+    /// A rectangle declares its area against `width * height` alone: the nominal sharp
+    /// convention is a published-table convention of the tapered-flange families and has no
+    /// meaning here, so it is refused.
+    fn admit_area_convention(section: &SectionProperties) -> Result<(), CommandError> {
+        if section.area_convention == AreaConvention::NominalSharp {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "area_convention",
+                "the nominal sharp area convention has no reference for this profile",
+            ));
+        }
         Ok(())
     }
 }
@@ -167,17 +185,31 @@ pub struct SectionProfileSpec {
 impl SectionProfileSpec {
     /// Admits the shape and the declared values. The declared area is a catalogue value and is
     /// never refused for disagreeing with the outline; [`Self::declared_area_warning`] reports it.
+    /// The nominal sharp area convention is admissible only for a tapered-flange family, the
+    /// one place a standard publishes it (`INVALID_ARGUMENT` naming `area_convention`
+    /// elsewhere).
     pub fn validate(&self) -> Result<(), CommandError> {
         self.shape.validate()?;
-        self.section.validate()
+        self.section.validate()?;
+        if self.section.area_convention == AreaConvention::NominalSharp
+            && self.shape.nominal_sharp_area_mm2().is_none()
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "area_convention",
+                "the nominal sharp area convention has no reference for this section family",
+            ));
+        }
+        Ok(())
     }
 
-    /// Compares the declared area, if any, with the EXACT area of the section in mm2 (P-Mass:
-    /// the closed-form area of [`crate::model::section::SectionShape::exact_area_mm2`], supplied by the
-    /// caller; never the polygon of the mesh). A relative gap above 1 percent
-    /// (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a refusal: owner decision D3
-    /// (2026-10-18), catalogue values are authoritative. No declared area, or an exact area
-    /// that is not a positive finite number, gives no warning.
+    /// Compares the declared area, if any, with the reference area of its declared convention
+    /// in mm2 (P-Mass: supplied by the caller — [`crate::model::section::SectionShape::exact_area_mm2`]
+    /// for the exact convention, the nominal sharp-cornered value for the nominal sharp one;
+    /// like-for-like per the owner decision of 2026-11-15; never the polygon of the mesh). A
+    /// relative gap above 1 percent (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a
+    /// refusal: owner decision D3 (2026-10-18), catalogue values are authoritative. No declared
+    /// area, or a reference that is not a positive finite number, gives no warning.
     pub fn declared_area_warning(&self, exact_area_mm2: f64) -> Option<DeclaredAreaWarning> {
         let declared = self.section.area_mm2?;
         if !exact_area_mm2.is_finite() || exact_area_mm2 <= 0.0 {
@@ -193,14 +225,16 @@ impl SectionProfileSpec {
     }
 }
 
-/// A declared section area that differs from the exact area of the section by more than the
+/// A declared section area that differs from its convention's reference area by more than the
 /// threshold. Informational: the definition is created and keeps the declared value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeclaredAreaWarning {
     /// The declared (catalogue) area in mm2.
     pub declared_mm2: f64,
-    /// The exact area of the section in mm2 (the name is kept from the first slice, where the
-    /// kernel's polygon was the reference; the wire key is `kernel_mm2`).
+    /// The reference area of the declared convention in mm2: the exact area for the exact
+    /// convention, the nominal sharp-cornered value for the nominal sharp one (the name is
+    /// kept from the first slice, where the kernel's polygon was the reference; the wire key
+    /// is `kernel_mm2`).
     pub kernel_mm2: f64,
     /// `|declared - exact| / exact`.
     pub relative_difference: f64,

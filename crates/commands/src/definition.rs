@@ -48,8 +48,8 @@ use steel::model::definition::{
 };
 use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use steel::model::section::{
-    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
-    profile_attribute,
+    AreaConvention, CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily,
+    SectionShape, profile_attribute,
 };
 
 /// Path prefix used by the synthetic profile fixtures.
@@ -283,6 +283,11 @@ fn decode_definition(
             .transpose()
     };
     let section = || -> Result<SectionProperties, Refusal> {
+        let area_convention = match optional_text("steel:profile:areaConvention")? {
+            None => AreaConvention::default(),
+            Some(token) => AreaConvention::from_token(&token)
+                .ok_or_else(|| integrity("committed definition has an unknown area convention"))?,
+        };
         Ok(SectionProperties {
             designation: optional_text("steel:profile:designation")?,
             standard: optional_text("steel:profile:standard")?,
@@ -290,6 +295,7 @@ fn decode_definition(
             mass_per_meter_kg: optional_double("steel:profile:massPerMeterKg")?,
             surface_per_meter_m2: optional_double("steel:profile:surfacePerMeterM2")?,
             display_name: prim.display_name.clone(),
+            area_convention,
         })
     };
     let record = if let Some(family) = family {
@@ -876,6 +882,7 @@ mod tests {
                 mass_per_meter_kg: Some(471.0),
                 surface_per_meter_m2: Some(1.0),
                 display_name: None,
+                area_convention: AreaConvention::default(),
             },
         };
         let material = DefinitionRecord::Material {

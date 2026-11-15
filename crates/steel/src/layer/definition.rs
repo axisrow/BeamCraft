@@ -13,8 +13,8 @@ use super::write::{
 };
 use crate::model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
 use crate::model::section::{
-    CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
-    profile_attribute,
+    AreaConvention, CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection,
+    SectionFamily, profile_attribute,
 };
 use crate::model::{definition::SectionProperties, fastener::FastenerSpec, section::SectionShape};
 use beamcraft_layer_engine::authored::seam::author::{
@@ -48,6 +48,10 @@ pub(super) const PROFILE_KINDS: [&str; 13] = [
 ];
 
 fn section_properties(p: &Prim) -> Result<SectionProperties, Diagnostic> {
+    let area_convention = match optional_text(p, "steel:profile:areaConvention")? {
+        None => AreaConvention::default(),
+        Some(token) => AreaConvention::from_token(&token).ok_or_else(invalid)?,
+    };
     Ok(SectionProperties {
         designation: optional_text(p, "steel:profile:designation")?,
         standard: optional_text(p, "steel:profile:standard")?,
@@ -55,6 +59,7 @@ fn section_properties(p: &Prim) -> Result<SectionProperties, Diagnostic> {
         mass_per_meter_kg: optional_number(p, "steel:profile:massPerMeterKg")?,
         surface_per_meter_m2: optional_number(p, "steel:profile:surfacePerMeterM2")?,
         display_name: p.display_name.clone(),
+        area_convention,
     })
 }
 /// The authored outline of a custom profile: the outer contour and the optional cavities (both
@@ -293,6 +298,7 @@ fn section_fields() -> Vec<(&'static str, &'static str)> {
     vec![
         ("steel:profile:designation", "string"),
         ("steel:profile:standard", "string"),
+        ("steel:profile:areaConvention", "string"),
         ("steel:profile:areaMm2", "double"),
         ("steel:profile:massPerMeterKg", "double"),
         ("steel:profile:surfacePerMeterM2", "double"),

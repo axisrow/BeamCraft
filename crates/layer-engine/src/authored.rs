@@ -148,6 +148,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
     "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
     "steel:profile:designation=string(optional);steel:profile:standard=string(optional);",
+    "steel:profile:areaConvention=string(optional,exact_filleted|nominal_sharp;absent=exact_filleted);",
     "steel:profile:areaMm2=double(optional);steel:profile:massPerMeterKg=double(optional);",
     "steel:profile:surfacePerMeterM2=double(optional);",
     "section profile=bim:definitionKind=token(i_shape|channel|tapered_i|tapered_c|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega);",
