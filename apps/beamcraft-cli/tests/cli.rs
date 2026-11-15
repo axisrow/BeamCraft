@@ -78,6 +78,7 @@ mod libraries;
 mod listing_pages;
 mod lofted_plates;
 mod members;
+mod model_checks;
 mod numbering;
 mod numbering_approval;
 mod offline_clients;

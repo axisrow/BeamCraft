@@ -68,6 +68,8 @@ pub enum Route {
     Bolt,
     /// `export-bom`.
     Bom,
+    /// `check-model`.
+    Check,
     /// `schedule-export`.
     Schedule,
     /// The library commands.
@@ -2507,6 +2509,19 @@ pub const COMMANDS: &[Command] = &[
             req("--store", "ROOT"),
             req("--out", "FILE"),
             opt("--summary", "FILE"),
+        ],
+    ),
+    entry(
+        Route::Check,
+        "checks",
+        "check-model",
+        Access::Read,
+        Ids::None,
+        &[
+            req("--store", "ROOT"),
+            opt("--element", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
         ],
     ),
     entry(

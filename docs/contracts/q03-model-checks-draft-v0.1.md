@@ -262,11 +262,27 @@ cover); it must never be used to hide missing inputs.
 
 ### 7.1 Method
 
-The candidate method (#634) is to decompose a prismatic part into convex pieces using extrusion
+The candidate method (#634) was to decompose a prismatic part into convex pieces using extrusion
 cap triangles and plane-cut half-spaces, then compare with the final closed mesh of the other
-part. Slice 2 must validate it on the adversarial cases of #634 before it is fixed as the
-implementation contract. This contract fixes what any implementation must satisfy, not the
-algorithm:
+part. Slice 2 validated a simpler method that satisfies the same requirements, and the contract
+below stays what any implementation must satisfy, not the algorithm:
+
+**Validated in slice 2 (2026-11-15).** The implementation compares the two **final evaluated
+closed meshes** directly (`kernel::contact`): the surface facts — strict crossing, coplanar
+face contact, edge/point touch, separation, full containment — are decided by the kernel's
+exact predicates and are properties of the surfaces, so they cannot depend on a triangulation
+or on an artificial decomposition; there are no internal faces to offset. The measured
+penetration depth samples the two meshes' vertices and per-face interior probes (exact
+midpoint chains), is a deterministic lower bound of the true depth, and is invariant under
+re-triangulations that keep the vertex set; a proven crossing whose overlap touches no sample
+reports `unknown` (`indeterminate`), never a guess. The adversarial cases of #634 are
+exercised in `kernel::contact::tests` and `steel::engine::check::tests`: face contact,
+edge/point contact, separation, containment without a surface meeting, corner overlap,
+rotated placements, and diagonal-flip re-triangulations. Remaining ceilings, recorded here:
+depth sampling is vertex-based (a vertex-independent depth needs the intersection region),
+and a point classification whose six axis rays all graze edges/vertices reports unresolved.
+
+The requirements any implementation must satisfy:
 
 - **Decomposition independence.** The result of `PART_CLASH`, contact and gap measurements must
   be invariant under a different valid triangulation of the same body. Artificial internal
@@ -427,6 +443,16 @@ the check cost on the sample fixture and records the numbers here before slice 5
 summaries. The design constraints above (counts-only summary, checks on the resulting revision
 only, opt-out) are what keep the worst case bounded; the measurement decides whether more is
 needed.
+
+**Slice 2 measurement (2026-11-15).** Sample fixture: eight 1000×500×10 plates, four stacked
+in two layers so that twelve pairs penetrate (the #559 joint shape at small scale); unoptimized
+debug build, Apple Silicon. Whole-command wall time of `check-model` on the committed head:
+1.2–1.7 s over three runs, dominated by the strict reader's revision verification and layer
+parse that every read command performs; the contact decisions themselves are in the tens of
+milliseconds for this fixture (12 pairs, 12 triangles per body, box-pruned candidate pairs,
+exact-predicate fallbacks far below the budget). No budget or pair cap was hit. The numbers are
+a debug-build lower bound on useful work, not a release-build promise; slice 5 re-measures on
+the sample fixture before shipping write-reply summaries.
 
 ## 12. Sample fixture (acceptance seeds)
 

@@ -13,6 +13,7 @@ mod blobs;
 mod bolt;
 mod bom;
 mod changeset;
+mod checks;
 mod commands;
 mod construction;
 mod coordination;
@@ -94,6 +95,7 @@ const SECTIONS: &[&str] = &[
     view_export::HELP,
     view_export::SCREENSHOT_HELP,
     bom::HELP,
+    checks::HELP,
     schedules::HELP,
     store::HELP,
     drawing::DOCUMENTS,
@@ -115,6 +117,7 @@ pub(crate) fn for_family(family: &str) -> String {
         "blobs" => &[blobs::HELP],
         "bolt" => &[bolt::HELP],
         "bom" => &[bom::HELP],
+        "checks" => &[checks::HELP],
         "changeset" => &[changeset::HELP],
         "commands" => &[commands::HELP],
         "construction" => &[construction::HELP],

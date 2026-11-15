@@ -12,6 +12,7 @@
 pub mod bend;
 pub mod bolt;
 pub mod bolt_scene;
+pub mod check;
 pub mod command;
 pub mod committed;
 pub mod contour_edit;

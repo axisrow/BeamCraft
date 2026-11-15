@@ -1500,6 +1500,16 @@ write.
 export-bom --store ROOT --out FILE [--summary FILE]
 ```
 
+## checks
+
+### check-model
+
+read.
+
+```text
+check-model --store ROOT [--element UUID] [--offset N] [--limit N]
+```
+
 ## schedules
 
 ### schedule-export
