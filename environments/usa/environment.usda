@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "usa"
+        string "bim:environment:title" = "USA (ASTM A36, A992, A572 material grades)"
+        string[] "bim:environment:material-libraries" = ["materials-astm.usda"]
+    }
+)

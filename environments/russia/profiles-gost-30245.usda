@@ -1,12 +1,12 @@
 #usda 1.0
 (
-    doc = "BeamCraft Russia environment: cold-bent closed welded square and rectangular hollow sections of GOST 30245-2003, tables 1 and 2. The nominal dimensions, areas and masses are the published values of the public standard, re-entered by hand as our own data; no text or table is copied. Every row follows the corner geometry the standard fixes in its notes to tables 1 and 2: the outer corner radius is 2t up to 6 mm wall, 2.5t from 6 to 10 mm and 3t above 10 mm, and the inner radius is the outer radius minus the wall. The designation is the Latinized profile size (the authentic form of clause 3.9, for example «Профиль 60х60х3 ГОСТ 30245-2003»). This library carries the complete square series the 2003 standard publishes, sizes 40x40 to 300x300, and the rectangular series, sizes 50x25 to 400x200, entering in five height-band slices (this layer holds the rectangles with h up to 120 mm so far). Reference data for modelling; it is not a substitute for the standard itself."
+    doc = "BeamCraft Russia environment: cold-bent closed welded square and rectangular hollow sections of GOST 30245-2003, tables 1 and 2. The nominal dimensions, areas and masses are the published values of the public standard, re-entered by hand as our own data; no text or table is copied. Every row follows the corner geometry the standard fixes in its notes to tables 1 and 2: the outer corner radius is 2t up to 6 mm wall, 2.5t from 6 to 10 mm and 3t above 10 mm, and the inner radius is the outer radius minus the wall. The designation is the Latinized profile size (the authentic form of clause 3.9, for example «Профиль 60х60х3 ГОСТ 30245-2003»). This library carries the complete square series the 2003 standard publishes, sizes 40x40 to 300x300, and the rectangular series, sizes 50x25 to 400x200, entering in five height-band slices (this layer holds the rectangles with h up to 160 mm so far). Reference data for modelling; it is not a substitute for the standard itself."
     metersPerUnit = 0.001
     upAxis = "Z"
     customLayerData = {
         string "bim:library:id" = "russia-gost-30245-profiles"
         string "bim:library:title" = "Russia cold-bent closed sections (GOST 30245-2003: the complete square series, 40x40 to 300x300; the rectangular series 50x25 to 400x200 by height bands)"
-        string "bim:library:version" = "4"
+        string "bim:library:version" = "5"
         string "bim:library:source" = "Dimensional facts of GOST 30245-2003 tables 1 and 2, re-entered by hand as our own data; cross-checked between three scans (meganorm.ru text, files.stroyinf.ru typeset, splav-kharkov.com raster); no table copied"
         string "bim:library:licence" = "MPL-2.0"
     }
@@ -3926,6 +3926,955 @@ def Scope "Library"
             double steel:profile:rMm = 17.5
             double steel:profile:areaMm2 = 2436
             double steel:profile:massPerMeterKg = 19.12
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x3"
+        {
+            string steel:profile:designation = "140x60x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 1141
+            double steel:profile:massPerMeterKg = 8.96
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x3_5"
+        {
+            string steel:profile:designation = "140x60x3.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 3.5
+            double steel:profile:rMm = 7
+            double steel:profile:areaMm2 = 1319
+            double steel:profile:massPerMeterKg = 10.36
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x4"
+        {
+            string steel:profile:designation = "140x60x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1495
+            double steel:profile:massPerMeterKg = 11.73
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x4_5"
+        {
+            string steel:profile:designation = "140x60x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 1667
+            double steel:profile:massPerMeterKg = 13.08
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x5"
+        {
+            string steel:profile:designation = "140x60x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1836
+            double steel:profile:massPerMeterKg = 14.41
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x5_5"
+        {
+            string steel:profile:designation = "140x60x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2001
+            double steel:profile:massPerMeterKg = 15.71
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x6"
+        {
+            string steel:profile:designation = "140x60x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2163
+            double steel:profile:massPerMeterKg = 16.98
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x6_5"
+        {
+            string steel:profile:designation = "140x60x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 2286
+            double steel:profile:massPerMeterKg = 17.94
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x60x7"
+        {
+            string steel:profile:designation = "140x60x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 2436
+            double steel:profile:massPerMeterKg = 19.12
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x100x4"
+        {
+            string steel:profile:designation = "140x100x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1815
+            double steel:profile:massPerMeterKg = 14.25
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x100x4_5"
+        {
+            string steel:profile:designation = "140x100x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2027
+            double steel:profile:massPerMeterKg = 15.91
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x100x5"
+        {
+            string steel:profile:designation = "140x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2236
+            double steel:profile:massPerMeterKg = 17.55
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x100x5_5"
+        {
+            string steel:profile:designation = "140x100x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2441
+            double steel:profile:massPerMeterKg = 19.16
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x100x6"
+        {
+            string steel:profile:designation = "140x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2643
+            double steel:profile:massPerMeterKg = 20.75
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x100x6_5"
+        {
+            string steel:profile:designation = "140x100x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 2806
+            double steel:profile:massPerMeterKg = 22.03
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x100x7"
+        {
+            string steel:profile:designation = "140x100x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 2996
+            double steel:profile:massPerMeterKg = 23.52
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x4"
+        {
+            string steel:profile:designation = "140x120x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1975
+            double steel:profile:massPerMeterKg = 15.5
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x4_5"
+        {
+            string steel:profile:designation = "140x120x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2207
+            double steel:profile:massPerMeterKg = 17.32
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x5"
+        {
+            string steel:profile:designation = "140x120x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2436
+            double steel:profile:massPerMeterKg = 19.12
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x5_5"
+        {
+            string steel:profile:designation = "140x120x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2661
+            double steel:profile:massPerMeterKg = 20.89
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x6"
+        {
+            string steel:profile:designation = "140x120x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2883
+            double steel:profile:massPerMeterKg = 22.63
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x6_5"
+        {
+            string steel:profile:designation = "140x120x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 3066
+            double steel:profile:massPerMeterKg = 24.07
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x7"
+        {
+            string steel:profile:designation = "140x120x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 3276
+            double steel:profile:massPerMeterKg = 25.71
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x7_5"
+        {
+            string steel:profile:designation = "140x120x7.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 7.5
+            double steel:profile:rMm = 18.75
+            double steel:profile:areaMm2 = 3482
+            double steel:profile:massPerMeterKg = 27.33
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_140x120x8"
+        {
+            string steel:profile:designation = "140x120x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 3684
+            double steel:profile:massPerMeterKg = 28.92
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_150x100x4"
+        {
+            string steel:profile:designation = "150x100x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1895
+            double steel:profile:massPerMeterKg = 14.87
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_150x100x4_5"
+        {
+            string steel:profile:designation = "150x100x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2117
+            double steel:profile:massPerMeterKg = 16.62
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_150x100x5"
+        {
+            string steel:profile:designation = "150x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2336
+            double steel:profile:massPerMeterKg = 18.33
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_150x100x5_5"
+        {
+            string steel:profile:designation = "150x100x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2551
+            double steel:profile:massPerMeterKg = 20.03
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_150x100x6"
+        {
+            string steel:profile:designation = "150x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2763
+            double steel:profile:massPerMeterKg = 21.69
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_150x100x6_5"
+        {
+            string steel:profile:designation = "150x100x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 2936
+            double steel:profile:massPerMeterKg = 23.05
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_150x100x7"
+        {
+            string steel:profile:designation = "150x100x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 3136
+            double steel:profile:massPerMeterKg = 24.62
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x3"
+        {
+            string steel:profile:designation = "160x40x3"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 3
+            double steel:profile:rMm = 6
+            double steel:profile:areaMm2 = 1141
+            double steel:profile:massPerMeterKg = 8.96
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x3_5"
+        {
+            string steel:profile:designation = "160x40x3.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 3.5
+            double steel:profile:rMm = 7
+            double steel:profile:areaMm2 = 1319
+            double steel:profile:massPerMeterKg = 10.36
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x4"
+        {
+            string steel:profile:designation = "160x40x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1495
+            double steel:profile:massPerMeterKg = 11.73
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x4_5"
+        {
+            string steel:profile:designation = "160x40x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 1667
+            double steel:profile:massPerMeterKg = 13.08
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x5"
+        {
+            string steel:profile:designation = "160x40x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 1836
+            double steel:profile:massPerMeterKg = 14.41
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x5_5"
+        {
+            string steel:profile:designation = "160x40x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2001
+            double steel:profile:massPerMeterKg = 15.71
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x6"
+        {
+            string steel:profile:designation = "160x40x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2163
+            double steel:profile:massPerMeterKg = 16.98
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x6_5"
+        {
+            string steel:profile:designation = "160x40x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 2286
+            double steel:profile:massPerMeterKg = 17.94
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x40x7"
+        {
+            string steel:profile:designation = "160x40x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 40
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 2436
+            double steel:profile:massPerMeterKg = 19.12
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x80x4"
+        {
+            string steel:profile:designation = "160x80x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1815
+            double steel:profile:massPerMeterKg = 14.25
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x80x4_5"
+        {
+            string steel:profile:designation = "160x80x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2027
+            double steel:profile:massPerMeterKg = 15.91
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x80x5"
+        {
+            string steel:profile:designation = "160x80x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2236
+            double steel:profile:massPerMeterKg = 17.55
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x80x5_5"
+        {
+            string steel:profile:designation = "160x80x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2441
+            double steel:profile:massPerMeterKg = 19.16
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x80x6"
+        {
+            string steel:profile:designation = "160x80x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2643
+            double steel:profile:massPerMeterKg = 20.75
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x80x6_5"
+        {
+            string steel:profile:designation = "160x80x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 2806
+            double steel:profile:massPerMeterKg = 22.03
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x80x7"
+        {
+            string steel:profile:designation = "160x80x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 80
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 2996
+            double steel:profile:massPerMeterKg = 23.52
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x4"
+        {
+            string steel:profile:designation = "160x100x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1975
+            double steel:profile:massPerMeterKg = 15.5
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x4_5"
+        {
+            string steel:profile:designation = "160x100x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2207
+            double steel:profile:massPerMeterKg = 17.32
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x5"
+        {
+            string steel:profile:designation = "160x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2436
+            double steel:profile:massPerMeterKg = 19.12
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x5_5"
+        {
+            string steel:profile:designation = "160x100x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2661
+            double steel:profile:massPerMeterKg = 20.89
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x6"
+        {
+            string steel:profile:designation = "160x100x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 2883
+            double steel:profile:massPerMeterKg = 22.63
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x6_5"
+        {
+            string steel:profile:designation = "160x100x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 3066
+            double steel:profile:massPerMeterKg = 24.07
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x7"
+        {
+            string steel:profile:designation = "160x100x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 3276
+            double steel:profile:massPerMeterKg = 25.71
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x7_5"
+        {
+            string steel:profile:designation = "160x100x7.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 7.5
+            double steel:profile:rMm = 18.75
+            double steel:profile:areaMm2 = 3482
+            double steel:profile:massPerMeterKg = 27.33
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x100x8"
+        {
+            string steel:profile:designation = "160x100x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 3684
+            double steel:profile:massPerMeterKg = 28.92
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x4"
+        {
+            string steel:profile:designation = "160x120x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 2135
+            double steel:profile:massPerMeterKg = 16.76
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x4_5"
+        {
+            string steel:profile:designation = "160x120x4.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 4.5
+            double steel:profile:rMm = 9
+            double steel:profile:areaMm2 = 2387
+            double steel:profile:massPerMeterKg = 18.74
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x5"
+        {
+            string steel:profile:designation = "160x120x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2636
+            double steel:profile:massPerMeterKg = 20.69
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x5_5"
+        {
+            string steel:profile:designation = "160x120x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 2881
+            double steel:profile:massPerMeterKg = 22.62
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x6"
+        {
+            string steel:profile:designation = "160x120x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3123
+            double steel:profile:massPerMeterKg = 24.52
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x6_5"
+        {
+            string steel:profile:designation = "160x120x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 3326
+            double steel:profile:massPerMeterKg = 26.11
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x7"
+        {
+            string steel:profile:designation = "160x120x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 3556
+            double steel:profile:massPerMeterKg = 27.91
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x7_5"
+        {
+            string steel:profile:designation = "160x120x7.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 7.5
+            double steel:profile:rMm = 18.75
+            double steel:profile:areaMm2 = 3782
+            double steel:profile:massPerMeterKg = 29.69
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x120x8"
+        {
+            string steel:profile:designation = "160x120x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 120
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 4004
+            double steel:profile:massPerMeterKg = 31.43
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x140x5"
+        {
+            string steel:profile:designation = "160x140x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 2836
+            double steel:profile:massPerMeterKg = 22.26
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x140x5_5"
+        {
+            string steel:profile:designation = "160x140x5.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 5.5
+            double steel:profile:rMm = 11
+            double steel:profile:areaMm2 = 3101
+            double steel:profile:massPerMeterKg = 24.34
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x140x6"
+        {
+            string steel:profile:designation = "160x140x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+            double steel:profile:areaMm2 = 3363
+            double steel:profile:massPerMeterKg = 26.4
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x140x6_5"
+        {
+            string steel:profile:designation = "160x140x6.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 16.25
+            double steel:profile:areaMm2 = 3586
+            double steel:profile:massPerMeterKg = 28.15
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x140x7"
+        {
+            string steel:profile:designation = "160x140x7"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 17.5
+            double steel:profile:areaMm2 = 3836
+            double steel:profile:massPerMeterKg = 30.11
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x140x7_5"
+        {
+            string steel:profile:designation = "160x140x7.5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 7.5
+            double steel:profile:rMm = 18.75
+            double steel:profile:areaMm2 = 4082
+            double steel:profile:massPerMeterKg = 32.04
+            string steel:profile:standard = "GOST 30245-2003"
+        }
+
+        def Scope "R_160x140x8"
+        {
+            string steel:profile:designation = "160x140x8"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 140
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 4324
+            double steel:profile:massPerMeterKg = 33.95
             string steel:profile:standard = "GOST 30245-2003"
         }
     }

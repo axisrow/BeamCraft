@@ -2530,6 +2530,117 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_usa_astm_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/materials-astm.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "usa-astm-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 7);
+        // The grades of the three standards in the loader's designation order: the single
+        // A36, the five A572 strength grades (42 to 65, the grade number the minimum yield
+        // strength in ksi) with the Grade word the standard designates with, and the W-shape
+        // grade A992. The standards are the consulted editions; the density is the metric
+        // 7850 kg/m3 of every shipped pack.
+        let a36 = "ASTM A36/A36M-19";
+        let a992 = "ASTM A992/A992M-22";
+        let a572 = "ASTM A572/A572M-21";
+        let expected: [(&str, &str); 7] = [
+            ("A36", a36),
+            ("A572 Grade 42", a572),
+            ("A572 Grade 50", a572),
+            ("A572 Grade 55", a572),
+            ("A572 Grade 60", a572),
+            ("A572 Grade 65", a572),
+            ("A992", a992),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_usa_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
+        // The environment carries no profile or fastener libraries: the USA profile pack waits
+        // on the #649 provenance audit, so the material listing is the whole environment.
+        assert_eq!(environment.sources.len(), 0);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "usa-astm-materials");
+        assert_eq!(materials.library.entries.len(), 7);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, grade_50) = lookup.find("A572 Grade 50").unwrap();
+        assert_eq!(source.library.info.id, "usa-astm-materials");
+        assert!(matches!(
+            &grade_50.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("ASTM A572/A572M-21")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare grade
+        // number, no hyphenated or compact industry shorthand (the shipped form is the
+        // standard's own Grade form), no lowercase, no grade outside the standard's set and
+        // no grade of another specification.
+        for absent in [
+            "A572",
+            "A572-50",
+            "A572Gr50",
+            "A36M",
+            "a992",
+            "A572 Grade 70",
+            "A500",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
@@ -2756,7 +2867,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "russia-gost-30245-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("4"));
+        assert_eq!(library.info.version.as_deref(), Some("5"));
         assert!(
             library
                 .info
@@ -2775,7 +2886,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 301);
+        assert_eq!(library.entries.len(), 374);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -3133,6 +3244,79 @@ mod tests {
             "120x80x6",
             "120x80x6.5",
             "120x80x7",
+            "140x60x3",
+            "140x60x3.5",
+            "140x60x4",
+            "140x60x4.5",
+            "140x60x5",
+            "140x60x5.5",
+            "140x60x6",
+            "140x60x6.5",
+            "140x60x7",
+            "140x100x4",
+            "140x100x4.5",
+            "140x100x5",
+            "140x100x5.5",
+            "140x100x6",
+            "140x100x6.5",
+            "140x100x7",
+            "140x120x4",
+            "140x120x4.5",
+            "140x120x5",
+            "140x120x5.5",
+            "140x120x6",
+            "140x120x6.5",
+            "140x120x7",
+            "140x120x7.5",
+            "140x120x8",
+            "150x100x4",
+            "150x100x4.5",
+            "150x100x5",
+            "150x100x5.5",
+            "150x100x6",
+            "150x100x6.5",
+            "150x100x7",
+            "160x40x3",
+            "160x40x3.5",
+            "160x40x4",
+            "160x40x4.5",
+            "160x40x5",
+            "160x40x5.5",
+            "160x40x6",
+            "160x40x6.5",
+            "160x40x7",
+            "160x80x4",
+            "160x80x4.5",
+            "160x80x5",
+            "160x80x5.5",
+            "160x80x6",
+            "160x80x6.5",
+            "160x80x7",
+            "160x100x4",
+            "160x100x4.5",
+            "160x100x5",
+            "160x100x5.5",
+            "160x100x6",
+            "160x100x6.5",
+            "160x100x7",
+            "160x100x7.5",
+            "160x100x8",
+            "160x120x4",
+            "160x120x4.5",
+            "160x120x5",
+            "160x120x5.5",
+            "160x120x6",
+            "160x120x6.5",
+            "160x120x7",
+            "160x120x7.5",
+            "160x120x8",
+            "160x140x5",
+            "160x140x5.5",
+            "160x140x6",
+            "160x140x6.5",
+            "160x140x7",
+            "160x140x7.5",
+            "160x140x8",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -3192,6 +3376,13 @@ mod tests {
         spot("90x60x6.5", [90.0, 60.0, 6.5, 16.25], 1636.0, 12.84);
         spot("100x40x7", [100.0, 40.0, 7.0, 17.5], 1596.0, 12.53);
         spot("120x80x7", [120.0, 80.0, 7.0, 17.5], 2436.0, 19.12);
+        // Band 3 spots: the band opener, the widest group's top wall at the 2.5t radius
+        // band, and the tall-thin 160x40 pair against the scans.
+        spot("140x60x3", [140.0, 60.0, 3.0, 6.0], 1141.0, 8.96);
+        spot("140x120x5", [140.0, 120.0, 5.0, 10.0], 2436.0, 19.12);
+        spot("150x100x4", [150.0, 100.0, 4.0, 8.0], 1895.0, 14.87);
+        spot("160x40x7", [160.0, 40.0, 7.0, 17.5], 2436.0, 19.12);
+        spot("160x120x8", [160.0, 120.0, 8.0, 20.0], 4004.0, 31.43);
         // Designations the standard does not publish are NOT_FOUND, never a near match:
         // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
         // published thickness range. The Cyrillic authenticity form is not a lookup key.
@@ -3239,6 +3430,15 @@ mod tests {
             "100x40x2.5",
             "110x60x4",
             "120x80x7.5",
+            // Band 3 facts table 2 does not publish: the 140x60 wall range ends at 7 mm,
+            // the 140x100 and 150x100 ranges end at 7 mm too, the 160x40 range opens at
+            // 3 mm, and neither a 140x80 nor a 170x100 group exists.
+            "140x60x7.5",
+            "140x100x7.5",
+            "150x100x7.5",
+            "160x40x2.5",
+            "140x80x4",
+            "170x100x5",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,

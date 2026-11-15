@@ -1,0 +1,62 @@
+#usda 1.0
+(
+    doc = "BeamCraft USA structural steel grades: the construction steel grades of ASTM A36/A36M-19 (carbon structural steel: shapes, plates and bars), ASTM A992/A992M-22 (structural steel shapes, the W-shape grade) and ASTM A572/A572M-21 (high-strength low-alloy columbium-vanadium structural steel, the complete grade set of its five strength grades 42, 50, 55, 60 and 65, where the grade number is the minimum yield strength in ksi). The designations are the standard's own forms; A572 carries the Grade word the standard designates with. Re-entered by hand as our own data; no text or table is copied from the standards. The density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1), carried in metric as the issue requires. Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "usa-astm-materials"
+        string "bim:library:title" = "ASTM structural steel grades (A36, A992, A572)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standards ASTM A36/A36M-19, A992/A992M-22 and A572/A572M-21 grade designations, re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "A36"
+        {
+            string steel:material:grade = "A36"
+            string steel:material:standard = "ASTM A36/A36M-19"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A572_Grade_42"
+        {
+            string steel:material:grade = "A572 Grade 42"
+            string steel:material:standard = "ASTM A572/A572M-21"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A572_Grade_50"
+        {
+            string steel:material:grade = "A572 Grade 50"
+            string steel:material:standard = "ASTM A572/A572M-21"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A572_Grade_55"
+        {
+            string steel:material:grade = "A572 Grade 55"
+            string steel:material:standard = "ASTM A572/A572M-21"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A572_Grade_60"
+        {
+            string steel:material:grade = "A572 Grade 60"
+            string steel:material:standard = "ASTM A572/A572M-21"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A572_Grade_65"
+        {
+            string steel:material:grade = "A572 Grade 65"
+            string steel:material:standard = "ASTM A572/A572M-21"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A992"
+        {
+            string steel:material:grade = "A992"
+            string steel:material:standard = "ASTM A992/A992M-22"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}

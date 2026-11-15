@@ -135,7 +135,10 @@ fn library_list(items: &[Value], seen: &mut Vec<String>) -> Result<Vec<String>, 
 /// optional `bim:environment:title`, `bim:environment:libraries`, a non-empty ordered list of
 /// contained relative profile-library paths, and optionally
 /// `bim:environment:fastener-libraries` and `bim:environment:material-libraries`, the same kind
-/// of list for the environment's fastener and material libraries; all are strongest first. A list
+/// of list for the environment's fastener and material libraries; all are strongest first. A
+/// region whose profile pack has not shipped yet may declare the material libraries alone: the
+/// profile list is optional exactly when a material library is declared, so a grades-only
+/// environment is admitted while a completely empty one is still refused. A list
 /// entry that is not contained is `PERMISSION_DENIED` and more than 32 libraries in one list is
 /// `LIMIT_EXCEEDED`; anything else malformed is `INVALID_ARGUMENT`. (The layer engine does not
 /// expose composition arcs, and composing the libraries as sublayers would merge entries instead
@@ -170,6 +173,9 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
     let mut seen = Vec::new();
     let libraries = match data.get("bim:environment:libraries") {
         Some(Value::Array(items)) => library_list(items, &mut seen)?,
+        // A grades-only region (#648) declares material libraries and no profile pack yet; an
+        // environment with neither list stays refused.
+        None if data.contains_key("bim:environment:material-libraries") => Vec::new(),
         _ => return Err(invalid("the environment lists no libraries")),
     };
     let fastener_libraries = match data.get("bim:environment:fastener-libraries") {
@@ -474,6 +480,29 @@ mod tests {
         assert_eq!(info.id, "steel");
         assert_eq!(info.libraries, ["a.usda", "sub/b.usda"]);
         assert_eq!(info.title, None);
+    }
+
+    #[test]
+    fn a_grades_only_environment_declares_material_libraries_alone() {
+        // A region whose profile pack has not shipped yet (#648): the material list is the
+        // whole environment, no profile or fastener list at all.
+        let declared = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n        string \"bim:environment:id\" = \"usa\"\n        string[] \"bim:environment:material-libraries\" = [\"grades.usda\"]\n    }\n)\n";
+        let info = parse_environment(declared.as_bytes().to_vec()).unwrap();
+        assert_eq!(info.id, "usa");
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(info.libraries, empty);
+        assert_eq!(info.fastener_libraries, empty);
+        assert_eq!(info.material_libraries, ["grades.usda"]);
+
+        // An environment with neither a profile list nor a material list is still refused:
+        // grades-only is a choice, empty is a mistake.
+        let empty = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n        string \"bim:environment:id\" = \"void\"\n    }\n)\n";
+        let refused = parse_environment(empty.as_bytes().to_vec()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("no libraries"),
+            "the empty environment is named: {refused:?}"
+        );
     }
 
     #[test]
