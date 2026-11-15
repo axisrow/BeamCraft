@@ -2253,6 +2253,283 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_russia_gost_30245_squares_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/russia/profiles-gost-30245.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "russia-gost-30245-squares");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 115);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::Rhs);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("GOST 30245-2003"),
+                "{}",
+                entry.designation
+            );
+            // The exact per-row validator: the declared radius carries the standard's corner
+            // rule (notes to tables 1 and 2: R = 2t up to 6 mm wall, 2.5t from 6 to 10 mm,
+            // 3t above 10 mm), so the closed-form area of the declared dimensions must
+            // reproduce the declared catalogue area within the table's print rounding (two
+            // decimals below 100 cm2, one decimal at and above it), and the declared mass
+            // must be that closed-form area at the standard's 0.785 kg per m per cm2.
+            let values = parametric.values();
+            let [h, b, t, r] = [values[0], values[1], values[2], values[3]];
+            assert_eq!(h, b, "{}: a square is square", entry.designation);
+            let area_exact_mm2 = h * h
+                - (h - 2.0 * t) * (h - 2.0 * t)
+                - (4.0 - std::f64::consts::PI) * t * (2.0 * r - t);
+            let declared = section.area_mm2.unwrap();
+            let area_tolerance = if declared < 10_000.0 { 0.5 } else { 5.0 };
+            assert!(
+                (declared - area_exact_mm2).abs() <= area_tolerance,
+                "{}: declared area {declared} mm2 vs closed form {area_exact_mm2}",
+                entry.designation
+            );
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = 0.785 * area_exact_mm2 / 100.0;
+            let mass_tolerance = if mass < 100.0 { 0.011 } else { 0.055 };
+            assert!(
+                (mass - mass_from_area).abs() <= mass_tolerance,
+                "{}: mass {mass} kg/m vs 0.785*A {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The 60 to 200 mm band of table 1 exactly as GOST 30245-2003 publishes it: sizes
+        // 60, 70, 80, 90, 100, 120, 140, 150, 160, 180 and 200, each with its published wall
+        // thicknesses in 0.5 mm steps. The 40 and 50 mm squares and the 250 and 300 mm
+        // squares of the same table ship in further slices.
+        let mut expected = vec![
+            "60x60x2",
+            "60x60x2.5",
+            "60x60x3",
+            "60x60x3.5",
+            "60x60x4",
+            "60x60x4.5",
+            "60x60x5",
+            "60x60x5.5",
+            "60x60x6",
+            "70x70x2",
+            "70x70x2.5",
+            "70x70x3",
+            "70x70x3.5",
+            "70x70x4",
+            "70x70x4.5",
+            "70x70x5",
+            "70x70x5.5",
+            "70x70x6",
+            "70x70x6.5",
+            "70x70x7",
+            "80x80x3",
+            "80x80x3.5",
+            "80x80x4",
+            "80x80x4.5",
+            "80x80x5",
+            "80x80x5.5",
+            "80x80x6",
+            "80x80x6.5",
+            "80x80x7",
+            "80x80x7.5",
+            "80x80x8",
+            "90x90x3",
+            "90x90x3.5",
+            "90x90x4",
+            "90x90x4.5",
+            "90x90x5",
+            "90x90x5.5",
+            "90x90x6",
+            "90x90x6.5",
+            "90x90x7",
+            "90x90x7.5",
+            "90x90x8",
+            "100x100x3",
+            "100x100x3.5",
+            "100x100x4",
+            "100x100x4.5",
+            "100x100x5",
+            "100x100x5.5",
+            "100x100x6",
+            "100x100x6.5",
+            "100x100x7",
+            "100x100x7.5",
+            "100x100x8",
+            "120x120x3",
+            "120x120x3.5",
+            "120x120x4",
+            "120x120x4.5",
+            "120x120x5",
+            "120x120x5.5",
+            "120x120x6",
+            "120x120x6.5",
+            "120x120x7",
+            "120x120x7.5",
+            "120x120x8",
+            "140x140x4",
+            "140x140x4.5",
+            "140x140x5",
+            "140x140x5.5",
+            "140x140x6",
+            "140x140x6.5",
+            "140x140x7",
+            "140x140x7.5",
+            "140x140x8",
+            "150x150x4",
+            "150x150x4.5",
+            "150x150x5",
+            "150x150x5.5",
+            "150x150x6",
+            "150x150x6.5",
+            "150x150x7",
+            "150x150x7.5",
+            "150x150x8",
+            "160x160x4",
+            "160x160x4.5",
+            "160x160x5",
+            "160x160x5.5",
+            "160x160x6",
+            "160x160x6.5",
+            "160x160x7",
+            "160x160x7.5",
+            "160x160x8",
+            "180x180x5",
+            "180x180x5.5",
+            "180x180x6",
+            "180x180x6.5",
+            "180x180x7",
+            "180x180x7.5",
+            "180x180x8",
+            "180x180x8.5",
+            "180x180x9",
+            "180x180x9.5",
+            "180x180x10",
+            "200x200x6",
+            "200x200x6.5",
+            "200x200x7",
+            "200x200x7.5",
+            "200x200x8",
+            "200x200x8.5",
+            "200x200x9",
+            "200x200x9.5",
+            "200x200x10",
+            "200x200x10.5",
+            "200x200x11",
+            "200x200x11.5",
+            "200x200x12",
+        ];
+        expected.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values, including the three cells where the
+        // scans' printed area/mass contradict the print's own m = 0.785*A relation and the
+        // closed form; the library carries the relation's value there.
+        let spot = |designation: &str, values: [f64; 4], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("60x60x3", [60.0, 60.0, 3.0, 6.0], 661.0, 5.19);
+        // The row the stroyinf typeset drops (its 70x70 group steps 5.0 to 6.0); the raster
+        // and the text scans carry it and the closed form confirms it.
+        spot("70x70x5.5", [70.0, 70.0, 5.5, 11.0], 1341.0, 10.53);
+        // The scans print area 17.86 while their own mass 13.86 is 0.785 * 17.66, and no
+        // published corner radius reproduces 17.86; the library carries 17.66.
+        spot("80x80x6.5", [80.0, 80.0, 6.5, 16.25], 1766.0, 13.86);
+        spot("100x100x7.5", [100.0, 100.0, 7.5, 18.75], 2582.0, 20.27);
+        // The scans print area 25.47 while their own mass 20.15 is 0.785 * 25.67 and the
+        // printed Ix 896.1 cm4 matches 25.67 too; the library carries 25.67.
+        spot("150x150x4.5", [150.0, 150.0, 4.5, 9.0], 2567.0, 20.15);
+        // The scans print mass 24.54 where 0.785 times their own printed area 31.01 gives
+        // 24.34; the library carries 24.34.
+        spot("150x150x5.5", [150.0, 150.0, 5.5, 11.0], 3101.0, 24.34);
+        spot("200x200x12", [200.0, 200.0, 12.0, 36.0], 8406.0, 65.99);
+        // Designations the standard does not publish are NOT_FOUND, never a near match:
+        // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
+        // published thickness range. The Cyrillic authenticity form is not a lookup key.
+        for absent in [
+            "65x65x4",
+            "110x110x5",
+            "130x130x5",
+            "170x170x6",
+            "210x210x8",
+            "220x220x10",
+            "240x240x10",
+            "260x260x8",
+            "280x280x10",
+            "60x60x6.5",
+            "70x70x7.5",
+            "80x80x8.5",
+            "100x100x8.5",
+            "120x120x8.5",
+            "140x140x3.5",
+            "140x140x8.5",
+            "150x150x8.5",
+            "160x160x8.5",
+            "180x180x4.5",
+            "180x180x10.5",
+            "200x200x5.5",
+            "200x200x12.5",
+            "60х60х3",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+        // Rows the standard publishes but this slice does not ship yet: the 40 and 50 mm
+        // squares and the 250 and 300 mm squares.
+        for not_yet in ["40x40x4", "50x50x2", "250x250x6", "300x300x12"] {
+            assert_eq!(
+                library.entry(not_yet).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{not_yet} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
     fn the_shipped_australia_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
