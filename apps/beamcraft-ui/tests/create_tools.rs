@@ -538,7 +538,10 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
         .iter()
         .filter(|c| !c.digest.starts_with(BY_NAME))
         .count();
-    assert_eq!(defined, 1, "the store defines one profile; the rest is the neutral offer");
+    assert_eq!(
+        defined, 1,
+        "the store defines one profile; the rest is the neutral offer"
+    );
     assert!(definitions.materials.is_empty());
     // One process and one inspection read the snapshot and the definitions (issue 26).
     assert_eq!(full.timing.processes, 1);
