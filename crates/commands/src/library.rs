@@ -2646,14 +2646,14 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_russia_gost_30245_squares_library_reads_with_every_entry_admitted() {
+    fn the_shipped_russia_gost_30245_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../environments/russia/profiles-gost-30245.usda"
         );
         let library = load(path).unwrap();
-        assert_eq!(library.info.id, "russia-gost-30245-squares");
-        assert_eq!(library.info.version.as_deref(), Some("2"));
+        assert_eq!(library.info.id, "russia-gost-30245-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("3"));
         assert!(
             library
                 .info
@@ -2672,7 +2672,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 155);
+        assert_eq!(library.entries.len(), 229);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -2697,9 +2697,9 @@ mod tests {
             // must be that closed-form area at the standard's 0.785 kg per m per cm2.
             let values = parametric.values();
             let [h, b, t, r] = [values[0], values[1], values[2], values[3]];
-            assert_eq!(h, b, "{}: a square is square", entry.designation);
-            let area_exact_mm2 = h * h
-                - (h - 2.0 * t) * (h - 2.0 * t)
+            assert!(h >= b, "{}: the tables publish h >= b", entry.designation);
+            let area_exact_mm2 = h * b
+                - (h - 2.0 * t) * (b - 2.0 * t)
                 - (4.0 - std::f64::consts::PI) * t * (2.0 * r - t);
             let declared = section.area_mm2.unwrap();
             let area_tolerance = if declared < 10_000.0 { 0.5 } else { 5.0 };
@@ -2723,9 +2723,11 @@ mod tests {
             );
             designations.push(entry.designation.clone());
         }
-        // Table 1 exactly as GOST 30245-2003 publishes it: the complete square series, sizes
-        // 40, 50, 60, 70, 80, 90, 100, 120, 140, 150, 160, 180, 200, 250 and 300, each with
-        // its published wall thicknesses in 0.5 mm steps.
+        // Tables 1 and 2 exactly as GOST 30245-2003 publishes them: the complete square
+        // series (table 1, sizes 40, 50, 60, 70, 80, 90, 100, 120, 140, 150, 160, 180, 200,
+        // 250 and 300) and the rectangular series (table 2) entering by height bands, this
+        // layer carrying the table 2 groups with h up to 80 mm, each group with its published
+        // wall thicknesses in 0.5 mm steps.
         let mut expected = vec![
             "40x40x2",
             "40x40x2.5",
@@ -2882,6 +2884,80 @@ mod tests {
             "300x300x11",
             "300x300x11.5",
             "300x300x12",
+            "50x25x2",
+            "50x25x2.5",
+            "50x25x3",
+            "50x25x3.5",
+            "50x25x4",
+            "50x30x2",
+            "50x30x2.5",
+            "50x30x3",
+            "50x30x3.5",
+            "50x30x4",
+            "50x30x5",
+            "50x40x2",
+            "50x40x2.5",
+            "50x40x3",
+            "50x40x3.5",
+            "50x40x4",
+            "50x40x4.5",
+            "50x40x5",
+            "60x30x2",
+            "60x30x2.5",
+            "60x30x3",
+            "60x30x3.5",
+            "60x30x4",
+            "60x30x4.5",
+            "60x30x5",
+            "60x30x5.5",
+            "60x30x6",
+            "60x40x2",
+            "60x40x2.5",
+            "60x40x3",
+            "60x40x3.5",
+            "60x40x4",
+            "60x40x4.5",
+            "60x40x5",
+            "60x40x5.5",
+            "60x40x6",
+            "70x50x2",
+            "70x50x2.5",
+            "70x50x3",
+            "70x50x3.5",
+            "70x50x4",
+            "70x50x4.5",
+            "70x50x5",
+            "70x50x5.5",
+            "70x50x6",
+            "80x40x2",
+            "80x40x2.5",
+            "80x40x3",
+            "80x40x3.5",
+            "80x40x4",
+            "80x40x4.5",
+            "80x40x5",
+            "80x40x5.5",
+            "80x40x6",
+            "80x60x2",
+            "80x60x2.5",
+            "80x60x3",
+            "80x60x3.5",
+            "80x60x4",
+            "80x60x4.5",
+            "80x60x5",
+            "80x60x5.5",
+            "80x60x6",
+            "80x60x6.5",
+            "80x60x7",
+            "80x70x3",
+            "80x70x3.5",
+            "80x70x4",
+            "80x70x4.5",
+            "80x70x5",
+            "80x70x5.5",
+            "80x70x6",
+            "80x70x6.5",
+            "80x70x7",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -2926,6 +3002,14 @@ mod tests {
         // print with one decimal.
         spot("250x250x11.5", [250.0, 250.0, 11.5, 34.5], 10400.0, 81.67);
         spot("300x300x12", [300.0, 300.0, 12.0, 36.0], 13210.0, 103.7);
+        // The rectangular band spots against the transcribed values: the smallest row,
+        // the 50x30 wall range that steps over 4.5 mm, the 80x60 top wall at the 2.5t
+        // radius band, and the 80x70 row only the raster scan prints cleanly.
+        spot("50x25x2", [50.0, 25.0, 2.0, 4.0], 274.0, 2.15);
+        spot("50x25x4", [50.0, 25.0, 4.0, 8.0], 495.0, 3.88);
+        spot("50x30x5", [50.0, 30.0, 5.0, 10.0], 636.0, 4.99);
+        spot("80x60x7", [80.0, 60.0, 7.0, 17.5], 1596.0, 12.53);
+        spot("80x70x5", [80.0, 70.0, 5.0, 10.0], 1336.0, 10.48);
         // Designations the standard does not publish are NOT_FOUND, never a near match:
         // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
         // published thickness range. The Cyrillic authenticity form is not a lookup key.
@@ -2953,6 +3037,19 @@ mod tests {
             "200x200x5.5",
             "200x200x12.5",
             "60х60х3",
+            // Rectangular facts table 2 does not publish: no 90x40, 150x75, 180x120,
+            // 200x140 or 260x140 group; the 50x30 group steps over the 4.5 mm wall; and
+            // every published group keeps its printed wall range. The Cyrillic form is
+            // not a lookup key for a rectangle either.
+            "50x25x4.5",
+            "50x30x4.5",
+            "60x30x6.5",
+            "80x70x2.5",
+            "90x40x3",
+            "150x75x4",
+            "180x120x5",
+            "200x140x5",
+            "260x140x9.5",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
