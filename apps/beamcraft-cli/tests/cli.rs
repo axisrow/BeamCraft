@@ -14,6 +14,7 @@ mod a13;
 mod add_hole;
 mod alpha_scenario;
 mod alpha_scenario_expanded;
+mod appdata_settings;
 mod assemblies;
 mod attributes;
 mod australia_environment;

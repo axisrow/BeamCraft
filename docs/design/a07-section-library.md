@@ -197,9 +197,12 @@ library is refused when the library is loaded, and a shadowed designation is rep
 paths are local and contained (the U01 resolution rules); a network path is refused before any
 I/O, as for R01 references.
 
-**Where files live.** The application data directory holds `environments/` and `libraries/`;
-the active environment is a user setting. The CLI takes `--environment FILE` explicitly, never a
-hidden global, so tests and scripts are reproducible.
+**Where files live.** The application data directory (the settings directory) holds the user's
+`environments/` and `libraries/` folders beside `settings.json`; the built-in environments ship
+with the program. The active environment is the `environment` field of the settings, chosen in
+the start window; `create-project` seeds it when `--environment` is absent and the option stays
+the override. The inspection commands still name library and environment files explicitly, so
+tests and scripts are reproducible.
 
 **Untrusted input.** A library file is untrusted (`AGENTS.md` section 4): it is opened with the
 U01 bounded read (size, prim and stage budgets), every entry is admitted by its family rules, a
@@ -435,9 +438,13 @@ beamcraft add-library    --library FILE [--library-id ID [--title TEXT]] --desig
   `customLayerData` keeps the "strongest first" meaning, needs no engine change and stays an
   ordinary USD layer that any USD reader opens. If the owner prefers real sublayers, only
   `parse_environment` changes.
-* **No hidden global, no settings yet.** The active environment and the user library are command
-  line options. An application data directory, the "active environment" setting and the lookup of
-  a project-level library are V06 work; the UI picker (V05) will call the same functions.
+* **The active environment is a setting; the user library is still an option.** `settings.json`
+  names the active environment (the start window sets it); `create-project` seeds it when
+  `--environment` is absent, the option stays the override, and a setting whose environment is
+  not installed refuses the creation (missing record fails validation). The application data
+  directory holds the user's `environments/` (read by every listing since A07.3) and a
+  `libraries/` folder the programs never write and no lookup reads yet — the user-owned layer
+  above the environment of the Layering work will. `--user-library FILE` stays explicit.
 * **`add-library` rewrites the file.** Comments, `doc` text and attributes the loader does not
   read are not kept, and two writers of one file at once are not supported (the last rename
   wins). Refusing a library with refused entries and the read-back check keep it from losing or
