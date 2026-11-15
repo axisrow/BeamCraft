@@ -159,6 +159,9 @@ const DEFINE_MATERIAL_OPTIONS: &[&str] = &[
     "--grade",
     "--standard",
     "--name",
+    "--library",
+    "--environment",
+    "--designation",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -777,10 +780,15 @@ fn selected(
             match resolve_name(&definitions, name, profiles) {
                 NameResolution::Found(digest) => Ok(Some(digest)),
                 NameResolution::NotFound => {
-                    // A profile name the model does not have yet is looked up in the environment
-                    // the project was created with and defined in the model when it is first used.
-                    if profiles && let Some(digest) = define_from_environment(store, options, name)?
-                    {
+                    // A name the model does not have yet is looked up in the environment the
+                    // project was created with: a profile designation or a material grade is
+                    // defined in the model when it is first used.
+                    let from_environment = if profiles {
+                        define_from_environment(store, options, name)?
+                    } else {
+                        define_material_from_environment(store, options, name)?
+                    };
+                    if let Some(digest) = from_environment {
                         return Ok(Some(digest));
                     }
                     Err(Refusal {
@@ -985,13 +993,41 @@ fn define_command(
             .transpose()
     };
     let definition = if command == "define-material" {
-        DefinitionRecord::Material {
-            density_kg_m3: optional_float("--density")?,
-            grade: given("--grade").map(str::to_owned),
-            standard: given("--standard").map(str::to_owned),
-            display_name: None,
+        if given("--library").is_some() || given("--environment").is_some() {
+            // #636: the definition takes every value from one material library entry (a single
+            // --library file, or the material libraries of an --environment), so it never needs
+            // the file again. Nothing combines with the entry's own values.
+            if ["--density", "--grade", "--standard"]
+                .iter()
+                .any(|option| options.contains_key(option))
+            {
+                return Err(invalid(
+                    "--library and --environment take their values from the entry; only --designation, --name and the ids combine with them",
+                ));
+            }
+            let designation = given("--designation")
+                .ok_or_else(|| invalid("a library or environment needs --designation"))?;
+            let (lookup, _) = beamcraft_commands::library::open_material_lookup(
+                given("--library"),
+                given("--environment"),
+            )?;
+            // The entry's own display name is part of the catalogue record and is kept (the
+            // material's default name would be its grade and density, not the same); only an
+            // explicit --name renames it.
+            let record = lookup.find(designation)?.1.record.clone();
+            match given("--name") {
+                Some(name) => record.named(Some(name)),
+                None => record,
+            }
+        } else {
+            DefinitionRecord::Material {
+                density_kg_m3: optional_float("--density")?,
+                grade: given("--grade").map(str::to_owned),
+                standard: given("--standard").map(str::to_owned),
+                display_name: None,
+            }
+            .named(given("--name"))
         }
-        .named(given("--name"))
     } else if command == "define-fastener" {
         // A14.1: the definition takes every value from one fastener library entry, so it never
         // depends on the file afterwards. One library, no environment yet (O-B2).
@@ -4286,6 +4322,10 @@ pub(crate) fn definitions_json(
                 "environment_profiles",
                 environment_profiles_json(inspection, options)?,
             ),
+            (
+                "environment_materials",
+                environment_materials_json(inspection, options)?,
+            ),
             ("environment_presets", environment_presets_json(&presets)?),
             (
                 "environment_view_filters",
@@ -5127,6 +5167,26 @@ pub(crate) fn project_fastener_lookup(options: &BTreeMap<&str, &str>) -> Run<Opt
     Ok(Some(environment.fastener_lookup()))
 }
 
+/// The material resolver over the project's own environment copy, when the environment declares
+/// material libraries (#636). A project whose environment has none keeps the seeded-constants
+/// behaviour: a grade the model does not define stays `NOT_FOUND`, never a substitute.
+fn project_material_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
+    let Some(store) = options.get("--store") else {
+        return Ok(None);
+    };
+    let Some(file) = project_environment_file(std::path::Path::new(store)) else {
+        return Ok(None);
+    };
+    let file = file
+        .to_str()
+        .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
+    let environment = load_environment(file)?;
+    if environment.material_sources.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(environment.material_lookup()))
+}
+
 /// Defines the profile `name` of the project's environment in the model and returns its digest;
 /// `None` when the project has no environment or the environment has no such designation.
 /// Definitions are content-addressed, so a profile that is already there is not written again.
@@ -5136,6 +5196,50 @@ fn define_from_environment(
     name: &str,
 ) -> Run<Option<ContentDigest>> {
     let Some(lookup) = project_lookup(options)? else {
+        return Ok(None);
+    };
+    let record = match lookup.find(name) {
+        Ok((_, entry)) => entry.record.clone(),
+        Err(error) if error.code == ErrorCode::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| Refusal {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let actor = match options.get("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
+    };
+    let defined = define(
+        store,
+        &DefineRequest {
+            revision_id: RevisionId::from_uuid(fresh()?),
+            op_id: OpId::from_uuid(fresh()?),
+            actor,
+            project: ProjectId::from_uuid(fresh()?),
+            workspace: WorkspaceId::from_uuid(fresh()?),
+            definition: record,
+        },
+        &mut NoFault,
+    )?;
+    Ok(Some(defined.digest))
+}
+
+/// Defines the material grade `name` of the project's environment in the model and returns its
+/// digest (#636); `None` when the project has no environment materials or the environment has no
+/// such grade. Definitions are content-addressed, so a grade that is already there is not
+/// written again.
+fn define_material_from_environment(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    name: &str,
+) -> Run<Option<ContentDigest>> {
+    let Some(lookup) = project_material_lookup(options)? else {
         return Ok(None);
     };
     let record = match lookup.find(name) {
@@ -5189,6 +5293,35 @@ fn environment_profiles_json(inspection: &Inspection, options: &BTreeMap<&str, &
         }
         listed.push(Json::object([
             ("designation", Json::text(entry.designation.clone())),
+            ("kind", Json::text(entry.record.kind())),
+        ]));
+    }
+    Ok(Json::Array(listed))
+}
+
+/// The grades of the project's environment that the model does not define yet, for pickers
+/// (#636): what `definitions` lists beside the profiles. A grade is spent once the model holds
+/// the catalogue material under any of its selectable names.
+fn environment_materials_json(
+    inspection: &Inspection,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Json> {
+    let Some(lookup) = project_material_lookup(options)? else {
+        return Ok(Json::Array(Vec::new()));
+    };
+    let defined: Vec<&str> = inspection
+        .definitions
+        .values()
+        .filter(|record| record.kind() == "material")
+        .flat_map(DefinitionRecord::selectable_names)
+        .collect();
+    let mut listed = Vec::new();
+    for (_, entry) in lookup.effective() {
+        if defined.contains(&entry.designation.as_str()) {
+            continue;
+        }
+        listed.push(Json::object([
+            ("grade", Json::text(entry.designation.clone())),
             ("kind", Json::text(entry.record.kind())),
         ]));
     }
