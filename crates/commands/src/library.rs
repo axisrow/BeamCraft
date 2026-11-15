@@ -1510,7 +1510,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "europe-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -1529,7 +1529,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 55);
+        assert_eq!(library.entries.len(), 69);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -1539,7 +1539,14 @@ mod tests {
             else {
                 panic!("{} is not a parametric section", entry.designation);
             };
-            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // The UPE channels are the pack's parallel-flange channel series; the rest are
+            // I and H shapes.
+            let want_family = if entry.designation.starts_with("UPE") {
+                SectionFamily::Channel
+            } else {
+                SectionFamily::IShape
+            };
+            assert_eq!(parametric.family(), want_family);
             assert_eq!(
                 section.standard.as_deref(),
                 Some("EN 10365:2022"),
@@ -1565,7 +1572,9 @@ mod tests {
             designations.push(entry.designation.clone());
         }
         // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
-        // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270).
+        // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270),
+        // and no UPE 250/260 (the channel sequence steps 240 to 270). The taper-flange UPN series
+        // of the same standard is a different geometry family and is not part of the pack.
         assert_eq!(
             designations,
             [
@@ -1575,7 +1584,9 @@ mod tests {
                 "HEB200", "HEB220", "HEB240", "HEB260", "HEB280", "HEB300", "HEB320", "HEB340",
                 "HEB360", "HEB400", "HEB450", "HEB500", "HEB550", "HEB600", "IPE100", "IPE120",
                 "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
-                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600",
+                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600", "UPE100",
+                "UPE120", "UPE140", "UPE160", "UPE180", "UPE200", "UPE220", "UPE240", "UPE270",
+                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80",
             ]
         );
         // Spot checks against the transcribed values.
@@ -1612,7 +1623,32 @@ mod tests {
         assert_eq!(p.values(), [100.0, 100.0, 6.0, 10.0, 12.0]);
         assert_eq!(section.area_mm2, Some(2600.0));
         assert_eq!(section.mass_per_meter_kg, Some(20.4));
-        for absent in ["IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700"] {
+        let upe100 = library.entry("UPE100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upe100.record
+        else {
+            panic!("UPE100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 55.0, 4.5, 7.5, 10.0]);
+        assert_eq!(section.area_mm2, Some(1250.0));
+        assert_eq!(section.mass_per_meter_kg, Some(9.8));
+        let upe300 = library.entry("UPE300").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upe300.record
+        else {
+            panic!("UPE300 is not a parametric section");
+        };
+        assert_eq!(p.values(), [300.0, 100.0, 9.5, 15.0, 15.0]);
+        assert_eq!(section.area_mm2, Some(5660.0));
+        assert_eq!(section.mass_per_meter_kg, Some(44.4));
+        for absent in [
+            "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700", "UPE250", "UPE260",
+            "UPE450", "UPN100", "UPN200",
+        ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
                 ErrorCode::NotFound,
@@ -1633,7 +1669,7 @@ mod tests {
         // The profile namespace is unchanged by the fastener listing: both profile libraries
         // keep their entries.
         assert_eq!(environment.sources.len(), 2);
-        assert_eq!(environment.sources[0].library.entries.len(), 55);
+        assert_eq!(environment.sources[0].library.entries.len(), 69);
         assert_eq!(environment.sources[1].library.entries.len(), 52);
         // The DIN fastener set rides the same environment, admitted with declared provenance.
         assert_eq!(environment.fastener_sources.len(), 1);
