@@ -5,6 +5,6 @@
     customLayerData = {
         string "bim:environment:id" = "russia"
         string "bim:environment:title" = "Russia (GOST 26020-83)"
-        string[] "bim:environment:libraries" = ["profiles-gost-26020.usda"]
+        string[] "bim:environment:libraries" = ["profiles-gost-26020.usda", "profiles-gost-30245.usda"]
     }
 )
