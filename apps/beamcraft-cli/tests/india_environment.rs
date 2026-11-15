@@ -80,10 +80,10 @@ fn the_shipped_india_environment_lists_its_sections_and_provenance() {
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "india");
-    assert_eq!(num(&listed, &["entry_count"]), 191.0);
+    assert_eq!(num(&listed, &["entry_count"]), 293.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let libraries = at(&listed, &["libraries"]).array().unwrap();
-    assert_eq!(libraries.len(), 3);
+    assert_eq!(libraries.len(), 4);
     let info = at(&libraries[0], &["library"]);
     assert_eq!(text(info, "id"), "india-is808-npb-profiles");
     assert_eq!(text(info, "version"), "1");
@@ -97,8 +97,28 @@ fn the_shipped_india_environment_lists_its_sections_and_provenance() {
         text(at(&libraries[2], &["library"]), "id"),
         "india-is808-wpb-280-900-profiles"
     );
+    assert_eq!(
+        text(at(&libraries[3], &["library"]), "id"),
+        "india-is808-sloping-flange-profiles"
+    );
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 191);
+    // The listing pages at 256: the first page carries the head of the pack, the rest arrives
+    // at --offset 256.
+    assert_eq!(entries.len(), 256);
+    assert_eq!(num(&listed, &["next_offset"]), 256.0);
+    let paged = f.ok(&[
+        "list-library",
+        "--environment",
+        ENVIRONMENT,
+        "--limit",
+        "64",
+        "--offset",
+        "256",
+    ]);
+    assert_eq!(num(&paged, &["entry_count"]), 293.0);
+    let rest = at(&paged, &["entries"]).array().unwrap();
+    assert_eq!(rest.len(), 37);
+    let entries: Vec<&Json> = entries.iter().chain(rest.iter()).collect();
     let npb300 = entries
         .iter()
         .find(|e| text(e, "designation") == "NPB300x150x42.24")
@@ -126,6 +146,39 @@ fn the_shipped_india_environment_lists_its_sections_and_provenance() {
     );
     assert_eq!(num(wpb900, &["parameters_mm", "h"]), 900.0);
     assert_eq!(num(wpb900, &["parameters_mm", "tw"]), 18.5);
+    // The sloping-flange pack ships through the kernel's tapered families: the parameters carry
+    // the web s, the mid-leg flange thickness t, both radii and the dimensionless slope k (tan
+    // of the printed flange-slope angle over the perpendicular, 8 degrees for the MB series).
+    let mb200 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "MB200")
+        .unwrap();
+    assert_eq!(
+        text(mb200, "library_id"),
+        "india-is808-sloping-flange-profiles"
+    );
+    assert_eq!(num(mb200, &["parameters_mm", "h"]), 200.0);
+    assert_eq!(num(mb200, &["parameters_mm", "b"]), 100.0);
+    assert_eq!(num(mb200, &["parameters_mm", "s"]), 5.7);
+    assert_eq!(num(mb200, &["parameters_mm", "t"]), 10.0);
+    assert_eq!(num(mb200, &["parameters_mm", "r"]), 11.0);
+    assert_eq!(num(mb200, &["parameters_mm", "r1"]), 5.5);
+    let mb200_k = num(mb200, &["parameters_mm", "k"]);
+    assert!(
+        (mb200_k - 8.0f64.to_radians().tan()).abs() < 1e-12,
+        "MB200 slope {mb200_k}"
+    );
+    assert_eq!(num(mb200, &["area_mm2"]), 3080.0);
+    let mc200 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "MC200")
+        .unwrap();
+    // The channel series carries the tapered channel parameters (web s, mid-leg flange t, toe
+    // r1) instead of the parallel-flange tw/tf.
+    assert_eq!(num(mc200, &["parameters_mm", "h"]), 200.0);
+    assert_eq!(num(mc200, &["parameters_mm", "s"]), 6.2);
+    assert_eq!(num(mc200, &["parameters_mm", "t"]), 11.4);
+    assert_eq!(num(mc200, &["parameters_mm", "r1"]), 3.2);
 }
 
 #[test]
@@ -191,33 +244,84 @@ fn a_project_created_with_the_india_environment_resolves_its_designations() {
     assert_eq!(num(&q, &["section_area_mm2"]), 1030.0);
     close(num(&q, &["mass", "kg"]), 24.2565, 1e-9);
 
-    // A designation the shipped series does not publish is refused, not silently substituted:
-    // MB 300 belongs to the sloping-flange medium beam series of the same edition, which this
-    // parallel-flange pack does not ship.
-    assert_eq!(
-        f.code(&[
-            "create-member",
-            "--store",
-            &store,
-            "--kind",
-            "beam",
-            "--start",
-            "0,0,0",
-            "--end",
-            "6000,0,0",
-            "--profile",
-            "MB300",
-            "--material",
-            "Steel"
-        ]),
-        "NOT_FOUND"
-    );
+    // A designation of the sloping-flange beam series: MB200, catalogue area 3080 mm2. The
+    // declared area wins for the quantities and the tapered outline draws without a
+    // declared-area warning.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "8000,0,0",
+        "--end",
+        "14000,0,0",
+        "--profile",
+        "MB200",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 3080.0);
+    // 3080 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 145.068, 1e-9);
+
+    // A designation of the sloping-flange channel series: MC200, catalogue area 2840 mm2.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "16000,0,0",
+        "--end",
+        "22000,0,0",
+        "--profile",
+        "MC200",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 2840.0);
+    // 2840 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 133.764, 1e-9);
+
+    // A designation the shipped series do not publish is refused, not silently substituted:
+    // the MB series steps 250 to 300 without a 275, and the deep light beams the standard
+    // prints (LB225 to LB600) are not in the pack - their published toe radius exceeds the toe
+    // thickness the standard's own annex A computes, so no admitted tapered outline expresses
+    // them. The parallel flange channels (MPC, table 8) and the bearing piles are different
+    // families and are not shipped either.
+    for absent_profile in ["MB275", "LB300", "MPC200"] {
+        assert_eq!(
+            f.code(&[
+                "create-member",
+                "--store",
+                &store,
+                "--kind",
+                "beam",
+                "--start",
+                "0,0,0",
+                "--end",
+                "6000,0,0",
+                "--profile",
+                absent_profile,
+                "--material",
+                "Steel"
+            ]),
+            "NOT_FOUND"
+        );
+    }
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 2);
+    assert_eq!(members.len(), 4);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
