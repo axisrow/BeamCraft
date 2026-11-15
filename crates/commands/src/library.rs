@@ -2755,7 +2755,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "russia-gost-30245-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("3"));
+        assert_eq!(library.info.version.as_deref(), Some("4"));
         assert!(
             library
                 .info
@@ -2774,7 +2774,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 229);
+        assert_eq!(library.entries.len(), 301);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -3060,6 +3060,78 @@ mod tests {
             "80x70x6",
             "80x70x6.5",
             "80x70x7",
+            "90x50x3",
+            "90x50x3.5",
+            "90x50x4",
+            "90x50x4.5",
+            "90x50x5",
+            "90x50x5.5",
+            "90x50x6",
+            "90x50x6.5",
+            "90x50x7",
+            "90x60x3",
+            "90x60x3.5",
+            "90x60x4",
+            "90x60x4.5",
+            "90x60x5",
+            "90x60x5.5",
+            "90x60x6",
+            "90x60x6.5",
+            "90x60x7",
+            "100x40x3",
+            "100x40x3.5",
+            "100x40x4",
+            "100x40x4.5",
+            "100x40x5",
+            "100x40x5.5",
+            "100x40x6",
+            "100x40x6.5",
+            "100x40x7",
+            "100x50x3",
+            "100x50x3.5",
+            "100x50x4",
+            "100x50x4.5",
+            "100x50x5",
+            "100x50x5.5",
+            "100x50x6",
+            "100x50x6.5",
+            "100x50x7",
+            "100x60x3",
+            "100x60x3.5",
+            "100x60x4",
+            "100x60x4.5",
+            "100x60x5",
+            "100x60x5.5",
+            "100x60x6",
+            "100x60x6.5",
+            "100x60x7",
+            "120x40x3",
+            "120x40x3.5",
+            "120x40x4",
+            "120x40x4.5",
+            "120x40x5",
+            "120x40x5.5",
+            "120x40x6",
+            "120x40x6.5",
+            "120x40x7",
+            "120x60x3",
+            "120x60x3.5",
+            "120x60x4",
+            "120x60x4.5",
+            "120x60x5",
+            "120x60x5.5",
+            "120x60x6",
+            "120x60x6.5",
+            "120x60x7",
+            "120x80x3",
+            "120x80x3.5",
+            "120x80x4",
+            "120x80x4.5",
+            "120x80x5",
+            "120x80x5.5",
+            "120x80x6",
+            "120x80x6.5",
+            "120x80x7",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -3112,6 +3184,13 @@ mod tests {
         spot("50x30x5", [50.0, 30.0, 5.0, 10.0], 636.0, 4.99);
         spot("80x60x7", [80.0, 60.0, 7.0, 17.5], 1596.0, 12.53);
         spot("80x70x5", [80.0, 70.0, 5.0, 10.0], 1336.0, 10.48);
+        // Band 2 spots: the band opener, the 90x60 row both text scans drop (only the
+        // raster scan prints it; the closed form and the row's own mass confirm it),
+        // and the band's widest group at its top wall.
+        spot("90x50x3", [90.0, 50.0, 3.0, 6.0], 781.0, 6.13);
+        spot("90x60x6.5", [90.0, 60.0, 6.5, 16.25], 1636.0, 12.84);
+        spot("100x40x7", [100.0, 40.0, 7.0, 17.5], 1596.0, 12.53);
+        spot("120x80x7", [120.0, 80.0, 7.0, 17.5], 2436.0, 19.12);
         // Designations the standard does not publish are NOT_FOUND, never a near match:
         // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
         // published thickness range. The Cyrillic authenticity form is not a lookup key.
@@ -3152,6 +3231,13 @@ mod tests {
             "180x120x5",
             "200x140x5",
             "260x140x9.5",
+            // Band 2 facts table 2 does not publish: the 90x50 wall range ends at 7 mm,
+            // the 100x40 range opens at 3 mm, the 120x80 range ends at 7 mm, and no
+            // 110 mm height group exists.
+            "90x50x7.5",
+            "100x40x2.5",
+            "110x60x4",
+            "120x80x7.5",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
