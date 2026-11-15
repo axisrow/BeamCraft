@@ -72,6 +72,7 @@ mod ifc_inspect;
 mod ifc_shapes;
 mod independent_reader;
 mod india_environment;
+mod india_fasteners;
 mod inspect_pages;
 mod inspection_cache;
 mod instance_group;
