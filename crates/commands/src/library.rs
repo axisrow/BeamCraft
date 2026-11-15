@@ -2427,6 +2427,108 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_russia_gost_27772_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/russia/materials-gost-27772.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "russia-gost-27772-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted, Cyrillic prim names included.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 14);
+        // The complete grade set of GOST 27772-2015 clause 4.1, in the loader's designation
+        // order (byte order: the Cyrillic К, П suffixes sort after the ASCII ones), each with
+        // the standard and the pack density. The designations are the standard's own Cyrillic
+        // forms: the leading letter is the Cyrillic С (U+0421), where С means structural
+        // construction steel, the number the conventional yield strength in N/mm2, 1 a
+        // chemistry variant, К an increased corrosion resistance, П an increased fire
+        // resistance.
+        let gost = "GOST 27772-2015";
+        let expected: [&str; 14] = [
+            "С235", "С245", "С255", "С345", "С345К", "С355", "С355-1", "С355К", "С355П", "С390",
+            "С390-1", "С440", "С550", "С590",
+        ];
+        for (designation, entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(gost), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_russia_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/russia/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-gost-27772.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 3);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "russia-gost-27772-materials");
+        assert_eq!(materials.library.entries.len(), 14);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, s345) = lookup.find("С345").unwrap();
+        assert_eq!(source.library.info.id, "russia-gost-27772-materials");
+        assert!(matches!(
+            &s345.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("GOST 27772-2015")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no Latin look-alike of the Cyrillic С (the С of the standard's own
+        // designation is the Cyrillic letter, so neither the Latin C nor the transliteration
+        // S answers), no lowercase variant and no grade of the superseded 1988 edition.
+        for absent in [
+            "С275", "С375", "С285", "C245", "S245", "C345", "s355", "С245 ", "С440Д",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
