@@ -984,8 +984,8 @@ pub struct OpenedLookup {
 /// The material lookup that a command names (#636): exactly one of a single `--library` file
 /// (a material library, no provenance required) or an `--environment` file (its material
 /// libraries in order), like [`open_lookup`] for profiles. A single `--library` names every
-/// source exactly; an `--environment` consults the firm material libraries between nothing and
-/// the environment's own (no `--user-library` option exists for materials yet), and a firm file
+/// source exactly; an `--environment` consults the firm material libraries above the
+/// environment's own (no `--user-library` option exists for materials yet), and a firm file
 /// that does not read is skipped as [`open_lookup`] describes. The environment's own
 /// declarations are returned when one was named.
 ///
