@@ -209,6 +209,612 @@ pub fn near_threshold(measured: f64, bound: f64, tolerance: Option<f64>, delta: 
     }
 }
 
+/// The near-threshold rule against a recorded permitted range with a
+/// tolerance that widens both band edges (contract sections 4.1 and 7.3):
+/// the acceptance region is `[min - tolerance, max + tolerance]`. `Clear`
+/// reads as "within the permitted range", `Penetrated` as outside it.
+///
+/// Precondition: `min <= max`; the recorded-inputs admission refuses ranges
+/// that violate it, so the rules never guess on a malformed band.
+pub fn range_threshold(
+    measured: f64,
+    min: f64,
+    max: f64,
+    tolerance: f64,
+    delta: f64,
+) -> ClashState {
+    let lo = min - tolerance;
+    let hi = max + tolerance;
+    if measured - delta > lo && measured + delta < hi {
+        ClashState::Clear
+    } else if measured - delta > hi || measured + delta < lo {
+        ClashState::Penetrated
+    } else {
+        ClashState::Indeterminate
+    }
+}
+
+/// The declared kind of one joint-intent connection (contract section 5).
+/// Bolted kinds are refused at admission in v0.1 and arrive with the
+/// fastener slices, so no variant exists for them here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionKind {
+    /// The parts must be joined by a weld element.
+    Weld,
+    /// The parts must be in physical contact within the product tolerance.
+    Contact,
+}
+
+impl ConnectionKind {
+    /// The stable token of the kind.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Weld => "weld",
+            Self::Contact => "contact",
+        }
+    }
+}
+
+/// One declared connection of the joint intent (contract section 5): two
+/// distinct part elements and the declared kind.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclaredConnection {
+    /// One side of the declared connection.
+    pub a: ElementId,
+    /// The other side, distinct from `a`.
+    pub b: ElementId,
+    /// What the owner declared must join the parts.
+    pub kind: ConnectionKind,
+}
+
+/// The joint intent as plain rule input (contract section 5): the elements
+/// that form the joint and the declared connections. v0.1 has no recorded
+/// intent yet — the recorded-inputs persistence of a later slice carries it
+/// into the store; until then a caller without intent passes `None` and the
+/// connectivity rules are not applicable for any element (contract section
+/// 5: an established absence, never an unknown).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct JointIntent {
+    /// The element ids that form the joint.
+    pub scope: Vec<ElementId>,
+    /// The declared connections between scoped elements.
+    pub connections: Vec<DeclaredConnection>,
+}
+
+/// The recorded gap requirement for one declared weld connection (contract
+/// section 4.1): the permitted local gap range with the tolerance on the
+/// comparison, and the owner as the only v0.1 basis — no normative
+/// permitted-gap rule is supported (contract section 3.3). `permitted_min_mm`
+/// must not exceed `permitted_max_mm`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GapRequirement {
+    /// One side of the declared weld connection the requirement judges.
+    pub a: ElementId,
+    /// The other side, distinct from `a`.
+    pub b: ElementId,
+    /// The permitted minimum local gap in millimetres.
+    pub permitted_min_mm: f64,
+    /// The permitted maximum local gap in millimetres.
+    pub permitted_max_mm: f64,
+    /// The recorded tolerance on the comparison (contract section 7.3).
+    pub tolerance_mm: f64,
+}
+
+/// The weld facts the connectivity rules consume: which two parts a weld
+/// element connects, and the authored path when the weld carries one (the
+/// A06 record). Existence and path are plain inputs; the recorded-inputs
+/// slice reads them from the store.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeldFact {
+    /// The main part of the weld.
+    pub main: ElementId,
+    /// The part welded to the main part.
+    pub secondary: ElementId,
+    /// The ordered world path the weld runs along, when authored. A weld
+    /// with no path has no placed solid at the joint, so it is never locally
+    /// attached (contract section 5.1).
+    pub path_mm: Option<Vec<[f64; 3]>>,
+}
+
+/// One named bound of a comparison, for findings where one measurement is
+/// judged against several recorded bounds (contract section 8.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedBound {
+    /// The name of the bound within the requirement (`permitted_min`,
+    /// `permitted_max`).
+    pub name: &'static str,
+    /// The bound value in millimetres.
+    pub bound_mm: f64,
+    /// The recorded tolerance that widens this bound's band edge.
+    pub tolerance_mm: f64,
+    /// The basis of the bound (the recorded requirement's source).
+    pub source: &'static str,
+}
+
+/// The recorded inputs of one `check-model` run (contract sections 4-5): the
+/// joint intent, the recorded gap requirements and the weld facts. A caller
+/// without recorded inputs passes the default — the connectivity rules then
+/// stay not applicable, and the report says so in coverage.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RecordedInputs {
+    /// The declared joint intent, when one is provided.
+    pub intent: Option<JointIntent>,
+    /// The recorded gap requirements, one per judged weld connection.
+    pub gaps: Vec<GapRequirement>,
+    /// The weld facts of the model.
+    pub welds: Vec<WeldFact>,
+}
+
+/// One finding of the connectivity rules: the same shape the command layer
+/// reports, with element ids only (the layer maps labels).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConnectivityFinding {
+    /// The rule token.
+    pub rule: &'static str,
+    /// `fail` or `unknown`.
+    pub status: &'static str,
+    /// The element ids the finding is about.
+    pub elements: Vec<ElementId>,
+    /// What was found.
+    pub message: String,
+    /// The basis of the result: the declared intent, the recorded
+    /// requirement, or the geometric identity.
+    pub basis: String,
+    /// The measured value in millimetres, where the rule measures one.
+    pub measured_mm: Option<f64>,
+    /// The bound the measurement was compared against, where one applies.
+    pub required_mm: Option<f64>,
+    /// The tolerance the comparison used, where one applies.
+    pub tolerance_mm: Option<f64>,
+    /// The named bounds of a range comparison (contract section 8.1).
+    pub bounds: Vec<NamedBound>,
+    /// The inputs whose absence kept the check from deciding.
+    pub missing_inputs: Vec<&'static str>,
+}
+
+/// How close two parts are, decided with the near-threshold rule against the
+/// product contact tolerance (contract sections 5 and 7.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Proximity {
+    /// The parts meet — exact surface contact, an edge or point touch, or
+    /// interpenetration (which the clash rule reports separately).
+    Touching,
+    /// The parts are separated; the measured surface distance in millimetres
+    /// is strictly outside the tolerance band.
+    Separated {
+        /// The measured surface-to-surface distance in millimetres.
+        gap_mm: f64,
+    },
+    /// The measured distance straddles the tolerance band edge.
+    Indeterminate {
+        /// The measured surface-to-surface distance in millimetres.
+        gap_mm: f64,
+    },
+}
+
+/// Whether a weld is locally attached at the declared contact of its two
+/// parts (contract section 5.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Attachment {
+    /// Every path point lies on the declared contact within the product
+    /// tolerance, measured against both evaluated bodies.
+    Attached,
+    /// The placed path provably misses the declared contact: a weld with no
+    /// path has no placed solid at the joint at all.
+    NotAttached,
+    /// A measured point distance straddles the tolerance band edge, or the
+    /// contact decision could not be completed.
+    Indeterminate,
+}
+
+/// Whether the two evaluated parts are in contact within the product
+/// tolerance: the exact contact facts first, then the near-threshold rule on
+/// the measured surface distance (contract section 7.3). Interpenetrating
+/// parts touch — the clash rule reports the penetration separately.
+pub fn proximity_verdict(
+    a: &ElementBody,
+    b: &ElementBody,
+    tolerance_mm: f64,
+) -> Result<Proximity, ContactError> {
+    let report = contact::contact(&a.mesh, &b.mesh, CONTACT_LIMITS)?;
+    if report.relation != Relation::Separated {
+        return Ok(Proximity::Touching);
+    }
+    let gap = contact::surface_gap(&a.mesh, &b.mesh, CONTACT_LIMITS)?;
+    let delta = a.mesh_bound_mm.max(b.mesh_bound_mm).max(tolerance_mm / 2.0);
+    if gap + delta < tolerance_mm {
+        Ok(Proximity::Touching)
+    } else if gap - delta > tolerance_mm {
+        Ok(Proximity::Separated { gap_mm: gap })
+    } else {
+        Ok(Proximity::Indeterminate { gap_mm: gap })
+    }
+}
+
+/// The local attachment verdict of one weld against its two evaluated parts
+/// (contract section 5.1): every path point must lie at the declared contact
+/// — within the product tolerance of both surfaces, the mesh bounds absorbed
+/// by the near-threshold rule. A weld with no (or an empty) path has no
+/// placed solid at the joint and is never locally attached.
+pub fn attachment_verdict(
+    weld: &WeldFact,
+    a: &ElementBody,
+    b: &ElementBody,
+    tolerance_mm: f64,
+) -> Result<Attachment, ContactError> {
+    let Some(path) = weld.path_mm.as_ref().filter(|p| !p.is_empty()) else {
+        return Ok(Attachment::NotAttached);
+    };
+    let mut verdict = Attachment::Attached;
+    for point in path {
+        for body in [a, b] {
+            let measured = contact::point_gap(*point, &body.mesh)?;
+            let delta = body.mesh_bound_mm.max(tolerance_mm / 2.0);
+            if measured + delta < tolerance_mm {
+                continue;
+            }
+            if measured - delta > tolerance_mm {
+                return Ok(Attachment::NotAttached);
+            }
+            verdict = Attachment::Indeterminate;
+        }
+    }
+    Ok(verdict)
+}
+
+/// The measured local gap of an attached weld, in millimetres: the smallest
+/// summed point-to-surface distance of the path points against both bodies —
+/// zero where the path runs on the meeting surfaces of touching parts, the
+/// air width where the weld bridges an opening. `None` for a weld without a
+/// usable path.
+pub fn weld_gap_mm(
+    weld: &WeldFact,
+    a: &ElementBody,
+    b: &ElementBody,
+) -> Result<Option<f64>, ContactError> {
+    let Some(path) = weld.path_mm.as_ref().filter(|p| !p.is_empty()) else {
+        return Ok(None);
+    };
+    let mut best: Option<f64> = None;
+    for point in path {
+        let gap = contact::point_gap(*point, &a.mesh)? + contact::point_gap(*point, &b.mesh)?;
+        best = Some(match best {
+            Some(current) if current <= gap => current,
+            _ => gap,
+        });
+    }
+    Ok(best)
+}
+
+/// The connectivity rules over the recorded inputs (contract sections 2.1
+/// and 5). With no joint intent the rules are not applicable for any element
+/// and no finding is produced — the report says so in coverage. Connections
+/// with a target outside the checked scope are not checked, like any element
+/// outside it; a scoped connection whose target is not an evaluated part of
+/// the checked revision reports `unknown` (`target_unresolved`) and the
+/// missing inputs named, never a guessed verdict (contract section 4.3).
+pub fn connectivity_findings(
+    inputs: &RecordedInputs,
+    bodies: &[ElementBody],
+    scope: &[ElementId],
+    tolerance_mm: f64,
+) -> Vec<ConnectivityFinding> {
+    let Some(intent) = &inputs.intent else {
+        return Vec::new();
+    };
+    let mut findings = Vec::new();
+    for connection in &intent.connections {
+        if scope.binary_search(&connection.a).is_err()
+            || scope.binary_search(&connection.b).is_err()
+        {
+            continue;
+        }
+        let body_of = |id: &ElementId| bodies.iter().find(|b| &b.id == id);
+        let (body_a, body_b) = match (body_of(&connection.a), body_of(&connection.b)) {
+            (Some(a), Some(b)) => (a, b),
+            _ => {
+                findings.push(ConnectivityFinding {
+                    rule: "PART_UNCONNECTED",
+                    status: "unknown",
+                    elements: vec![connection.a, connection.b],
+                    message: format!(
+                        "the declared {} connection targets elements that are not evaluated \
+                         parts of the checked revision, so its connectivity stays unjudged \
+                         and the requirement stays recorded",
+                        connection.kind.token(),
+                    ),
+                    basis: "declared joint intent connection (contract 5); \
+                            unresolved target (contract 4.3)"
+                        .into(),
+                    measured_mm: None,
+                    required_mm: None,
+                    tolerance_mm: None,
+                    bounds: Vec::new(),
+                    missing_inputs: vec!["target_unresolved"],
+                });
+                continue;
+            }
+        };
+        let proximity = match proximity_verdict(body_a, body_b, tolerance_mm) {
+            Ok(proximity) => proximity,
+            Err(_) => {
+                findings.push(ConnectivityFinding {
+                    rule: "PART_UNCONNECTED",
+                    status: "unknown",
+                    elements: vec![connection.a, connection.b],
+                    message: "the contact decision could not be completed for the declared \
+                              connection"
+                        .into(),
+                    basis: "declared joint intent connection (contract 5)".into(),
+                    measured_mm: None,
+                    required_mm: None,
+                    tolerance_mm: Some(tolerance_mm),
+                    bounds: Vec::new(),
+                    missing_inputs: vec!["unresolved contact predicates"],
+                });
+                continue;
+            }
+        };
+        let welds = inputs
+            .welds
+            .iter()
+            .filter(|w| {
+                (w.main == connection.a && w.secondary == connection.b)
+                    || (w.main == connection.b && w.secondary == connection.a)
+            })
+            .collect::<Vec<_>>();
+        match connection.kind {
+            ConnectionKind::Weld => weld_connection(
+                inputs,
+                connection,
+                &welds,
+                proximity,
+                body_a,
+                body_b,
+                tolerance_mm,
+                &mut findings,
+            ),
+            ConnectionKind::Contact => match proximity {
+                // The declared contact exists: the connection is satisfied.
+                Proximity::Touching => {}
+                Proximity::Separated { gap_mm } => findings.push(ConnectivityFinding {
+                    rule: "PART_UNCONNECTED",
+                    status: "fail",
+                    elements: vec![connection.a, connection.b],
+                    message: format!(
+                        "the declared contact connection has the parts {} mm apart, beyond \
+                         the contact tolerance",
+                        gap_mm,
+                    ),
+                    basis: "declared joint intent connection (contract 5); \
+                            geometric contact fact"
+                        .into(),
+                    measured_mm: Some(gap_mm),
+                    required_mm: Some(tolerance_mm),
+                    tolerance_mm: Some(tolerance_mm),
+                    bounds: Vec::new(),
+                    missing_inputs: Vec::new(),
+                }),
+                Proximity::Indeterminate { gap_mm } => findings.push(ConnectivityFinding {
+                    rule: "PART_UNCONNECTED",
+                    status: "unknown",
+                    elements: vec![connection.a, connection.b],
+                    message: format!(
+                        "the measured distance {} mm sits at the contact tolerance band \
+                         edge, so the declared contact stays undecidable",
+                        gap_mm,
+                    ),
+                    basis: "declared joint intent connection (contract 5); \
+                            geometric contact fact"
+                        .into(),
+                    measured_mm: Some(gap_mm),
+                    required_mm: Some(tolerance_mm),
+                    tolerance_mm: Some(tolerance_mm),
+                    bounds: Vec::new(),
+                    missing_inputs: vec!["indeterminate"],
+                }),
+            },
+        }
+    }
+    findings
+}
+
+/// The rules of one declared weld connection: `PART_UNCONNECTED` when no
+/// weld element connects the parts, `CONTACT_WITHOUT_CONNECTION` when the
+/// parts touch but the declared weld is missing, and `WELD_WITHOUT_CONTACT`
+/// for each existing weld's judged or unjudgeable local gap.
+#[allow(clippy::too_many_arguments)]
+fn weld_connection(
+    inputs: &RecordedInputs,
+    connection: &DeclaredConnection,
+    welds: &[&WeldFact],
+    proximity: Proximity,
+    body_a: &ElementBody,
+    body_b: &ElementBody,
+    tolerance_mm: f64,
+    findings: &mut Vec<ConnectivityFinding>,
+) {
+    if welds.is_empty() {
+        findings.push(ConnectivityFinding {
+            rule: "PART_UNCONNECTED",
+            status: "fail",
+            elements: vec![connection.a, connection.b],
+            message: "the declared weld connection has no weld element connecting the parts".into(),
+            basis: "declared joint intent connection (contract 5)".into(),
+            measured_mm: None,
+            required_mm: None,
+            tolerance_mm: None,
+            bounds: Vec::new(),
+            missing_inputs: Vec::new(),
+        });
+        if proximity == Proximity::Touching {
+            findings.push(ConnectivityFinding {
+                rule: "CONTACT_WITHOUT_CONNECTION",
+                status: "fail",
+                elements: vec![connection.a, connection.b],
+                message: "the parts touch but the declared weld connection has no weld at \
+                          that contact; contact alone never proves a weld is needed, this \
+                          one is declared"
+                    .into(),
+                basis: "declared joint intent connection (contract 5); \
+                        geometric contact fact"
+                    .into(),
+                measured_mm: None,
+                required_mm: None,
+                tolerance_mm: Some(tolerance_mm),
+                bounds: Vec::new(),
+                missing_inputs: Vec::new(),
+            });
+        }
+        return;
+    }
+    // The weld exists: the connection is satisfied; the local gap question
+    // is judged per weld against the recorded requirement, and stays
+    // unknown where only a normative rule would decide (contract 3.3).
+    let Some(requirement) = inputs.gaps.iter().find(|g| {
+        (g.a == connection.a && g.b == connection.b) || (g.a == connection.b && g.b == connection.a)
+    }) else {
+        findings.push(ConnectivityFinding {
+            rule: "WELD_WITHOUT_CONTACT",
+            status: "unknown",
+            elements: vec![connection.a, connection.b],
+            message: "the declared weld connection has a weld but neither a recorded \
+                      permitted gap requirement nor a supported normative gap rule, so \
+                      the local gap stays unjudged"
+                .into(),
+            basis: "declared joint intent connection (contract 5); no supported rule \
+                    (contract 3.3)"
+                .into(),
+            measured_mm: None,
+            required_mm: None,
+            tolerance_mm: None,
+            bounds: Vec::new(),
+            missing_inputs: vec!["no_supported_rule"],
+        });
+        return;
+    };
+    for weld in welds {
+        let attached = match attachment_verdict(weld, body_a, body_b, tolerance_mm) {
+            Ok(attached) => attached,
+            Err(_) => Attachment::Indeterminate,
+        };
+        if attached != Attachment::Attached {
+            findings.push(ConnectivityFinding {
+                rule: "WELD_WITHOUT_CONTACT",
+                status: "unknown",
+                elements: vec![connection.a, connection.b],
+                message: "the weld is not locally attached at the declared contact of its \
+                          parts, so its local gap stays unjudged"
+                    .into(),
+                basis: "declared joint intent connection (contract 5); local weld \
+                        attachment (contract 5.1)"
+                    .into(),
+                measured_mm: None,
+                required_mm: None,
+                tolerance_mm: None,
+                bounds: Vec::new(),
+                missing_inputs: vec!["attachment_unvalidated"],
+            });
+            continue;
+        }
+        let gap = match weld_gap_mm(weld, body_a, body_b) {
+            Ok(Some(gap)) => gap,
+            // A weld without a usable path was reported not attached above.
+            Ok(None) => continue,
+            Err(_) => {
+                findings.push(ConnectivityFinding {
+                    rule: "WELD_WITHOUT_CONTACT",
+                    status: "unknown",
+                    elements: vec![connection.a, connection.b],
+                    message: "the gap decision could not be completed for this weld".into(),
+                    basis: "recorded gap requirement (contract 4.1)".into(),
+                    measured_mm: None,
+                    required_mm: None,
+                    tolerance_mm: Some(requirement.tolerance_mm),
+                    bounds: Vec::new(),
+                    missing_inputs: vec!["unresolved contact predicates"],
+                });
+                continue;
+            }
+        };
+        let delta = body_a
+            .mesh_bound_mm
+            .max(body_b.mesh_bound_mm)
+            .max(tolerance_mm / 2.0);
+        match range_threshold(
+            gap,
+            requirement.permitted_min_mm,
+            requirement.permitted_max_mm,
+            requirement.tolerance_mm,
+            delta,
+        ) {
+            // A permissible weld gap passes its applicable gap rule.
+            ClashState::Clear => {}
+            ClashState::Indeterminate => findings.push(ConnectivityFinding {
+                rule: "WELD_WITHOUT_CONTACT",
+                status: "unknown",
+                elements: vec![connection.a, connection.b],
+                message: format!(
+                    "the measured local gap {} mm sits at the permitted-range band edge",
+                    gap,
+                ),
+                basis: "recorded gap requirement (contract 4.1)".into(),
+                measured_mm: Some(gap),
+                required_mm: None,
+                tolerance_mm: Some(requirement.tolerance_mm),
+                bounds: vec![
+                    NamedBound {
+                        name: "permitted_min",
+                        bound_mm: requirement.permitted_min_mm,
+                        tolerance_mm: requirement.tolerance_mm,
+                        source: "owner",
+                    },
+                    NamedBound {
+                        name: "permitted_max",
+                        bound_mm: requirement.permitted_max_mm,
+                        tolerance_mm: requirement.tolerance_mm,
+                        source: "owner",
+                    },
+                ],
+                missing_inputs: vec!["indeterminate"],
+            }),
+            ClashState::Penetrated => {
+                let side = if gap - delta > requirement.permitted_max_mm + requirement.tolerance_mm
+                {
+                    "exceeds the permitted maximum"
+                } else {
+                    "stays below the permitted minimum"
+                };
+                findings.push(ConnectivityFinding {
+                    rule: "WELD_WITHOUT_CONTACT",
+                    status: "fail",
+                    elements: vec![connection.a, connection.b],
+                    message: format!("the measured local gap {} mm {}", gap, side),
+                    basis: "recorded gap requirement (contract 4.1)".into(),
+                    measured_mm: Some(gap),
+                    required_mm: None,
+                    tolerance_mm: Some(requirement.tolerance_mm),
+                    bounds: vec![
+                        NamedBound {
+                            name: "permitted_min",
+                            bound_mm: requirement.permitted_min_mm,
+                            tolerance_mm: requirement.tolerance_mm,
+                            source: "owner",
+                        },
+                        NamedBound {
+                            name: "permitted_max",
+                            bound_mm: requirement.permitted_max_mm,
+                            tolerance_mm: requirement.tolerance_mm,
+                            source: "owner",
+                        },
+                    ],
+                    missing_inputs: Vec::new(),
+                });
+            }
+        }
+    }
+}
+
 /// The `PART_CLASH` decision for one pair of evaluated parts: proven
 /// penetration (including full containment) beyond the product contact
 /// tolerance, decided by the exact contact facts and the near-threshold rule.
@@ -534,5 +1140,332 @@ mod tests {
             near_threshold(2.3, t, Some(1.0), 0.25),
             ClashState::Penetrated
         );
+    }
+
+    #[test]
+    fn range_threshold_decides_both_band_edges() {
+        // The permitted range [0, 0.2] with tolerance 0.05: the acceptance
+        // region is [-0.05, 0.25].
+        assert_eq!(range_threshold(0.1, 0.0, 0.2, 0.05, 0.1), ClashState::Clear);
+        assert_eq!(
+            range_threshold(0.6, 0.0, 0.2, 0.05, 0.25),
+            ClashState::Penetrated
+        );
+        assert_eq!(
+            range_threshold(0.25, 0.0, 0.2, 0.05, 0.25),
+            ClashState::Indeterminate
+        );
+        // Below the minimum edge is outside too.
+        assert_eq!(
+            range_threshold(0.5, 1.0, 2.0, 0.1, 0.25),
+            ClashState::Penetrated
+        );
+        assert_eq!(
+            range_threshold(0.9, 1.0, 2.0, 0.1, 0.25),
+            ClashState::Indeterminate
+        );
+    }
+
+    /// Two touching 1000x500x10 plates: a at z in [0, 10], b at z in
+    /// [10, 20]; the shared plane z = 10 is the declared contact.
+    fn stacked_pair() -> (ElementBody, ElementBody) {
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 10.0).unwrap();
+        (a, b)
+    }
+
+    fn weld_at(path: Option<Vec<[f64; 3]>>) -> WeldFact {
+        WeldFact {
+            main: id(1),
+            secondary: id(2),
+            path_mm: path,
+        }
+    }
+
+    #[test]
+    fn a_path_on_the_declared_contact_is_attached() {
+        let (a, b) = stacked_pair();
+        let weld = weld_at(Some(vec![[100.0, 100.0, 10.0], [300.0, 100.0, 10.0]]));
+        let attached = attachment_verdict(&weld, &a, &b, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(attached, Attachment::Attached);
+        // A path point off both surfaces is provably not attached.
+        let weld = weld_at(Some(vec![[100.0, 100.0, 30.0]]));
+        let attached = attachment_verdict(&weld, &a, &b, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(attached, Attachment::NotAttached);
+        // A weld with no path has no placed solid at the joint at all.
+        let attached = attachment_verdict(&weld_at(None), &a, &b, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(attached, Attachment::NotAttached);
+        // A path point whose distance straddles the tolerance band edge
+        // (0.6 mm off both surfaces against t = 0.5, delta = 0.25) stays
+        // unresolved, never guessed.
+        let weld = weld_at(Some(vec![[100.0, 100.0, 10.6]]));
+        let attached = attachment_verdict(&weld, &a, &b, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(attached, Attachment::Indeterminate);
+    }
+
+    #[test]
+    fn proximity_classifies_touching_separated_and_band_edge() {
+        let (a, b) = stacked_pair();
+        let near = proximity_verdict(&a, &b, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(near, Proximity::Touching);
+        let (a, far) = (plate_at(1, 0.0, 0.0, 0.0).unwrap(), {
+            plate_at(2, 0.0, 0.0, 12.0).unwrap()
+        });
+        let near = proximity_verdict(&a, &far, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(near, Proximity::Separated { gap_mm: 2.0 });
+        // A 0.5 mm air slab against t = 0.5: the band edge straddles.
+        let (a, lifted) = (plate_at(1, 0.0, 0.0, 0.0).unwrap(), {
+            plate_at(2, 0.0, 0.0, 10.5).unwrap()
+        });
+        let near = proximity_verdict(&a, &lifted, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(near, Proximity::Indeterminate { gap_mm: 0.5 });
+    }
+
+    #[test]
+    fn weld_gap_measures_the_air_at_the_path() {
+        // A 0.3 mm air slab; the path runs mid-air on the declared contact,
+        // 0.15 mm from each surface, so the summed gap is the air width.
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 10.3).unwrap();
+        let weld = weld_at(Some(vec![[100.0, 100.0, 10.15], [300.0, 100.0, 10.15]]));
+        let gap = weld_gap_mm(&weld, &a, &b).unwrap();
+        let gap = gap.unwrap_or_default();
+        assert!((gap - 0.3).abs() <= 1e-9, "{gap}");
+    }
+
+    fn intent(connections: Vec<DeclaredConnection>) -> RecordedInputs {
+        RecordedInputs {
+            intent: Some(JointIntent {
+                scope: vec![id(1), id(2), id(3)],
+                connections,
+            }),
+            gaps: Vec::new(),
+            welds: Vec::new(),
+        }
+    }
+
+    fn weld_pair() -> DeclaredConnection {
+        DeclaredConnection {
+            a: id(1),
+            b: id(2),
+            kind: ConnectionKind::Weld,
+        }
+    }
+
+    #[test]
+    fn no_intent_produces_no_connectivity_finding() {
+        let (a, b) = stacked_pair();
+        let findings = connectivity_findings(
+            &RecordedInputs::default(),
+            &[a, b],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn a_missing_weld_with_touching_parts_is_unconnected_and_contacted_without_connection() {
+        let (a, b) = stacked_pair();
+        let findings = connectivity_findings(
+            &intent(vec![weld_pair()]),
+            &[a.clone(), b.clone()],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        let rules = findings.iter().map(|f| f.rule).collect::<Vec<_>>();
+        assert!(rules.contains(&"PART_UNCONNECTED"));
+        assert!(rules.contains(&"CONTACT_WITHOUT_CONNECTION"));
+        let unconnected = findings
+            .iter()
+            .find(|f| f.rule == "PART_UNCONNECTED")
+            .unwrap();
+        assert_eq!(unconnected.status, "fail");
+        assert_eq!(unconnected.elements, vec![id(1), id(2)]);
+    }
+
+    #[test]
+    fn a_missing_weld_over_separated_parts_is_unconnected_only() {
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 500.0).unwrap();
+        let findings = connectivity_findings(
+            &intent(vec![weld_pair()]),
+            &[a, b],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "PART_UNCONNECTED");
+        assert_eq!(findings[0].status, "fail");
+    }
+
+    #[test]
+    fn an_existing_weld_without_a_gap_requirement_stays_unknown() {
+        let (a, b) = stacked_pair();
+        let mut inputs = intent(vec![weld_pair()]);
+        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.0]]))];
+        let findings =
+            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        // The connection is satisfied: no PART_UNCONNECTED, and the gap
+        // question stays unknown with the missing rule named.
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
+        assert_eq!(findings[0].status, "unknown");
+        assert_eq!(findings[0].missing_inputs, vec!["no_supported_rule"]);
+    }
+
+    #[test]
+    fn a_pathless_weld_with_a_requirement_reports_unvalidated_attachment() {
+        let (a, b) = stacked_pair();
+        let mut inputs = intent(vec![weld_pair()]);
+        inputs.welds = vec![weld_at(None)];
+        inputs.gaps = vec![GapRequirement {
+            a: id(1),
+            b: id(2),
+            permitted_min_mm: 0.0,
+            permitted_max_mm: 0.2,
+            tolerance_mm: 0.05,
+        }];
+        let findings =
+            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
+        assert_eq!(findings[0].missing_inputs, vec!["attachment_unvalidated"]);
+    }
+
+    #[test]
+    fn a_permitted_gap_passes_and_an_excessive_gap_fails_with_named_bounds() {
+        // The owner requires contact at the weld: the permitted range is
+        // [0, 0] with no tolerance, so any measured opening outside the
+        // uncertainty band fails.
+        let gap_requirement = GapRequirement {
+            a: id(1),
+            b: id(2),
+            permitted_min_mm: 0.0,
+            permitted_max_mm: 0.0,
+            tolerance_mm: 0.0,
+        };
+        // A 0.3 mm air slab with the weld path mid-air: attached, and the
+        // measured 0.3 mm lies strictly above the permitted maximum edge.
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 10.3).unwrap();
+        let mut inputs = intent(vec![weld_pair()]);
+        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.15]]))];
+        inputs.gaps = vec![gap_requirement.clone()];
+        let findings =
+            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
+        assert_eq!(findings[0].status, "fail");
+        let measured = findings[0].measured_mm.unwrap_or_default();
+        assert!((measured - 0.3).abs() <= 1e-6, "{measured}");
+        assert_eq!(findings[0].bounds.len(), 2);
+        assert_eq!(findings[0].bounds[0].name, "permitted_min");
+        assert_eq!(findings[0].bounds[1].name, "permitted_max");
+        // The same geometry inside a wider permitted range passes: no finding.
+        inputs.gaps = vec![GapRequirement {
+            permitted_max_mm: 1.0,
+            tolerance_mm: 0.05,
+            ..gap_requirement
+        }];
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 10.3).unwrap();
+        let findings =
+            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn a_band_edge_gap_stays_indeterminate() {
+        // The range [0, 0.2] with tolerance 0.1 has its upper edge at 0.3;
+        // the measured 0.3 mm with delta 0.25 straddles it.
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 10.3).unwrap();
+        let mut inputs = intent(vec![weld_pair()]);
+        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.15]]))];
+        inputs.gaps = vec![GapRequirement {
+            a: id(1),
+            b: id(2),
+            permitted_min_mm: 0.0,
+            permitted_max_mm: 0.2,
+            tolerance_mm: 0.1,
+        }];
+        let findings =
+            connectivity_findings(&inputs, &[a, b], &[id(1), id(2)], CONTACT_TOLERANCE_MM);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].status, "unknown");
+        assert_eq!(findings[0].missing_inputs, vec!["indeterminate"]);
+        let measured = findings[0].measured_mm.unwrap_or_default();
+        assert!((measured - 0.3).abs() <= 1e-6, "{measured}");
+    }
+
+    #[test]
+    fn a_declared_contact_connection_judges_the_proximity() {
+        let (a, b) = stacked_pair();
+        let contact_pair = DeclaredConnection {
+            kind: ConnectionKind::Contact,
+            ..weld_pair()
+        };
+        // Touching: the declared contact exists, no finding.
+        let findings = connectivity_findings(
+            &intent(vec![contact_pair.clone()]),
+            &[a, b],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert!(findings.is_empty());
+        // 2 mm apart: the declared contact is absent.
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 12.0).unwrap();
+        let findings = connectivity_findings(
+            &intent(vec![contact_pair]),
+            &[a, b],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "PART_UNCONNECTED");
+        assert_eq!(findings[0].status, "fail");
+        assert_eq!(findings[0].measured_mm, Some(2.0));
+    }
+
+    #[test]
+    fn an_unresolved_target_stays_unknown_and_out_of_scope_connections_are_skipped() {
+        let (a, b) = stacked_pair();
+        let mut connections = vec![weld_pair()];
+        connections.push(DeclaredConnection {
+            a: id(1),
+            b: id(9),
+            kind: ConnectionKind::Weld,
+        });
+        // The first connection is inside the scope and judged; the second
+        // targets an element outside the checked scope and is not checked.
+        let findings = connectivity_findings(
+            &intent(connections.clone()),
+            &[a.clone(), b.clone()],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert_eq!(findings.len(), 2);
+        // A scoped connection whose target is missing from the evaluated
+        // parts is unresolved, never guessed.
+        connections.push(DeclaredConnection {
+            a: id(1),
+            b: id(3),
+            kind: ConnectionKind::Contact,
+        });
+        let findings = connectivity_findings(
+            &intent(connections),
+            &[a, b],
+            &[id(1), id(2), id(3)],
+            CONTACT_TOLERANCE_MM,
+        );
+        let unresolved = findings
+            .iter()
+            .find(|f| f.missing_inputs == vec!["target_unresolved"])
+            .unwrap();
+        assert_eq!(unresolved.rule, "PART_UNCONNECTED");
+        assert_eq!(unresolved.status, "unknown");
+        assert_eq!(unresolved.elements, vec![id(1), id(3)]);
     }
 }

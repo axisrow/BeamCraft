@@ -62,7 +62,17 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
         .transpose()?;
     let (offset, limit) = crate::plate_cmd::page_of(&options)?;
     let inspection = inspect(&store)?;
-    let report = check::check_model(&inspection, element, offset, limit)?;
+    // No store carries recorded inputs yet (joint intent, gap requirements,
+    // weld facts are read from the store by the recorded-inputs slice); the
+    // default inputs keep the connectivity rules not applicable, which the
+    // coverage paragraph of the reply states.
+    let report = check::check_model(
+        &inspection,
+        &steel::engine::check::RecordedInputs::default(),
+        element,
+        offset,
+        limit,
+    )?;
     let buckets = report
         .coverage
         .iter()
@@ -120,7 +130,7 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
                     "elements",
                     Json::Array(report.coverage.iter().map(row_json).collect()),
                 ),
-                ("limitations", Json::text(report.limitations)),
+                ("limitations", Json::text(report.limitations.clone())),
             ]),
         ),
         ("findings_total", Json::uint(report.findings_total as u64)),
@@ -175,6 +185,23 @@ fn finding_json(finding: &check::Finding) -> Json {
         ("measured_mm", number_opt(finding.measured_mm)),
         ("required_mm", number_opt(finding.required_mm)),
         ("tolerance_mm", number_opt(finding.tolerance_mm)),
+        (
+            "bounds",
+            Json::Array(
+                finding
+                    .bounds
+                    .iter()
+                    .map(|bound| {
+                        Json::object([
+                            ("name", Json::text(bound.name)),
+                            ("bound_mm", number(bound.bound_mm)),
+                            ("tolerance_mm", number(bound.tolerance_mm)),
+                            ("source", Json::text(bound.source)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
         (
             "missing_inputs",
             Json::Array(
