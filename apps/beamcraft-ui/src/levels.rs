@@ -273,6 +273,15 @@ fn caption(level: &LevelChoice) -> String {
     format!("{name}{cut}  {:+} mm", level.elevation_mm)
 }
 
+/// What a section's level captions must know about the rest of the pane.
+#[derive(Clone, Copy, Default)]
+pub struct SectionMarks<'a> {
+    /// The id of the level selected in the Levels panel, drawn in the brand colour.
+    pub selected: Option<&'a str>,
+    /// Screen rectangles a caption keeps clear of: the grid bubbles drawn before it.
+    pub avoid: &'a [egui::Rect],
+}
+
 /// Paints the levels seen edge-on: a dashed line over the model and the grids (`extent`, scene
 /// coordinates) and, at its right end, a mark with the name and elevation. Levels too close to
 /// caption keep their lines.
@@ -283,14 +292,16 @@ pub fn paint_sections(
     origin_z: f64,
     extent: Option<([f32; 3], [f32; 3])>,
     levels: &[LevelChoice],
-    selected: Option<&str>,
+    marks: SectionMarks<'_>,
 ) {
+    let SectionMarks { selected, avoid } = marks;
     let painter = ui.painter_at(rect);
     let palette = theme::Palette::current(ui);
     let Some((left, right)) = section_span(view, rect, extent) else {
         return;
     };
     let mut last_caption = f32::NEG_INFINITY;
+    let mut claimed: Vec<egui::Rect> = avoid.to_vec();
     for level in sorted(levels) {
         let Some(row) = section_row(view, rect, origin_z, level.elevation_mm) else {
             continue;
@@ -328,17 +339,38 @@ pub fn paint_sections(
             palette.text,
         );
         let size = galley.size();
-        let corner = egui::pos2(
-            (right - 10.0 - size.x).max(rect.left() + 2.0),
-            row - size.y - 3.0,
-        );
-        painter.rect_filled(
-            egui::Rect::from_min_size(corner, size).expand(2.0),
-            2,
-            palette.surface,
-        );
-        painter.galley(corner, galley, palette.text);
+        let start =
+            egui::Rect::from_min_size(egui::pos2(right - 10.0 - size.x, row - size.y - 3.0), size)
+                .expand(2.0);
+        // Clear of the grid bubbles and of the captions already placed: a caption that cannot
+        // find a free place keeps its line but loses its text, rather than printing over a
+        // bubble's number.
+        let Some(boxed) = free_caption(start, &claimed, rect.left() + 2.0) else {
+            continue;
+        };
+        claimed.push(boxed);
+        painter.rect_filled(boxed, 2, palette.surface);
+        painter.galley(boxed.min + egui::vec2(2.0, 2.0), galley, palette.text);
     }
+}
+
+/// Moves `wanted` left until it touches none of `claimed`, jumping past each rectangle it
+/// meets; `None` when it would leave the pane (`left` is the pane's left bound) first.
+fn free_caption(wanted: egui::Rect, claimed: &[egui::Rect], left: f32) -> Option<egui::Rect> {
+    const GAP: f32 = 4.0;
+    let mut rect = wanted;
+    // Each pass either finds no clash or jumps strictly left of one claimed rectangle, so the
+    // loop ends after at most one pass per rectangle.
+    for _ in 0..=claimed.len() {
+        let Some(hit) = claimed.iter().find(|other| other.intersects(rect)) else {
+            return (rect.left() >= left).then_some(rect);
+        };
+        rect = rect.translate(egui::vec2(hit.left() - GAP - rect.right(), 0.0));
+        if rect.left() < left {
+            return None;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -346,6 +378,36 @@ mod tests {
     use super::*;
     use crate::camera::Camera;
     use beamcraft_engine::work_plane::WorkPlane;
+
+    #[test]
+    fn a_caption_keeps_clear_of_grid_bubbles_and_other_captions() {
+        let rect = |x: f32, y: f32, w: f32, h: f32| {
+            egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+        };
+        let wanted = rect(600.0, 90.0, 100.0, 16.0);
+        // Nothing in the way: the caption stays where it was asked for.
+        assert_eq!(free_caption(wanted, &[], 2.0), Some(wanted));
+        // A bubble over its right end (the 'Level 1' over bubble '1' case): it moves left of
+        // the bubble and touches nothing.
+        let bubble = rect(680.0, 80.0, 24.0, 24.0);
+        let moved = free_caption(wanted, &[bubble], 2.0).unwrap();
+        assert!(!moved.intersects(bubble), "{moved:?}");
+        assert!(moved.right() <= bubble.left(), "{moved:?}");
+        // Two bubbles in a row: it jumps past both.
+        let second = rect(560.0, 80.0, 24.0, 24.0);
+        let moved = free_caption(wanted, &[bubble, second], 2.0).unwrap();
+        assert!(
+            !moved.intersects(bubble) && !moved.intersects(second),
+            "{moved:?}"
+        );
+        // No room left of the blockers inside the pane: no caption rather than an overlap.
+        assert_eq!(free_caption(wanted, &[bubble, second], 560.0), None);
+        // A blocker that is not in the caption's band does not move it.
+        assert_eq!(
+            free_caption(wanted, &[rect(680.0, 200.0, 24.0, 24.0)], 2.0),
+            Some(wanted)
+        );
+    }
 
     #[test]
     fn a_level_is_a_line_only_when_seen_edge_on() {

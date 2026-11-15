@@ -106,6 +106,15 @@ struct Loaded {
     uploaded: Uploaded,
 }
 
+/// A copy or move by two points in progress (Ctrl+C / Ctrl+M).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TwoPoint {
+    /// `Copy` or `Move`.
+    pub(crate) kind: EditKind,
+    /// The origin point, once picked.
+    pub(crate) from: Option<[f64; 3]>,
+}
+
 /// The window state.
 pub struct App {
     pub(crate) appearance: Option<crate::appearance::Appearance>,
@@ -152,6 +161,11 @@ pub struct App {
     snap_hover: Option<beamcraft_engine::query::pick::SnapKind>,
     /// Where the pointer resolves while placing a beam or column, snapped when a snap applies.
     member_cursor: Option<[f64; 3]>,
+    /// The working coordinate under the pointer, in millimetres, with the frame it was read on:
+    /// where the pointer meets the view's plane (a plan or a section), else the work plane,
+    /// else the ground. Shown at the bottom right like Tekla's coordinate readout, in the work
+    /// plane's own axes when one is set. Display only, never an edit.
+    pointer_world: Option<(u64, [f64; 3])>,
     distance_input: String,
     distance_aim: Option<[f64; 3]>,
     plate_input: [String; 2],
@@ -174,6 +188,16 @@ pub struct App {
     edit_note: Option<Result<String, String>>,
     /// Flips the scroll zoom direction (macOS natural scrolling inverts it); pinch and keys keep theirs.
     invert_zoom: bool,
+    /// F8: the views do not rotate (Tekla's rotation lock); pan and zoom still work.
+    pub(crate) rotation_locked: bool,
+    /// Ctrl+C / Ctrl+M armed: the next clicks pick the origin and the destination point.
+    pub(crate) two_point: Option<TwoPoint>,
+    /// Where an area-selection drag started.
+    area_start: Option<egui::Pos2>,
+    /// The elements an area selection took; the primary one is `editor.selected`.
+    selected_many: Vec<String>,
+    /// The outline of the area selection, keyed by its ids and the snapshot token.
+    many_edges: (String, Vec<[[f64; 3]; 2]>),
     /// The active viewport input binding preset. A window starts on the side-panel choice
     /// saved in the settings file, or on the platform default when nothing is saved
     /// (`Trackpad` on macOS, `Mouse` elsewhere); a click in the side panel saves the choice.
@@ -1144,6 +1168,7 @@ impl App {
             plate_hover: None,
             snap_hover: None,
             member_cursor: None,
+            pointer_world: None,
             distance_input: String::new(),
             distance_aim: None,
             plate_input: ["0".into(), "0".into()],
@@ -1167,6 +1192,11 @@ impl App {
             select_epoch: Epoch::default(),
             edit_note: None,
             invert_zoom: false,
+            rotation_locked: false,
+            two_point: None,
+            area_start: None,
+            selected_many: Vec::new(),
+            many_edges: Default::default(),
             preset,
             props: Properties::default(),
             sheet_editor: crate::sheet::SheetEditor::default(),
@@ -1926,6 +1956,29 @@ impl App {
         }
     }
 
+    /// Runs the commands of a selection of several elements on a worker, one after another; the
+    /// reply arrives like any edit's.
+    fn spawn_batch(&mut self, kind: EditKind, commands: Vec<Vec<String>>) {
+        if !self.editor.begin_batch() {
+            return;
+        }
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.edit_job = Some(rx);
+        self.edit_note = None;
+        let stats = Arc::clone(&self.stats);
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-batch".into())
+            .spawn(move || {
+                let _ = tx.send(command::commit_many(&cli, kind, &commands, &stats));
+            });
+        if spawned.is_err() {
+            self.edit_job = None;
+            self.editor.finish();
+            self.edit_note = Some(Err("the edit thread could not be started".into()));
+        }
+    }
+
     /// Delete the current grid or part using the same engine command as the CLI.
     fn delete_selection(&mut self) {
         if self.other_command_running() {
@@ -1934,8 +1987,90 @@ impl App {
         if let Some(edit) = &self.grid_edit {
             self.editor.select_id(edit.id.clone());
         }
+        let ids = self.selection_ids();
+        if ids.len() > 1 {
+            let target = crate::edit::Target {
+                store: &self.source.store,
+                workspace: self.source.workspace.as_deref(),
+            };
+            let commands = ids
+                .into_iter()
+                .map(|id| self.editor.delete_args(id, target))
+                .collect();
+            self.spawn_batch(EditKind::Delete, commands);
+            return;
+        }
         if self.editor.selected().is_some() {
             self.start_edit(Some(EditKind::Delete));
+        }
+    }
+
+    /// Arms a copy or move by two points for the selection.
+    fn arm_two_point(&mut self, kind: EditKind) {
+        if self.editor.selected().is_none() {
+            self.edit_note = Some(Err("Select an element first.".into()));
+            return;
+        }
+        self.two_point = Some(TwoPoint { kind, from: None });
+        self.edit_note = Some(Ok(format!(
+            "{}: pick the origin point (Esc cancels).",
+            if kind == EditKind::Move {
+                "Move"
+            } else {
+                "Copy"
+            }
+        )));
+    }
+
+    /// A click while a copy or move by two points is armed: the first is the origin, the second
+    /// the destination, which runs the command.
+    pub(super) fn two_point_click(&mut self, ray: crate::edit::Ray) {
+        let Some(armed) = self.two_point else { return };
+        let point = match self.creation_point(ray, false) {
+            Ok(point) => point,
+            Err(error) => {
+                self.edit_note = Some(Err(error.message));
+                return;
+            }
+        };
+        let Some(from) = armed.from else {
+            self.two_point = Some(TwoPoint {
+                from: Some(point),
+                ..armed
+            });
+            self.edit_note = Some(Ok("Pick the destination point (Esc cancels).".into()));
+            return;
+        };
+        self.two_point = None;
+        if self.other_command_running() {
+            self.edit_note = Some(Err(
+                "another command is running; wait for it to finish.".into()
+            ));
+            return;
+        }
+        let target = crate::edit::Target {
+            store: &self.source.store,
+            workspace: self.source.workspace.as_deref(),
+        };
+        let ids = self.selection_ids();
+        if ids.len() > 1 {
+            let commands: Result<Vec<_>, _> = ids
+                .into_iter()
+                .map(|id| {
+                    self.editor
+                        .two_point_args(armed.kind, id, from, point, target)
+                })
+                .collect();
+            match commands {
+                Ok(commands) => self.spawn_batch(armed.kind, commands),
+                Err(error) => self.edit_note = Some(Err(error.to_string())),
+            }
+            return;
+        }
+        match self.editor.begin_two_point(armed.kind, from, point, target) {
+            Ok(Some(edit)) => self.spawn_edit(edit),
+            Ok(None) => {}
+            Err(error) => self.edit_note = Some(Err(error.to_string())),
         }
     }
 
@@ -1946,6 +2081,64 @@ impl App {
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
             self.delete_selection();
+        }
+        // Tekla's undo and redo keys: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z. A text field keeps them
+        // for its own text.
+        if !ctx.egui_wants_keyboard_input()
+            && !self.menu_open
+            && self.publisher.phase() != Phase::Confirming
+        {
+            let (redo, undo) = ctx.input_mut(|i| {
+                let shift_z = egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::Z,
+                );
+                let redo = i.consume_shortcut(&shift_z)
+                    || i.consume_shortcut(&egui::KeyboardShortcut::new(
+                        egui::Modifiers::COMMAND,
+                        egui::Key::Y,
+                    ));
+                let undo = i.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    egui::Key::Z,
+                ));
+                (redo, undo)
+            });
+            if redo {
+                self.start_edit(Some(EditKind::Redo));
+            } else if undo {
+                self.start_edit(Some(EditKind::Undo));
+            }
+            // Ctrl+C copies and Ctrl+M moves the selection by two picked points. The window
+            // turns Ctrl+C into a Copy event, so both forms count.
+            let (copy, move_) = ctx.input_mut(|i| {
+                let copy = i.events.iter().any(|e| matches!(e, egui::Event::Copy))
+                    || i.consume_key(egui::Modifiers::COMMAND, egui::Key::C);
+                let move_ = i.consume_key(egui::Modifiers::COMMAND, egui::Key::M);
+                (copy, move_)
+            });
+            if copy || move_ {
+                self.arm_two_point(if move_ {
+                    EditKind::Move
+                } else {
+                    EditKind::Copy
+                });
+            }
+        }
+        if self.two_point.is_some()
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.two_point = None;
+            self.edit_note = Some(Ok("Cancelled.".into()));
+        }
+        if !ctx.egui_wants_keyboard_input() && ctx.input(|input| input.key_pressed(egui::Key::F8)) {
+            self.rotation_locked = !self.rotation_locked;
+            self.edit_note = Some(Ok(if self.rotation_locked {
+                "Rotation locked (F8 unlocks).".into()
+            } else {
+                "Rotation unlocked.".into()
+            }));
         }
     }
 
@@ -1989,6 +2182,7 @@ impl App {
                 match done.kind {
                     EditKind::Delete => {
                         self.editor.deselect();
+                        self.selected_many.clear();
                         self.props.clear();
                         self.grid_edit = None;
                         self.grid_form = crate::grid::GridForm::default();
@@ -4190,13 +4384,7 @@ pub(crate) mod tests {
         // the properties panel can name is the new file's own — the old file's are gone. The
         // native picker dialog cannot be shown headlessly; the test sets what its chosen
         // answer sets (`open_source_request`), the one line between the dialog and the switch.
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -9102,13 +9290,7 @@ pub(crate) mod tests {
         // the refresh exports the display bundle (`export-view --source`), reads the body
         // facts (`ifc-shapes`), keys them by the display ids, the click picks through the
         // bounds the snapshot carries, and the panel names the body from the file itself.
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -12146,13 +12328,7 @@ mod navigation_tests {
         use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
         use beamcraft_model::id::ElementId;
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::tests::workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before native tests");
         let root = std::env::temp_dir().join(format!(
             "bc-recheck-3d-snap-{}-{}",

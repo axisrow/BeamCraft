@@ -514,24 +514,10 @@ impl App {
                     theme::logo(ui, self.logo.as_ref(), 20.0);
                     let free = !self.other_command_running() && !self.editor.busy();
                     if !self.menu_open {
-                        if theme::icon_button(
-                            ui,
-                            Icon::Undo,
-                            "Undo",
-                            self.source.workspace.is_some() && free,
-                        )
-                        .clicked()
-                        {
+                        if theme::icon_button(ui, Icon::Undo, "Undo", free).clicked() {
                             self.start_edit(Some(EditKind::Undo));
                         }
-                        if theme::icon_button(
-                            ui,
-                            Icon::Redo,
-                            "Redo",
-                            self.source.workspace.is_some() && free,
-                        )
-                        .clicked()
-                        {
+                        if theme::icon_button(ui, Icon::Redo, "Redo", free).clicked() {
                             self.start_edit(Some(EditKind::Redo));
                         }
                         ui.separator();
@@ -718,7 +704,6 @@ impl App {
                 // The benches a source window can reach: display-only ones. Everything that
                 // writes stays on its button, greyed out (issue 614).
                 let store_free = !self.source.read_only();
-                let has_workspace = self.source.workspace.is_some();
                 // Every viewport command needs a pane to act on.
                 let has_pane = self.views.active_pane().is_some();
                 let mut pick = None;
@@ -803,7 +788,7 @@ impl App {
                         }
                     });
                     group(ui, "History", &mut |ui| {
-                        let can = has_workspace && edits_free;
+                        let can = edits_free;
                         undo = tool_button(ui, Icon::Undo, "Undo", false, can).clicked();
                         redo = tool_button(ui, Icon::Redo, "Redo", false, can).clicked();
                     });
@@ -811,6 +796,16 @@ impl App {
                     if self.ribbon_tab == RibbonTab::View {
                     group(ui, "Views", &mut |ui| {
                         dropdown_button(ui, Icon::NewView, "Create view", true, |ui| {
+                            // One click for a plan of every level, named "Plan <level>".
+                            if ui
+                                .button("Plans for all levels")
+                                .on_hover_text("Create a plan view for each level of the project")
+                                .clicked()
+                            {
+                                self.plans_for_all_levels();
+                                ui.close();
+                            }
+                            ui.separator();
                             for (construction, label) in crate::views::Construction::ALL {
                                 if ui.button(label).clicked() {
                                     self.begin_view(construction);
@@ -1397,7 +1392,24 @@ impl App {
                     if let Some(error) = &self.error {
                         ui.label(RichText::new(error).small().color(palette.error));
                     }
+                    let reading = self
+                        .pointer_world
+                        .filter(|(stamp, _)| *stamp + 1 >= ui.ctx().cumulative_pass_nr());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Added first, so it sits at the far right like Tekla's coordinate
+                        // readout. A fixed-width monospace text does not jitter while the
+                        // pointer moves.
+                        let text = reading.map_or_else(
+                            || coordinate_text(None),
+                            |(_, point)| coordinate_text(Some(point)),
+                        );
+                        ui.label(RichText::new(text).monospace().size(10.0).color(palette.muted))
+                            .on_hover_text(if self.tools.plane.is_some() {
+                                "Pointer position in the work plane, mm"
+                            } else {
+                                "Pointer position in the model, mm"
+                            });
+                        ui.separator();
                         if ui
                             .selectable_label(
                                 self.selection.snapping_enabled,
@@ -2139,5 +2151,36 @@ mod tests {
             assert_eq!(bench.edit(), None);
         }
         assert_eq!(Bench::default(), Bench::Select);
+    }
+}
+
+/// The working coordinate as the status bar shows it: millimetres to one decimal, each value
+/// padded to a fixed width so the readout does not shift as the pointer moves; dashes while the
+/// pointer is over no plane.
+pub(crate) fn coordinate_text(point: Option<[f64; 3]>) -> String {
+    match point {
+        Some([x, y, z]) if [x, y, z].iter().all(|v| v.is_finite()) => {
+            format!("X {x:>10.1}  Y {y:>10.1}  Z {z:>10.1}")
+        }
+        _ => format!("X {:>10}  Y {:>10}  Z {:>10}", "-", "-", "-"),
+    }
+}
+
+#[cfg(test)]
+mod coordinate_tests {
+    use super::coordinate_text;
+
+    #[test]
+    fn the_coordinate_readout_has_a_fixed_width() {
+        let a = coordinate_text(Some([12345.67, -789.0, 3000.0]));
+        let b = coordinate_text(Some([0.0, 0.0, 0.0]));
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a, "X    12345.7  Y     -789.0  Z     3000.0");
+        // Nothing under the pointer, or a non-finite point, reads as dashes of the same width.
+        assert_eq!(coordinate_text(None).len(), a.len());
+        assert_eq!(
+            coordinate_text(Some([f64::NAN, 0.0, 0.0])),
+            coordinate_text(None)
+        );
     }
 }

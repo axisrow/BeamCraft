@@ -640,12 +640,6 @@ fn undo_and_redo_run_in_a_workspace_and_never_touch_the_published_store() {
         workspace: Some(&workspace),
     };
     let mut editor = Editor::default();
-    // Without a workspace there is nothing to undo.
-    assert!(
-        editor
-            .begin_direct(EditKind::Undo, target(&published))
-            .is_err()
-    );
     select(&cli, &workspace, &mut editor, A);
     editor.move_to = ["10".into(), "20".into(), "30".into()];
     commit(&cli, &mut editor, EditKind::Move, work).unwrap();

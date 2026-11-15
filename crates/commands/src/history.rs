@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! P07 adapter: durable undo and redo of a workspace draft.
+//! P07 adapter: durable undo and redo of a workspace draft, and of a project store itself.
+//!
+//! A project opened directly (no personal workspace) has the same history: its own revision
+//! log plus its own `undo.log` beside it, with no rebase boundary, so Ctrl+Z works in the
+//! project as it does in Tekla (owner decision 2026-11-14). A personal workspace keeps using its
+//! draft history; a project step refuses a workspace directory and the other way round.
 //!
 //! One accepted command is one revision of the draft (U06/U07), which is exactly one undo unit.
 //! Undo does not edit anything: it commits a **new** revision whose layers are byte for byte the
@@ -230,10 +235,31 @@ impl Timeline {
 
 /// Derives the undo and redo stacks of the draft in `dir`.
 pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, Refusal> {
+    derive(workspace, dir, false)
+}
+
+/// Derives the undo and redo stacks of the project store in `dir` (not a personal workspace).
+pub fn project_timeline(store: &RevisionStore, dir: &Path) -> Result<Timeline, Refusal> {
+    derive(store, dir, true)
+}
+
+fn derive(workspace: &RevisionStore, dir: &Path, project: bool) -> Result<Timeline, Refusal> {
+    // The state lease serialises history steps on the directory, workspace or project.
     let state = WorkspaceState::open(dir)?;
-    let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
+    let rebase_sequence = match (state.meta(), project) {
+        (Some(meta), false) => meta.rebase_sequence,
+        (None, true) => 0,
+        (Some(_), true) => {
+            return Err(Refusal {
+                rule_id: None,
+                code: ErrorCode::InvalidArgument,
+                message: "this is a personal workspace; use undo-workspace or redo-workspace",
+            });
+        }
+        (None, false) => return Err(crate::workspace::unusable()),
+    };
     let head = head_of(workspace)?;
-    if meta.rebase_sequence > head.sequence() {
+    if rebase_sequence > head.sequence() {
         return Err(integrity(
             "workspace rebase boundary is beyond its draft head",
         ));
@@ -264,7 +290,7 @@ pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, Refus
         let before = sequence.saturating_sub(1);
         // A rebase candidate and a resolution revision are boundaries: the states before them
         // cannot be restored onto the retained work.
-        if sequence == meta.rebase_sequence || resolved.contains(info.revision().as_str()) {
+        if sequence == rebase_sequence || resolved.contains(info.revision().as_str()) {
             undo.clear();
             redo.clear();
         } else if sequence > 1 {
@@ -333,7 +359,30 @@ pub fn step(
     request: &Step,
     hook: &mut dyn CommitHook,
 ) -> Result<Stepped, Refusal> {
-    let line = timeline(workspace, dir)?;
+    step_in(workspace, dir, direction, request, hook, false)
+}
+
+/// Undoes or redoes one unit of the project store in `dir` itself, exactly as [`step`] does for
+/// a draft: a new revision with the layers of the restored state, one undo unit per command.
+pub fn project_step(
+    store: &RevisionStore,
+    dir: &Path,
+    direction: Direction,
+    request: &Step,
+    hook: &mut dyn CommitHook,
+) -> Result<Stepped, Refusal> {
+    step_in(store, dir, direction, request, hook, true)
+}
+
+fn step_in(
+    workspace: &RevisionStore,
+    dir: &Path,
+    direction: Direction,
+    request: &Step,
+    hook: &mut dyn CommitHook,
+    project: bool,
+) -> Result<Stepped, Refusal> {
+    let line = derive(workspace, dir, project)?;
     let known = read_log(dir)?.into_iter().find_map(|logged| match logged {
         Logged::Step(intent) if intent.op == request.op_id => Some(intent),
         _ => None,
@@ -458,7 +507,7 @@ pub fn step(
         Some(pin) => commit_verified_with_evidence(workspace, &draft, &expected, Some(pin), hook)?,
         None => commit_verified(workspace, &draft, &expected, hook)?,
     };
-    let after = timeline(workspace, dir)?;
+    let after = derive(workspace, dir, project)?;
     Ok(Stepped {
         replayed: false,
         revision: summarize(&committed.info),

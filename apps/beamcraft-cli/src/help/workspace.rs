@@ -25,5 +25,8 @@ pub(super) const UNDO: &str = concat!(
     "the restored layers): undo-workspace --workspace-dir DIR [--revision-id UUID] [--op-id ",
     "UUID]; redo-workspace --workspace-dir DIR [same]; inspect-workspace-history ",
     "--workspace-dir DIR (undo and redo units; an edit after an undo discards redo; ",
-    "INVALID_ARGUMENT when there is nothing to undo or redo)",
+    "INVALID_ARGUMENT when there is nothing to undo or redo); undo-revision --store ROOT ",
+    "[--revision-id UUID] [--op-id UUID] and redo-revision --store ROOT [same] step a project ",
+    "store's own history the same way, without a personal workspace (Ctrl+Z in a project; ",
+    "a personal workspace directory is refused there, use undo-workspace)",
 );

@@ -209,6 +209,23 @@ pub fn commit_edit(cli: &Path, edit: &Edit, stats: &Stats) -> Result<Edited, Too
     parse_edited(edit.kind, output.code, &output.stdout)
 }
 
+/// Runs `commands` one after another and reports the last accepted revision; the first refusal
+/// stops the run and is returned. A session batch would make them one revision, but the engine's
+/// batch draft cannot yet edit an element that is already in the head, so each is its own step.
+pub fn commit_many(
+    cli: &Path,
+    kind: EditKind,
+    commands: &[Vec<String>],
+    stats: &Stats,
+) -> Result<Edited, ToolError> {
+    let mut last = Err(ToolError::local("INVALID_ARGUMENT", "nothing is selected"));
+    for args in commands {
+        let output = run(cli, args, DEADLINE, stats)?;
+        last = Ok(parse_edited(kind, output.code, &output.stdout)?);
+    }
+    last
+}
+
 /// What a click found: the element id the engine's `pick` returned and, apart from it, whether
 /// the element's details could be read (a failure there never loses the selection).
 #[derive(Debug)]

@@ -346,6 +346,18 @@ pub fn persist_presets(config_dir: Option<&Path>, book: &PresetBook) -> Result<(
     else {
         return Err("there is no configuration directory for the view presets".into());
     };
+    let bytes = encode_book(book)?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))?;
+    let path = dir.join(PRESETS_FILE);
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, &bytes)
+        .and_then(|()| std::fs::rename(&temp, &path))
+        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))
+}
+
+/// The JSON bytes of a preset book, within the 64 KiB the file format allows.
+fn encode_book(book: &PresetBook) -> Result<Vec<u8>, String> {
     let bytes = beamcraft_host::presets::book_to_json(book)
         .and_then(|json| {
             json.encode(&Limits::DEFAULT).map_err(|_| {
@@ -360,13 +372,102 @@ pub fn persist_presets(config_dir: Option<&Path>, book: &PresetBook) -> Result<(
     if bytes.len() > beamcraft_host::presets::MAX_BYTES {
         return Err("the view presets exceed 64 KiB".into());
     }
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))?;
-    let path = dir.join(PRESETS_FILE);
-    let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, &bytes)
-        .and_then(|()| std::fs::rename(&temp, &path))
-        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))
+    Ok(bytes)
+}
+
+/// Renames the preset `old` to `new`, keeping its content and its place in the list. A name
+/// another preset already holds (case-insensitively) refuses and changes nothing.
+pub fn rename_preset(book: &mut PresetBook, old: &str, new: &str) -> Result<(), String> {
+    let new = new.trim();
+    if new.is_empty() {
+        return Err("Give the preset a name.".into());
+    }
+    let wanted = old.trim().to_lowercase();
+    if new.to_lowercase() != wanted && book.find(new).is_some() {
+        return Err(format!("A view preset named “{new}” already exists."));
+    }
+    let mut next = book.presets().to_vec();
+    let slot = next
+        .iter_mut()
+        .find(|p| p.name.to_lowercase() == wanted)
+        .ok_or_else(|| format!("No view preset is named “{}”.", old.trim()))?;
+    new.clone_into(&mut slot.name);
+    // Admitting the whole list again validates the new name like any other.
+    *book = PresetBook::from_parts(next).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Writes `book` as a presets file named after `stem` inside `dir`, never over an existing file:
+/// a taken name gets a number. Returns the path written.
+pub fn export_presets(dir: &Path, book: &PresetBook, stem: &str) -> Result<PathBuf, String> {
+    use std::io::Write;
+    let bytes = encode_book(book)?;
+    let stem: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || " -_".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let stem = stem.trim();
+    let stem = if stem.is_empty() {
+        "view-presets"
+    } else {
+        stem
+    };
+    for n in 1..=1000 {
+        let name = if n == 1 {
+            format!("{stem}.json")
+        } else {
+            format!("{stem} {n}.json")
+        };
+        let path = dir.join(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                return file
+                    .write_all(&bytes)
+                    .map(|()| path)
+                    .map_err(|e| format!("the view presets could not be written: {}", e.kind()));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                return Err(format!(
+                    "the view presets could not be written: {}",
+                    e.kind()
+                ));
+            }
+        }
+    }
+    Err("no free file name for the export".into())
+}
+
+/// Reads a presets file and saves every preset in it into `into`, replacing one of the same
+/// name. Returns how many it brought in. Nothing is added when the file or any preset in it is
+/// refused.
+pub fn import_presets(path: &Path, into: &mut PresetBook) -> Result<usize, String> {
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("the file could not be read: {}", e.kind()))?;
+    if bytes.len() > beamcraft_host::presets::MAX_BYTES {
+        return Err("the file is larger than 64 KiB".into());
+    }
+    let json = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
+        .map_err(|_| "the file is not valid JSON".to_owned())?;
+    let incoming = beamcraft_host::presets::book_from_json(&json)
+        .map_err(|e| format!("the view presets were refused: {e}"))?;
+    let mut merged = into.clone();
+    for preset in incoming.presets() {
+        merged.save(preset.clone()).map_err(|e| e.to_string())?;
+    }
+    let count = incoming.len();
+    *into = merged;
+    Ok(count)
 }
 
 /// How a new view gets its plane.
@@ -1099,6 +1200,8 @@ pub struct Views {
     pub folder_rename: Option<(String, String)>,
     /// The name a "Save as view preset" gets, while its field is shown.
     pub preset_name: Option<String>,
+    /// The user's view preset being renamed, while the name field is shown for it.
+    pub preset_rename: Option<String>,
     /// The filter editor: the filter being edited (a working copy) and the name it was saved
     /// under (`None` for a new one).
     pub filter_edit: Option<(beamcraft_engine::views::ViewFilter, Option<String>)>,
@@ -1334,6 +1437,81 @@ mod tests {
         let mut v = ModelView::new(id(n), name, WorkPlane::default(), 5000.0);
         v.folder = folder.into();
         v
+    }
+
+    fn book_of(names: &[&str]) -> PresetBook {
+        let mut book = PresetBook::new();
+        for (n, name) in names.iter().enumerate() {
+            book.save(PresetBookEntry::from_view(
+                name,
+                &view(n as u64 + 1, "v", ""),
+            ))
+            .unwrap();
+        }
+        book
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-presets-ui-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn renaming_a_preset_keeps_its_place_and_refuses_a_taken_name() {
+        let mut book = book_of(&["Plans", "Sections", "Details"]);
+        rename_preset(&mut book, "sections", "Cuts").unwrap();
+        let names: Vec<_> = book.presets().iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Plans", "Cuts", "Details"]);
+        // Another preset's name, in any letter case, and an empty name change nothing.
+        assert!(rename_preset(&mut book, "Cuts", "DETAILS").is_err());
+        assert!(rename_preset(&mut book, "Cuts", "  ").is_err());
+        assert!(rename_preset(&mut book, "Nothing", "Other").is_err());
+        assert_eq!(book.len(), 3);
+        // A change of letter case only is allowed.
+        rename_preset(&mut book, "Cuts", "CUTS").unwrap();
+        assert!(book.presets().iter().any(|p| p.name == "CUTS"));
+    }
+
+    #[test]
+    fn presets_export_to_a_new_file_and_import_back() {
+        let dir = scratch("roundtrip");
+        let book = book_of(&["Plans", "Sections"]);
+        let first = export_presets(&dir, &book, "My presets").unwrap();
+        // A second export never overwrites the first.
+        let second = export_presets(&dir, &book, "My presets").unwrap();
+        assert_ne!(first, second);
+        assert!(first.is_file() && second.is_file());
+        let mut other = book_of(&["Plans"]);
+        assert_eq!(import_presets(&first, &mut other).unwrap(), 2);
+        let names: Vec<_> = other.presets().iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Plans", "Sections"],
+            "a same-named preset is replaced, not doubled"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_import_adds_nothing() {
+        let dir = scratch("refused");
+        let mut book = book_of(&["Plans"]);
+        let bad = dir.join("bad.json");
+        std::fs::write(&bad, b"{ not json").unwrap();
+        assert!(import_presets(&bad, &mut book).is_err());
+        let missing = dir.join("missing.json");
+        assert!(import_presets(&missing, &mut book).is_err());
+        let big = dir.join("big.json");
+        std::fs::write(&big, vec![b' '; beamcraft_host::presets::MAX_BYTES + 1]).unwrap();
+        assert!(import_presets(&big, &mut book).is_err());
+        assert_eq!(book.len(), 1);
+        // The export name is made safe: path separators and the like do not escape the folder.
+        let path = export_presets(&dir, &book, "../escape").unwrap();
+        assert_eq!(path.parent(), Some(dir.as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

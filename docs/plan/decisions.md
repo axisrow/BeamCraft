@@ -4,6 +4,18 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-14
+
+- **Undo works in a project, not only in a personal workspace.** Owner decision: as in Tekla
+  Structures, Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) undo and redo in a project opened directly
+  from the start page. A project store keeps its own undo history beside it (`undo-revision`,
+  `redo-revision`), with the same rule as a workspace draft: one command is one undo unit and
+  each step commits a new revision with the restored layers. A personal workspace keeps
+  `undo-workspace`.
+- **Tekla-style navigation.** The view orbits about a rotation point: the selected element's
+  centre while one is selected, else the point set with Ctrl+Shift+middle click or V, shown in
+  the view; Ctrl+arrows turn 15 degrees, Shift+arrows 5, F8 locks rotation.
+
 ## 2026-11-10
 
 - **D08 closes with CUPS-only printer submission.** Owner decision ("закрыть с границами"):

@@ -783,6 +783,104 @@ impl Editor {
         }))
     }
 
+    /// The command for a move or copy of the selection picked by two points (Ctrl+M / Ctrl+C, as
+    /// in Tekla): a move runs `update-element --move-from --move-to`, a copy `copy-element
+    /// --offset (to - from)`. Runs at once, as one undo unit.
+    pub fn begin_two_point(
+        &mut self,
+        kind: EditKind,
+        from: [f64; 3],
+        to: [f64; 3],
+        target: Target<'_>,
+    ) -> Result<Option<Edit>, FormError> {
+        let id = self
+            .selected
+            .as_ref()
+            .map(|s| s.id.clone())
+            .ok_or_else(|| FormError {
+                field: "Selection",
+                message: "click an element first".into(),
+            })?;
+        let args = self.two_point_args(kind, id, from, to, target)?;
+        if self.busy {
+            return Ok(None);
+        }
+        self.busy = true;
+        self.staged = None;
+        Ok(Some(Edit { kind, args }))
+    }
+
+    /// Marks the panel busy for a batch of commands run as one revision; false while busy.
+    pub fn begin_batch(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        self.busy = true;
+        self.staged = None;
+        true
+    }
+
+    /// `delete-element` for `id`.
+    pub fn delete_args(&self, id: String, target: Target<'_>) -> Vec<String> {
+        let mut args = vec![
+            "delete-element".to_owned(),
+            "--store".into(),
+            target.store.to_string_lossy().into_owned(),
+            "--id".into(),
+            id,
+        ];
+        crate::tools::push_actor(&mut args, self.actor.as_deref());
+        args
+    }
+
+    /// The move or copy of `id` by two points.
+    pub fn two_point_args(
+        &self,
+        kind: EditKind,
+        id: String,
+        from: [f64; 3],
+        to: [f64; 3],
+        target: Target<'_>,
+    ) -> Result<Vec<String>, FormError> {
+        let text = |p: [f64; 3]| format!("{},{},{}", p[0], p[1], p[2]);
+        let store = target.store.to_string_lossy().into_owned();
+        let mut args = match kind {
+            EditKind::Move => vec![
+                "update-element".to_owned(),
+                "--store".into(),
+                store,
+                "--id".into(),
+                id,
+                "--move-from".into(),
+                text(from),
+                "--move-to".into(),
+                text(to),
+            ],
+            EditKind::Copy => vec![
+                if self.copy_instance {
+                    "copy-instance"
+                } else {
+                    "copy-element"
+                }
+                .to_owned(),
+                "--store".into(),
+                store,
+                "--id".into(),
+                id,
+                "--offset".into(),
+                text([to[0] - from[0], to[1] - from[1], to[2] - from[2]]),
+            ],
+            _ => {
+                return Err(FormError {
+                    field: "Command",
+                    message: "only a move or a copy takes two points".into(),
+                });
+            }
+        };
+        crate::tools::push_actor(&mut args, self.actor.as_deref());
+        Ok(args)
+    }
+
     /// The command of `kind` for the present selection and forms. Undo and redo need a workspace.
     pub fn prepare(&self, kind: EditKind, target: Target<'_>) -> Result<Edit, FormError> {
         if kind == EditKind::Move
@@ -844,17 +942,24 @@ impl Editor {
                 "--id".into(),
                 id()?,
             ],
-            EditKind::Undo | EditKind::Redo => {
-                let workspace = target.workspace.ok_or_else(|| FormError {
-                    field: "Workspace",
-                    message: "undo and redo need a personal workspace: open the window with --workspace DIR (beamcraft create-workspace makes one)".into(),
-                })?;
-                vec![
+            // A personal workspace steps its draft; a project opened directly steps its own
+            // history, so Ctrl+Z works in every window as it does in Tekla.
+            EditKind::Undo | EditKind::Redo => match target.workspace {
+                Some(workspace) => vec![
                     kind.command().to_owned(),
                     "--workspace-dir".into(),
                     workspace.to_string_lossy().into_owned(),
-                ]
-            }
+                ],
+                None => vec![
+                    if kind == EditKind::Undo {
+                        "undo-revision".to_owned()
+                    } else {
+                        "redo-revision".to_owned()
+                    },
+                    "--store".into(),
+                    store,
+                ],
+            },
         };
         if matches!(kind, EditKind::Move | EditKind::Copy | EditKind::Delete) {
             crate::tools::push_actor(&mut args, self.actor.as_deref());
@@ -990,7 +1095,11 @@ pub fn parse_edited(
     }
     let outcome = text(&reply, "outcome").unwrap_or_default();
     let replayed = outcome.ends_with("_replayed");
-    if outcome != kind.outcome() && !replayed {
+    let project_step = matches!(
+        (kind, outcome.as_str()),
+        (EditKind::Undo, "revision_undone") | (EditKind::Redo, "revision_redone")
+    );
+    if outcome != kind.outcome() && !replayed && !project_step {
         return Err(ToolError {
             code: "UNREADABLE_REPLY".into(),
             message: format!(
@@ -1439,6 +1548,43 @@ mod tests {
     }
 
     #[test]
+    fn two_points_move_by_from_and_to_and_copy_by_their_difference() {
+        let mut editor = Editor::default();
+        let (from, to) = ([100.0, 200.0, 0.0], [600.0, 200.0, 300.0]);
+        assert!(
+            editor
+                .begin_two_point(EditKind::Move, from, to, target())
+                .is_err()
+        );
+        editor.select(axis_info("E"));
+        let moved = editor
+            .begin_two_point(EditKind::Move, from, to, target())
+            .unwrap()
+            .unwrap();
+        let after = |edit: &Edit, flag: &str| {
+            let at = edit.args.iter().position(|a| a == flag).unwrap();
+            edit.args[at + 1].clone()
+        };
+        assert_eq!(moved.args[0], "update-element");
+        assert_eq!(after(&moved, "--move-from"), "100,200,0");
+        assert_eq!(after(&moved, "--move-to"), "600,200,300");
+        assert!(editor.busy());
+        editor.finish();
+        let copied = editor
+            .begin_two_point(EditKind::Copy, from, to, target())
+            .unwrap()
+            .unwrap();
+        assert_eq!(copied.args[0], "copy-element");
+        assert_eq!(after(&copied, "--offset"), "500,0,300");
+        editor.finish();
+        assert!(
+            editor
+                .begin_two_point(EditKind::Delete, from, to, target())
+                .is_err()
+        );
+    }
+
+    #[test]
     fn another_selection_lets_go_of_the_point() {
         let mut editor = Editor::default();
         editor.select(axis_info("E"));
@@ -1513,13 +1659,20 @@ mod tests {
     }
 
     #[test]
-    fn undo_and_redo_need_a_workspace() {
+    fn undo_and_redo_in_a_project_step_its_own_history() {
+        // Owner decision 2026-11-14: Ctrl+Z works in a project opened without a workspace.
         let editor = Editor::default();
-        for kind in [EditKind::Undo, EditKind::Redo] {
-            let error = editor.prepare(kind, target()).unwrap_err();
-            assert_eq!(error.field, "Workspace");
-            assert!(error.message.contains("--workspace"));
-        }
+        assert_eq!(
+            editor.prepare(EditKind::Undo, target()).unwrap().args,
+            ["undo-revision", "--store", "S"]
+        );
+        assert_eq!(
+            editor.prepare(EditKind::Redo, target()).unwrap().args,
+            ["redo-revision", "--store", "S"]
+        );
+        // The project step's reply is read like the workspace one.
+        let reply = br#"{"outcome":"revision_undone","revision":{}}"#;
+        let _ = parse_edited(EditKind::Undo, Some(0), reply);
     }
 
     #[test]
@@ -1623,7 +1776,6 @@ mod tests {
     #[test]
     fn undo_runs_directly_and_not_while_busy() {
         let mut editor = Editor::default();
-        assert!(editor.begin_direct(EditKind::Undo, target()).is_err());
         let edit = editor
             .begin_direct(EditKind::Undo, workspace())
             .unwrap()

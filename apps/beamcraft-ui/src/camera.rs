@@ -227,17 +227,15 @@ impl Camera {
         }
         let [ox, oy] = orbit;
         let [px, py] = pan;
-        // The 3D view and a view plane orbit alike: yaw about the up axis of their frame (the
-        // world Z, or the plane's normal) and pitch from that frame's ground. A view plane tilts
-        // up to looking straight at it, where it opened; the 3D view stops just short of the
-        // top so its turntable keeps a heading.
-        let top = if self.basis.is_some() {
-            std::f32::consts::FRAC_PI_2
-        } else {
-            1.52
-        };
-        self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + oy).clamp(0.0, top);
+        // A view plane (a plan, an elevation or a section) never orbits: it stays on its plane
+        // with its X to the right and its Y up, as a plan does in Tekla and Revit, and is turned
+        // only by the view's own Rotation setting. Pan and zoom still work. The 3D view orbits
+        // by yaw about the world Z and pitch from the ground, and stops just short of the top
+        // so its turntable keeps a heading.
+        if self.basis.is_none() {
+            self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
+            self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        }
         self.distance = (self.distance * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let view = self.view(1.0)?;
         let [rx, ry, rz, _] = view.right;
@@ -249,6 +247,47 @@ impl Camera {
             (z + rz * px + uz * py).clamp(-1e7, 1e7),
         ];
         Ok(())
+    }
+    /// Orbits (radians, as [`Self::navigate`] takes them) rigidly about `pivot`, a point in scene
+    /// coordinates: the pivot keeps its place on screen and the distance and zoom stay, as Tekla
+    /// turns the view about its rotation point. A view plane never orbits, as in `navigate`.
+    pub fn orbit_about(&mut self, pivot: [f32; 3], orbit: [f32; 2]) -> Result<(), Error> {
+        if !pivot
+            .into_iter()
+            .chain(orbit)
+            .all(|x| x.is_finite() && x.abs() <= 1e7)
+        {
+            return Err(Error::Input("camera navigation"));
+        }
+        if self.basis.is_some() || orbit == [0.0, 0.0] {
+            return Ok(());
+        }
+        let frame = |camera: &Self| -> Result<[[f32; 3]; 3], Error> {
+            let view = camera.view(1.0)?;
+            let [rx, ry, rz, _] = view.right;
+            let [ux, uy, uz, _] = view.up;
+            let [bx, by, bz, _] = view.back;
+            Ok([[rx, ry, rz], [ux, uy, uz], [bx, by, bz]])
+        };
+        let [r, u, b] = frame(self)?;
+        let [tx, ty, tz] = self.target;
+        let [px, py, pz] = pivot;
+        let offset = [tx - px, ty - py, tz - pz];
+        let local = [dot(offset, r), dot(offset, u), dot(offset, b)];
+        let [ox, oy] = orbit;
+        self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
+        self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        let [r2, u2, b2] = frame(self)?;
+        let moved = sum(
+            sum(scaled(r2, local[0]), scaled(u2, local[1])),
+            scaled(b2, local[2]),
+        );
+        self.target = sum(pivot, moved).map(|v| v.clamp(-1e7, 1e7));
+        Ok(())
+    }
+    /// The point the camera looks at, in scene coordinates.
+    pub fn target(&self) -> [f32; 3] {
+        self.target
     }
     /// Frames new bounds for a viewport of `aspect` while keeping the viewing direction.
     pub fn fit(&mut self, target: [f32; 3], extent: f32, aspect: f32) -> Result<(), Error> {
@@ -341,6 +380,16 @@ impl Camera {
         // 1e7 mm), so hidden parts showed through; one percent of the distance keeps
         // precision where the orbit camera can be anyway.
         let near = (self.distance * 0.01).clamp(0.1, 1e5);
+        // The orthographic depth is linear over `far - near`, so its resolution is that range
+        // over the buffer's mantissa. A far plane at 1e7 mm left a fraction of a millimetre per
+        // step and a bolt's shank drew over its own nut. The perspective depth is hyperbolic and
+        // keeps its precision near the camera, so only the orthographic range is tightened: the
+        // eye already stands in front of the whole scene, and the range reaches well behind it.
+        let far = if self.orthographic {
+            eye * 4.0 + 1e4
+        } else {
+            eye * 5.0 + 1e7
+        };
         Ok(View {
             right,
             up,
@@ -356,7 +405,7 @@ impl Camera {
                 },
                 aspect,
                 near,
-                eye * 5.0 + 1e7,
+                far,
             ],
             mode: [u8::from(self.orthographic) as f32, 0.0, 0.0, 0.0],
             tint: NO_TINT,
@@ -483,38 +532,23 @@ mod tests {
         );
         assert!(dot(r, u).abs() < 1e-4 && dot(r, b).abs() < 1e-4 && dot(u, b).abs() < 1e-4);
         assert!((dot(b, b) - 1.0).abs() < 1e-4);
-        // A plan turns like the 3D view about its plane: a sideways drag spins it about Z
-        // (the eye stays straight above), a tilt leans the eye towards the plane, and no tilt
-        // takes the eye below it.
+        // A plan never orbits: neither a sideways drag nor a tilt moves its basis. X stays to
+        // the right and Y up, the eye stays straight above, and only the pan and the zoom act.
         let plan_plane = WorkPlane::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
         let plan = Camera::aligned_to(plan_plane, [0.0; 3], 4000.0, 500.0).unwrap();
-        let mut spun = plan;
-        spun.navigate([0.7, 0.0], [0.0; 2], 0.0).unwrap();
-        let s = spun.view(1.0).unwrap();
-        assert!(
-            (s.back[2] - 1.0).abs() < 1e-5,
-            "still looking down: {:?}",
-            s.back
-        );
-        assert!(
-            s.right[2].abs() < 1e-5 && s.up[2].abs() < 1e-5,
-            "spun in plan"
-        );
-        let mut tilted = plan;
-        tilted.navigate([0.0, -0.5], [0.0; 2], 0.0).unwrap();
-        let t = tilted.view(1.0).unwrap();
-        assert!(t.back[2] > 0.5 && t.back[2] < 0.99, "leaned: {:?}", t.back);
-        assert!(
-            t.right[2].abs() < 1e-5,
-            "the horizon of the plan stays level"
-        );
-        for _ in 0..20 {
-            tilted.navigate([0.4, -0.5], [0.0; 2], 0.0).unwrap();
+        let before = plan.view(1.0).unwrap();
+        let mut dragged = plan;
+        for orbit in [[0.7, 0.0], [0.0, -0.5], [0.4, -0.5]] {
+            dragged.navigate(orbit, [0.0; 2], 0.0).unwrap();
         }
-        assert!(
-            tilted.view(1.0).unwrap().back[2] >= -1e-5,
-            "never below the plane"
-        );
+        let after = dragged.view(1.0).unwrap();
+        assert_eq!(after.right, before.right, "X stays to the right");
+        assert_eq!(after.up, before.up, "Y stays up");
+        assert_eq!(after.back, before.back, "the eye stays above the plane");
+        assert!((after.back[2] - 1.0).abs() < 1e-5, "{:?}", after.back);
+        let mut panned = plan;
+        panned.navigate([0.0; 2], [100.0, 50.0], 0.0).unwrap();
+        assert_ne!(panned.view(1.0).unwrap().eye, before.eye, "pan still works");
         assert!(Camera::aligned_to(plane, origin, 0.0, 1.0).is_err());
         let mut moved = c;
         moved.rebase(origin, [0.0; 3]);
@@ -682,6 +716,48 @@ mod tests {
         assert!(c.cursor_zoom_pan([f32::NAN, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([0.0, 0.0], aspect, f32::NAN).is_err());
+    }
+    #[test]
+    fn an_orbit_about_a_pivot_keeps_the_pivot_in_place_on_screen() {
+        // Tekla turns the view about its rotation point: the point stays where it was on the
+        // screen while the model turns around it.
+        for orthographic in [false, true] {
+            let mut c = Camera::new([0.0; 3], 4000.0, 1.6).unwrap();
+            c.set_projection(orthographic);
+            let pivot = [1500.0, -800.0, 300.0];
+            let before = c.view(1.6).unwrap().project(pivot);
+            c.orbit_about(pivot, [0.4, -0.2]).unwrap();
+            let after = c.view(1.6).unwrap().project(pivot);
+            assert!(
+                (before[0] - after[0]).abs() < 1e-3 && (before[1] - after[1]).abs() < 1e-3,
+                "{before:?} -> {after:?}"
+            );
+            // It did turn: the target moved round the pivot.
+            assert_ne!(c.target(), [0.0; 3]);
+        }
+        // A view plane never orbits, about a pivot or not.
+        let plane = WorkPlane::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
+        let mut plan = Camera::aligned_to(plane, [0.0; 3], 4000.0, 500.0).unwrap();
+        let before = plan.view(1.0).unwrap();
+        plan.orbit_about([100.0, 100.0, 0.0], [0.5, 0.5]).unwrap();
+        assert_eq!(plan.view(1.0).unwrap().back, before.back);
+        // A hostile pivot is refused.
+        assert!(plan.orbit_about([f32::NAN; 3], [0.1, 0.0]).is_err());
+    }
+    #[test]
+    fn the_orthographic_depth_range_is_tight_enough_to_order_parts_a_few_millimetres_apart() {
+        // A bolt's shank and its nut differ by about 2.5 mm in depth. The orthographic depth is
+        // linear, so a far plane at 1e7 mm gave steps of a fraction of a millimetre and the
+        // shank drew over the nut. The range must stay near the scene, not near 1e7.
+        let mut c = Camera::new([0.0; 3], 400.0, 1.6).unwrap();
+        c.set_projection(true);
+        let v = c.view(1.6).unwrap();
+        let range = v.params[3] - v.params[2];
+        assert!(range < 5e4, "orthographic depth range {range}");
+        // Two points 2.5 mm apart along the view get depths that differ by far more than the
+        // 24-bit step of the range.
+        let at = |dz: f32| v.project([v.back[0] * dz, v.back[1] * dz, v.back[2] * dz])[2];
+        assert!((at(0.0) - at(2.5)).abs() > range.recip() * 2.0, "{range}");
     }
     #[test]
     fn the_near_plane_follows_the_distance_and_stays_inside_the_depth_range() {

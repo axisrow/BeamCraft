@@ -735,6 +735,24 @@ impl App {
         });
     }
 
+    /// Creates a plan view for every level of the project in one step, named "Plan <level>".
+    /// Without levels it opens the Levels panel and says why, instead of an empty form.
+    pub(crate) fn plans_for_all_levels(&mut self) {
+        if self.tools.definitions.levels.is_empty() {
+            self.set_bench(Bench::Levels);
+            self.tool_note = Some(Err(
+                "No levels yet. Create the levels first, then make their plans.".into(),
+            ));
+            return;
+        }
+        self.begin_view(Construction::Level);
+        if self.bench != Bench::View {
+            return;
+        }
+        self.views.form.levels = Some(AxisPick::All);
+        self.submit_view();
+    }
+
     /// Opens the view panel on an existing view; Apply updates it.
     pub(crate) fn edit_view(&mut self, id: Uuid7) {
         let Some(form) = self.views.book.get(&id).map(Form::from_view) else {
@@ -2207,6 +2225,82 @@ impl App {
         }
     }
 
+    /// Deletes the user's view preset `name` and saves the rest. The environment's presets are
+    /// not the user's to delete.
+    pub(crate) fn delete_user_preset(&mut self, name: &str) {
+        match self
+            .views
+            .presets
+            .remove(name)
+            .map_err(|e| e.to_string())
+            .and_then(|_| self.persist_presets())
+        {
+            Ok(()) => self.view_note(Ok(format!("Deleted the view preset “{name}”."))),
+            Err(e) => self.view_note(Err(e)),
+        }
+    }
+
+    /// Renames the user's view preset `old` to `new` and saves the book.
+    pub(crate) fn rename_user_preset(&mut self, old: &str, new: &str) {
+        let renamed = crate::views::rename_preset(&mut self.views.presets, old, new)
+            .and_then(|()| self.persist_presets());
+        match renamed {
+            Ok(()) => {
+                self.views.preset_name = None;
+                self.view_note(Ok(format!(
+                    "Renamed the view preset “{old}” to “{}”.",
+                    new.trim()
+                )));
+            }
+            Err(e) => self.view_note(Err(e)),
+        }
+    }
+
+    /// Writes the user's view presets into a new file in a folder the user picks.
+    pub(crate) fn export_user_presets(&mut self) {
+        if self.views.presets.is_empty() {
+            return self.view_note(Err("You have no view presets to export.".into()));
+        }
+        match crate::dialog::pick_folder("Export view presets to…", None) {
+            Ok(Some(dir)) => {
+                match crate::views::export_presets(&dir, &self.views.presets, "view-presets") {
+                    Ok(path) => self.view_note(Ok(format!(
+                        "Exported {} view preset(s) to {}.",
+                        self.views.presets.len(),
+                        path.display()
+                    ))),
+                    Err(e) => self.view_note(Err(e)),
+                }
+            }
+            Ok(None) => {}
+            Err(e) => self.view_note(Err(e.to_string())),
+        }
+    }
+
+    /// Adds the view presets of a file the user picks to their own, replacing ones of the same
+    /// name, and saves the book.
+    pub(crate) fn import_user_presets(&mut self) {
+        match crate::dialog::pick_file("Import view presets", None) {
+            Ok(Some(path)) => {
+                let before = self.views.presets.clone();
+                let result = crate::views::import_presets(&path, &mut self.views.presets)
+                    .and_then(|count| self.persist_presets().map(|()| count));
+                match result {
+                    Ok(count) => {
+                        self.view_note(Ok(format!("Imported {count} view preset(s).")));
+                    }
+                    Err(e) => {
+                        // A refused import leaves the book as it was, in memory and on disk.
+                        self.views.presets = before;
+                        self.view_note(Err(e));
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => self.view_note(Err(e.to_string())),
+        }
+    }
+
     /// Opens the filter editor in the panel on the filter named `target` (the model's or the
     /// environment's), or on a new filter.
     pub(crate) fn open_filter_editor(&mut self, target: Option<String>) {
@@ -2825,6 +2919,19 @@ impl App {
         let mut preset_name = self.views.preset_name.clone();
         let preset_field = preset_name.is_some();
         let mut toggle_preset_field = false;
+        // The preset manager of the "View preset" drop-down: the names that are the user's own
+        // (the environment's are read-only) and what the user asked for in it.
+        let own_presets: Vec<String> = self
+            .views
+            .presets
+            .presets()
+            .iter()
+            .map(|p| p.name.to_lowercase())
+            .collect();
+        let mut delete_preset: Option<String> = None;
+        let mut rename_preset_from: Option<String> = None;
+        let mut export_presets_all = false;
+        let mut import_presets_file = false;
         let vg_id = egui::Id::unique("view-vg-open");
         let mut vg_open = ui.data(|d| d.get_temp::<bool>(vg_id).unwrap_or(false));
         let display_id = egui::Id::unique("view-display-open");
@@ -3024,6 +3131,189 @@ impl App {
                                 }
                             });
                     }
+                    ui.add_space(2.0);
+                    // Like the part presets of a beam or a column: picking one fills the form,
+                    // every field stays editable, and Apply keeps it.
+                    // Tekla's properties panel starts with its preset row: the list of
+                    // saved presets and the save button, above every section.
+                    ui.horizontal(|ui| {
+                        // Widen the menu button to the row: the menu opens from it.
+                        ui.spacing_mut().button_padding.x =
+                            ((ui.available_width() - 34.0 - FIT - 56.0) / 2.0).max(6.0);
+                        // A menu, not a combo box: it sizes to its rows, so the Export all and
+                        // Import buttons at the bottom are never cut off.
+                        ui.menu_button("Presets…", |ui| {
+                            // The panel is narrow; the list needs room for the name, the
+                            // two icons and the Export all / Import buttons. A right-to-left
+                            // row would take all the width a menu offers, so it is fixed.
+                            ui.set_width(240.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Saved presets").strong());
+                                count_pill(ui, presets.len());
+                            });
+                            if presets.is_empty() {
+                                ui.label(
+                                    "No view presets yet. Press + to save this view's display.",
+                                );
+                            }
+                            for preset in &presets {
+                                let own = own_presets.contains(&preset.name.to_lowercase());
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .button(&preset.name)
+                                        .on_hover_text("Fill the form from this preset")
+                                        .clicked()
+                                    {
+                                        chosen_preset = Some(preset.clone());
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if own {
+                                                if small_icon(
+                                                    ui,
+                                                    theme::Icon::Delete,
+                                                    "Delete this preset",
+                                                )
+                                                .clicked()
+                                                {
+                                                    delete_preset = Some(preset.name.clone());
+                                                }
+                                                if small_icon(
+                                                    ui,
+                                                    theme::Icon::Rename,
+                                                    "Rename this preset",
+                                                )
+                                                .clicked()
+                                                {
+                                                    rename_preset_from = Some(preset.name.clone());
+                                                }
+                                            } else {
+                                                ui.small("environment");
+                                            }
+                                        },
+                                    );
+                                });
+                            }
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button("Export all")
+                                    .on_hover_text("Write your presets to a file in a folder")
+                                    .clicked()
+                                {
+                                    export_presets_all = true;
+                                }
+                                if ui
+                                    .button("Import…")
+                                    .on_hover_text("Add the presets of a file")
+                                    .clicked()
+                                {
+                                    import_presets_file = true;
+                                }
+                            });
+                        });
+                        if theme::icon_toggle(
+                            ui,
+                            theme::Icon::Plus,
+                            "Save this view's display as a view preset",
+                            preset_field,
+                        )
+                        .clicked()
+                        {
+                            toggle_preset_field = true;
+                        }
+                    });
+                    if let Some(name) = preset_name.as_mut() {
+                        // The field takes the whole value column and Save sits under it: the
+                        // two on one line left the name a few letters wide.
+                        let renaming = self.views.preset_rename.is_some();
+                        row(ui, "Preset name", |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(name)
+                                    .hint_text("Name of the preset")
+                                    .desired_width((ui.available_width() - FIT).max(40.0))
+                                    .char_limit(64),
+                            );
+                        });
+                        row(ui, "", |ui| {
+                            if ui
+                                .button(if renaming { "Rename" } else { "Save preset" })
+                                .clicked()
+                            {
+                                save_preset = Some(name.clone());
+                            }
+                        });
+                    }
+                    ui.add_space(4.0);
+                    // Identity Data leads the panel: the name, folder and default flag are what
+                    // a user sets first and looks for most (as in Tekla's view properties).
+                    section(ui, "Identity Data", true, |ui| {
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.name != form.name),
+                        );
+                        row(ui, "View name", |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut form.name)
+                                    .hint_text("Unnamed: temporary")
+                                    .desired_width((ui.available_width() - FIT).max(60.0))
+                                    .char_limit(crate::views::FIELD),
+                            )
+                            .on_hover_text("A view without a name is temporary: it is not saved");
+                        });
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.folder != form.folder),
+                        );
+                        row(ui, "Folder", |ui| {
+                            let shown = if form.folder.is_empty() {
+                                "(top level)".to_owned()
+                            } else {
+                                form.folder.clone()
+                            };
+                            egui::ComboBox::from_id_salt("view-folder")
+                                .selected_text(shown)
+                                .width((ui.available_width() - FIT).max(40.0))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut form.folder,
+                                        String::new(),
+                                        "(top level)",
+                                    );
+                                    for folder in &folders {
+                                        ui.selectable_value(
+                                            &mut form.folder,
+                                            folder.clone(),
+                                            folder.as_str(),
+                                        );
+                                    }
+                                });
+                        });
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.favorite != form.favorite),
+                        );
+                        row(ui, "Favourite", |ui| {
+                            ui.checkbox(&mut form.favorite, "")
+                                .on_hover_text("Listed in quick access");
+                        });
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.default != form.default),
+                        );
+                        row(ui, "Default view", |ui| {
+                            ui.add_enabled(
+                                !default_locked,
+                                egui::Checkbox::new(&mut form.default, ""),
+                            )
+                            .on_hover_text(if default_locked {
+                                "The default view: mark another view to move it"
+                            } else {
+                                "The view the model opens on"
+                            });
+                        });
+                    });
                     ui.add_space(4.0);
                     // As Revit's properties palette: the view's graphics are summarised in the table
                     // and edited in their own windows.
@@ -3225,115 +3515,6 @@ impl App {
                             }
                         });
                     });
-                    section(ui, "Identity Data", true, |ui| {
-                        crate::kit::mark_next_changed(
-                            ui,
-                            saved.as_ref().is_some_and(|o| o.name != form.name),
-                        );
-                        row(ui, "View name", |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut form.name)
-                                    .hint_text("Unnamed: temporary")
-                                    .desired_width((ui.available_width() - FIT).max(60.0))
-                                    .char_limit(crate::views::FIELD),
-                            )
-                            .on_hover_text("A view without a name is temporary: it is not saved");
-                        });
-                        crate::kit::mark_next_changed(
-                            ui,
-                            saved.as_ref().is_some_and(|o| o.folder != form.folder),
-                        );
-                        row(ui, "Folder", |ui| {
-                            let shown = if form.folder.is_empty() {
-                                "(top level)".to_owned()
-                            } else {
-                                form.folder.clone()
-                            };
-                            egui::ComboBox::from_id_salt("view-folder")
-                                .selected_text(shown)
-                                .width((ui.available_width() - FIT).max(40.0))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut form.folder,
-                                        String::new(),
-                                        "(top level)",
-                                    );
-                                    for folder in &folders {
-                                        ui.selectable_value(
-                                            &mut form.folder,
-                                            folder.clone(),
-                                            folder.as_str(),
-                                        );
-                                    }
-                                });
-                        });
-                        // Like the part presets of a beam or a column: picking one fills the form,
-                        // every field stays editable, and Apply keeps it.
-                        row(ui, "View preset", |ui| {
-                            let width = (ui.available_width() - 30.0 - FIT).max(40.0);
-                            egui::ComboBox::from_id_salt("view-preset")
-                                .selected_text("Fill from…")
-                                .width(width)
-                                .show_ui(ui, |ui| {
-                                    if presets.is_empty() {
-                                        ui.label("No view presets yet.");
-                                    }
-                                    for preset in &presets {
-                                        if ui.button(&preset.name).clicked() {
-                                            chosen_preset = Some(preset.clone());
-                                        }
-                                    }
-                                });
-                            if theme::icon_toggle(
-                                ui,
-                                theme::Icon::Plus,
-                                "Save this view's display as a view preset",
-                                preset_field,
-                            )
-                            .clicked()
-                            {
-                                toggle_preset_field = true;
-                            }
-                        });
-                        if let Some(name) = preset_name.as_mut() {
-                            row(ui, "Preset name", |ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(name)
-                                        .hint_text("Name of the preset")
-                                        .desired_width(
-                                            (ui.available_width() - 60.0 - FIT).max(40.0),
-                                        )
-                                        .char_limit(64),
-                                );
-                                if ui.small_button("Save").clicked() {
-                                    save_preset = Some(name.clone());
-                                }
-                            });
-                        }
-                        crate::kit::mark_next_changed(
-                            ui,
-                            saved.as_ref().is_some_and(|o| o.favorite != form.favorite),
-                        );
-                        row(ui, "Favourite", |ui| {
-                            ui.checkbox(&mut form.favorite, "")
-                                .on_hover_text("Listed in quick access");
-                        });
-                        crate::kit::mark_next_changed(
-                            ui,
-                            saved.as_ref().is_some_and(|o| o.default != form.default),
-                        );
-                        row(ui, "Default view", |ui| {
-                            ui.add_enabled(
-                                !default_locked,
-                                egui::Checkbox::new(&mut form.default, ""),
-                            )
-                            .on_hover_text(if default_locked {
-                                "The default view: mark another view to move it"
-                            } else {
-                                "The view the model opens on"
-                            });
-                        });
-                    });
                     // Visibility/Graphics overrides, as Revit edits them in their own dialog:
                     // the element kinds the view shows and its filters.
                     let mut open = vg_open;
@@ -3506,6 +3687,10 @@ impl App {
         if let Some(source) = copy_from.and_then(|id| self.views.book.get(&id).cloned()) {
             self.views.form.copy_display(&source);
         }
+        if toggle_preset_field && preset_field {
+            // Closing the name field also ends a rename in progress.
+            self.views.preset_rename = None;
+        }
         self.views.preset_name = if toggle_preset_field {
             (!preset_field).then(|| self.views.form.name.trim().to_owned())
         } else {
@@ -3518,8 +3703,26 @@ impl App {
                 preset.name
             )));
         }
+        if let Some(name) = delete_preset {
+            self.delete_user_preset(&name);
+        }
+        if let Some(old) = rename_preset_from {
+            // The name field opens with the current name; Save then renames instead of adding.
+            self.views.preset_name = Some(old.clone());
+            self.views.preset_rename = Some(old);
+        }
+        if export_presets_all {
+            self.export_user_presets();
+        }
+        if import_presets_file {
+            self.import_user_presets();
+        }
         if let Some(name) = save_preset {
-            self.save_preset_from_form(&name);
+            if let Some(old) = self.views.preset_rename.take() {
+                self.rename_user_preset(&old, &name);
+            } else {
+                self.save_preset_from_form(&name);
+            }
         }
         if let Some(target) = edit_filter {
             self.open_filter_editor(target);
@@ -4159,13 +4362,7 @@ mod tests {
         let Some(mut app) = super::super::tests::headless() else {
             return;
         };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::super::tests::workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"

@@ -18,7 +18,7 @@ use beamcraft_commands::definition::{
 };
 use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_commands::edit::{UpdateRequest, UpdatedPart, update_element};
-use beamcraft_commands::history::{Direction, Step, step, timeline};
+use beamcraft_commands::history::{Direction, Step, project_step, step, timeline};
 use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_commands::library::{Lookup, open_lookup, project_library_chain};
 use beamcraft_commands::member::{
@@ -553,6 +553,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "create-workspace" => CREATE_WORKSPACE_OPTIONS,
         "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
+        "undo-revision" | "redo-revision" => &["--store", "--revision-id", "--op-id"],
         "inspect-workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
@@ -579,6 +580,9 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "undo-workspace" | "redo-workspace" | "inspect-workspace-history"
     ) {
         return history_command(command, &options);
+    }
+    if matches!(*command, "undo-revision" | "redo-revision") {
+        return project_history_command(command, &options);
     }
     // Parsed before the store is opened, so a malformed id reads nothing.
     let element = match options.get("--element") {
@@ -3089,6 +3093,66 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
             ),
         ),
     ])
+}
+
+/// `undo-revision` / `redo-revision`: one step of the project store's own history, as Ctrl+Z in a
+/// project opened without a personal workspace.
+fn project_history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let dir = std::path::Path::new(
+        options
+            .get("--store")
+            .ok_or_else(|| invalid("--store is required"))?,
+    );
+    let blobs = BlobStore::new(dir).map_err(|e| Refusal {
+        rule_id: None,
+        code: e.code(),
+        message: "store directory is not usable",
+    })?;
+    let store = RevisionStore::new(blobs);
+    let mut source = IdSource::system();
+    let mut uuid = |key: &str| -> Run<Uuid7> {
+        match options.get(key) {
+            Some(text) => Uuid7::parse(text).map_err(Refusal::from),
+            None => source
+                .next_id()
+                .map_err(|_| Refusal {
+                    rule_id: None,
+                    code: ErrorCode::BackendUnavailable,
+                    message: "no identity could be generated",
+                })
+                .and_then(|id| Uuid7::parse(&id.to_string()).map_err(Refusal::from)),
+        }
+    };
+    let (direction, done, replayed) = if command == "undo-revision" {
+        (Direction::Undo, "revision_undone", "revision_undo_replayed")
+    } else {
+        (Direction::Redo, "revision_redone", "revision_redo_replayed")
+    };
+    let stepped = project_step(
+        &store,
+        dir,
+        direction,
+        &Step {
+            revision_id: uuid("--revision-id")?,
+            op_id: uuid("--op-id")?,
+        },
+        &mut NoFault,
+    )?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if stepped.replayed { replayed } else { done }),
+        ),
+        ("revision", revision_json(&stepped.revision)),
+        (
+            "restored_sequence",
+            stepped
+                .restored_sequence
+                .map_or(Json::Null, |s| Json::text(s.to_string())),
+        ),
+        ("undo_units", Json::text(stepped.undo_units.to_string())),
+        ("redo_units", Json::text(stepped.redo_units.to_string())),
+    ]))
 }
 
 fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {

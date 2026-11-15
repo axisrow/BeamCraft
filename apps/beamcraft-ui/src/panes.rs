@@ -137,6 +137,10 @@ pub struct ViewPane {
     pub(crate) view: Option<Uuid7>,
     /// Its own navigation camera.
     pub(crate) camera: Camera,
+    /// The rotation point the user set (Ctrl+Shift+middle click or V), in model millimetres:
+    /// the camera orbits about it instead of its target until another point is set. A selected
+    /// element takes precedence while it is selected.
+    pub(crate) pivot: Option<[f64; 3]>,
     /// Its own render mode, Selected only included.
     pub(crate) mode: RenderMode,
     /// Whether its grid guides show.
@@ -178,6 +182,7 @@ impl ViewPane {
             key,
             view: None,
             camera,
+            pivot: None,
             mode: view.map_or(RenderMode::default(), |v| v.render_mode),
             grids: view.is_none_or(|v| v.grids_visible),
             selected_only: ((String::new(), [0.0; 3]), None),

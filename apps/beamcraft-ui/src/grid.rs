@@ -48,7 +48,12 @@ fn line_in_view(
     })
 }
 
-fn project(point: [f64; 3], rect: egui::Rect, view: &View, origin: [f64; 3]) -> Option<egui::Pos2> {
+pub(crate) fn project(
+    point: [f64; 3],
+    rect: egui::Rect,
+    view: &View,
+    origin: [f64; 3],
+) -> Option<egui::Pos2> {
     let local = std::array::from_fn(|i| {
         (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
     });
@@ -95,6 +100,112 @@ pub struct GridForm {
     pub u: FamilyForm,
     /// V lines, parallel to local X.
     pub v: FamilyForm,
+}
+
+/// One line of a grid the form would create, for the preview drawn before Create.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreviewLine {
+    /// World end points in millimetres, Z = 0.
+    pub points: [[f64; 3]; 2],
+    /// The label the line would carry.
+    pub label: String,
+}
+
+impl GridForm {
+    /// The lines Create would make from this form, laid out as the command lays them: each
+    /// family's lines span the other family's extent plus 2000 mm on either side unless the
+    /// form limits them, turned by the rotation and moved to the origin. Display only; an
+    /// unreadable field draws nothing rather than a guess.
+    pub fn preview_lines(&self) -> Vec<PreviewLine> {
+        let number = |text: &str| text.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+        let (Some(ox), Some(oy)) = (number(&self.origin[0]), number(&self.origin[1])) else {
+            return Vec::new();
+        };
+        let angle = number(&self.rotation).unwrap_or(0.0).to_radians();
+        let (sin, cos) = angle.sin_cos();
+        let positions = |family: &FamilyForm| {
+            parse_grid_expression(family.expression.trim())
+                .map(|(_, p)| p)
+                .unwrap_or_default()
+        };
+        let (u, v) = (positions(&self.u), positions(&self.v));
+        let span = |family: &FamilyForm, other: &[f64]| -> [f64; 2] {
+            match (number(&family.span[0]), number(&family.span[1])) {
+                (Some(a), Some(b)) => [a, b],
+                _ => match (other.first(), other.last()) {
+                    (Some(a), Some(b)) => [a - 2000.0, b + 2000.0],
+                    _ => [-2000.0, 2000.0],
+                },
+            }
+        };
+        let labels = |family: &FamilyForm, count: usize, numeric: bool| -> Vec<String> {
+            let typed: Vec<String> = family
+                .labels
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect();
+            if typed.is_empty() {
+                beamcraft_model::grid::generate_grid_labels(
+                    if numeric { "numeric" } else { "alpha" },
+                    count,
+                    None,
+                    None,
+                    beamcraft_model::grid::GridLabelOrder::Ascending,
+                )
+                .unwrap_or_default()
+            } else {
+                typed
+            }
+        };
+        let world = |x: f64, y: f64| [ox + cos * x - sin * y, oy + sin * x + cos * y, 0.0];
+        let mut out = Vec::new();
+        let [u0, u1] = span(&self.u, &v);
+        let u_labels = labels(&self.u, u.len(), true);
+        for (index, x) in u.iter().enumerate() {
+            out.push(PreviewLine {
+                points: [world(*x, u0), world(*x, u1)],
+                label: u_labels.get(index).cloned().unwrap_or_default(),
+            });
+        }
+        let [v0, v1] = span(&self.v, &u);
+        let v_labels = labels(&self.v, v.len(), false);
+        for (index, y) in v.iter().enumerate() {
+            out.push(PreviewLine {
+                points: [world(v0, *y), world(v1, *y)],
+                label: v_labels.get(index).cloned().unwrap_or_default(),
+            });
+        }
+        out
+    }
+}
+
+/// Draws the grid a form would create: dashed lines with their labels at both ends, so the
+/// layout is seen before Create. Display only.
+pub fn paint_preview(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    view: &View,
+    origin: [f64; 3],
+    lines: &[PreviewLine],
+) {
+    let painter = ui.painter_at(rect);
+    let palette = theme::Palette::current(ui);
+    let stroke = egui::Stroke::new(1.0, theme::BRAND.gamma_multiply(0.8));
+    for line in lines {
+        let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
+            continue;
+        };
+        painter.extend(egui::Shape::dashed_line(&[a, b], stroke, 8.0, 5.0));
+        for end in [a, b] {
+            painter.text(
+                end,
+                egui::Align2::CENTER_CENTER,
+                &line.label,
+                egui::FontId::proportional(12.0),
+                palette.text,
+            );
+        }
+    }
 }
 
 impl Default for GridForm {
@@ -916,6 +1027,22 @@ impl GridScene {
                 {
                     distance = 0.0;
                 }
+                // The bubble that labels an end hangs 26 points past it (see `paint`): a click
+                // on the label selects its grid, as on the line.
+                let length = delta.length();
+                if length >= 24.0 {
+                    let outward = delta / length;
+                    // The same clamp into the pane as the paint, for the smallest bubble.
+                    let inner = rect
+                        .shrink(BUBBLE_FRAME_CLEARANCE)
+                        .shrink2(egui::vec2(12.0, 12.0));
+                    for (end, ahead) in [(a, -1.0f32), (b, 1.0)] {
+                        let centre = (end + outward * (26.0 * ahead)).clamp(inner.min, inner.max);
+                        if rect.shrink(14.0).contains(end) && point.distance(centre) <= 13.0 {
+                            distance = 0.0;
+                        }
+                    }
+                }
                 if distance < nearest {
                     nearest = distance;
                     hit = Some(grid);
@@ -993,7 +1120,8 @@ impl GridScene {
     /// (the 584 recheck: a level plan at 2000 with a ±500 depth lost every line). The work
     /// area is not part of the test: its box may lie strictly inside the spans while grid
     /// endpoints sit at the model limits, so requiring the endpoints inside would drop every
-    /// guide from a work-area view (PR 587 review).
+    /// guide from a work-area view (PR 587 review). Returns the screen rectangles of the
+    /// bubbles it drew.
     pub fn paint(
         &self,
         ui: &egui::Ui,
@@ -1002,7 +1130,7 @@ impl GridScene {
         origin: [f64; 3],
         selected: Option<&str>,
         shown: Option<&beamcraft_engine::views::ModelView>,
-    ) {
+    ) -> Vec<egui::Rect> {
         let in_view = |points: &[[f64; 3]; 2]| line_in_view(shown, points);
         let painter = ui.painter_at(rect);
         let palette = theme::Palette::current(ui);
@@ -1115,6 +1243,9 @@ impl GridScene {
                 painter.galley(centre - galley.size() / 2.0, galley.clone(), palette.text);
             }
         }
+        // The bubbles drawn, so what paints after the grid (the level captions of a section)
+        // can keep clear of them.
+        placed
     }
 }
 
@@ -1196,7 +1327,9 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, None),
+            |ui| {
+                scene.paint(ui, rect, &view, [0.0; 3], None, None);
+            },
         );
         output.textures_delta.clear();
         output
@@ -1213,6 +1346,67 @@ mod form_tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_click_on_a_bubble_selects_its_grid() {
+        // Owner walkthrough of #839: clicking a grid's label, not only its line, selects it.
+        let mut scene = demo_scene();
+        scene.grids = vec![GridProperties {
+            id: "main".into(),
+            form: GridForm::default(),
+            editable: true,
+            lines: 0..scene.lines.len(),
+        }];
+        let plane = beamcraft_engine::work_plane::WorkPlane::parallel("xy", 0.0).unwrap();
+        let bubbles = painted_bubbles(&scene, plane);
+        assert!(!bubbles.is_empty());
+        let view = crate::camera::Camera::aligned_to(plane, [0.0; 3], 20_000.0, 100.0)
+            .unwrap()
+            .view(800.0 / 600.0)
+            .unwrap();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for bubble in &bubbles {
+            assert!(
+                scene
+                    .hit_test(rect, &view, [0.0; 3], bubble.center(), None)
+                    .map(|grid| grid.id.as_str())
+                    == Some("main"),
+                "the bubble at {bubble:?} selects its grid"
+            );
+        }
+    }
+
+    #[test]
+    fn the_new_grid_preview_lays_out_the_lines_create_makes() {
+        let form = GridForm::default();
+        let lines = form.preview_lines();
+        // 0 2*4000 and 0 2*5000: three U lines and three V lines.
+        assert_eq!(lines.len(), 6);
+        let labels: Vec<_> = lines.iter().map(|l| l.label.as_str()).collect();
+        assert_eq!(labels, ["1", "2", "3", "A", "B", "C"]);
+        // U line 2 at x = 4000 spans the V extent plus 2000 mm on either side, as the command
+        // lays it out; V line B at y = 5000 spans the U extent the same way.
+        assert_eq!(
+            lines[1].points,
+            [[4000.0, -2000.0, 0.0], [4000.0, 12000.0, 0.0]]
+        );
+        assert_eq!(
+            lines[4].points,
+            [[-2000.0, 5000.0, 0.0], [10000.0, 5000.0, 0.0]]
+        );
+        // A rotation of 90 degrees turns local X onto world Y.
+        let mut turned = form.clone();
+        turned.rotation = "90".into();
+        let [a, _] = turned.preview_lines()[1].points;
+        assert!(
+            (a[0] - 2000.0).abs() < 1e-6 && (a[1] - 4000.0).abs() < 1e-6,
+            "{a:?}"
+        );
+        // An unreadable origin draws nothing rather than a guess.
+        let mut broken = form;
+        broken.origin[0] = "x".into();
+        assert!(broken.preview_lines().is_empty());
     }
 
     #[test]
@@ -1278,7 +1472,9 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, shown),
+            |ui| {
+                scene.paint(ui, rect, &view, [0.0; 3], None, shown);
+            },
         );
         output.textures_delta.clear();
         output
@@ -1517,7 +1713,9 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, None),
+            |ui| {
+                scene.paint(ui, rect, &view, [0.0; 3], None, None);
+            },
         );
         output.textures_delta.clear();
         assert!(

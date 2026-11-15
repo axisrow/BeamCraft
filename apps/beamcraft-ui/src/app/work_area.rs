@@ -110,7 +110,274 @@ fn selection_edges(snapshot: &beamcraft_engine::ViewSnapshot, text: &str) -> Vec
         .unwrap_or_default()
 }
 
+/// Where `ray` meets the plane the pointer works on, in millimetres: the view's own plane in a
+/// plan, an elevation or a section, else the work plane `work`, else the ground. With a work
+/// plane set the point is given in its axes, otherwise in model coordinates. `origin` is the
+/// display origin.
+pub(super) fn working_coordinates(
+    camera: &crate::camera::Camera,
+    origin: [f64; 3],
+    work: Option<beamcraft_engine::work_plane::WorkPlane>,
+    ray: &crate::edit::Ray,
+) -> Option<[f64; 3]> {
+    let plane = if camera.is_aligned() {
+        camera.frame(origin).ok().map(|(plane, _)| plane)
+    } else {
+        work
+    };
+    let world = match plane {
+        Some(plane) => plane.ray_point(ray.origin, ray.direction),
+        None => crate::edit::ground_point(ray),
+    }?;
+    match work {
+        Some(work) => work.to_local(world).ok(),
+        None => Some(world),
+    }
+}
+
+/// The centre of an element's bounds in model millimetres: the rotation point while it is
+/// selected.
+pub(super) fn element_centre(
+    snapshot: &beamcraft_engine::ViewSnapshot,
+    id: &str,
+) -> Option<[f64; 3]> {
+    let element = snapshot
+        .elements()
+        .iter()
+        .find(|e| e.id.to_string() == id)?;
+    let bounds = element.full.world_bounds;
+    let centre: [f64; 3] = std::array::from_fn(|i| {
+        let low = bounds.min.get(i).copied().map_or(0.0, f64::from);
+        let high = bounds.max.get(i).copied().map_or(0.0, f64::from);
+        (low + high) / 2.0
+    });
+    centre.iter().all(|v| v.is_finite()).then_some(centre)
+}
+
+/// The model point a ray meets: the face it hits (an active view hits only what it shows, the
+/// display cut hides what it cuts away), else the ground.
+pub(super) fn model_point(
+    snapshot: &beamcraft_engine::ViewSnapshot,
+    shown: Option<&beamcraft_engine::views::ModelView>,
+    cut: Option<&beamcraft_engine::view_clipping::Clipping>,
+    ray: &crate::edit::Ray,
+) -> Option<[f64; 3]> {
+    let filter = beamcraft_engine::query::pick::SelectionFilter::ALL;
+    let hit = match shown {
+        Some(view) => beamcraft_engine::views::pick_visible_except(
+            snapshot,
+            view,
+            ray.origin,
+            ray.direction,
+            filter,
+            &std::collections::BTreeSet::new(),
+            cut,
+            false,
+        )
+        .ok()
+        .flatten(),
+        None => beamcraft_engine::views::pick_kept(
+            snapshot,
+            ray.origin,
+            ray.direction,
+            filter,
+            cut,
+            false,
+        )
+        .ok()
+        .flatten(),
+    };
+    hit.map(|h| h.point_world_mm)
+        .or_else(|| crate::edit::ground_point(ray))
+}
+
+/// The orbit (radians) the arrow keys ask for this frame: Ctrl+arrow turns 15 degrees, Shift+arrow
+/// 5, as in Tekla; Left/Right turn about the vertical, Up/Down tilt. The keys are consumed so no
+/// widget moves its focus with them.
+fn arrow_orbit(ui: &egui::Ui) -> [f32; 2] {
+    use egui::{Key, Modifiers};
+    let mut orbit = [0.0f32; 2];
+    ui.ctx().input_mut(|i| {
+        for (modifiers, degrees) in [(Modifiers::CTRL, 15.0f32), (Modifiers::SHIFT, 5.0)] {
+            let step = degrees.to_radians();
+            if i.consume_key(modifiers, Key::ArrowLeft) {
+                orbit[0] += step;
+            }
+            if i.consume_key(modifiers, Key::ArrowRight) {
+                orbit[0] -= step;
+            }
+            if i.consume_key(modifiers, Key::ArrowUp) {
+                orbit[1] += step;
+            }
+            if i.consume_key(modifiers, Key::ArrowDown) {
+                orbit[1] -= step;
+            }
+        }
+    });
+    orbit
+}
+
+/// Draws the rotation point: a ring with a cross in the brand colour.
+fn paint_pivot(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    view: &crate::camera::View,
+    origin: [f64; 3],
+    point: [f64; 3],
+) {
+    let Some(at) = crate::grid::project(point, rect, view, origin) else {
+        return;
+    };
+    let painter = ui.painter_at(rect);
+    let stroke = Stroke::new(2.0, theme::BRAND);
+    painter.circle_stroke(at, 7.0, stroke);
+    painter.line_segment([at - vec2(11.0, 0.0), at + vec2(11.0, 0.0)], stroke);
+    painter.line_segment([at - vec2(0.0, 11.0), at + vec2(0.0, 11.0)], stroke);
+}
+
+/// Draws the area-selection rectangle: solid left to right (inside), dashed right to left
+/// (crossing).
+fn paint_area(ui: &egui::Ui, rect: egui::Rect, area: egui::Rect, crossing: bool) {
+    let painter = ui.painter_at(rect);
+    let stroke = Stroke::new(1.0, theme::BRAND);
+    painter.rect_filled(area, 0.0, theme::BRAND.gamma_multiply(0.08));
+    if crossing {
+        let [a, b, c, d] = [
+            area.left_top(),
+            area.right_top(),
+            area.right_bottom(),
+            area.left_bottom(),
+        ];
+        painter.add(egui::Shape::dashed_line(&[a, b, c, d, a], stroke, 5.0, 3.0));
+    } else {
+        painter.rect_stroke(area, 0.0, stroke, egui::StrokeKind::Inside);
+    }
+}
+
+/// Whether a box seen as `corners` (screen points) is taken by `area`: wholly inside it, or,
+/// for a crossing selection, touching it.
+pub(super) fn area_takes(area: egui::Rect, corners: &[egui::Pos2], crossing: bool) -> bool {
+    if corners.is_empty() {
+        return false;
+    }
+    if crossing {
+        let seen = egui::Rect::from_points(corners);
+        area.intersects(seen)
+    } else {
+        corners.iter().all(|p| area.contains(*p))
+    }
+}
+
+/// The elements an area selection takes: each element's bounds projected to the pane.
+fn area_hits(
+    snapshot: &beamcraft_engine::ViewSnapshot,
+    pane: egui::Rect,
+    view: &crate::camera::View,
+    origin: [f64; 3],
+    area: egui::Rect,
+    crossing: bool,
+    keep: impl Fn(&beamcraft_engine::ElementKind) -> bool,
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    for element in snapshot.elements() {
+        if !keep(&element.kind) {
+            continue;
+        }
+        let b = element.full.world_bounds;
+        let (lo, hi) = (b.min.map(f64::from), b.max.map(f64::from));
+        let mut corners = Vec::with_capacity(8);
+        for i in 0..8u8 {
+            let pick =
+                |axis: u8, low: f64, high: f64| if i & (1 << axis) == 0 { low } else { high };
+            let point = [
+                pick(0, lo[0], hi[0]),
+                pick(1, lo[1], hi[1]),
+                pick(2, lo[2], hi[2]),
+            ];
+            match crate::grid::project(point, pane, view, origin) {
+                Some(at) => corners.push(at),
+                None => break,
+            }
+        }
+        if corners.len() == 8 && area_takes(area, &corners, crossing) {
+            ids.push(element.id.to_string());
+        }
+    }
+    ids
+}
+
 impl App {
+    /// Applies an area selection: no modifier replaces the selection, Ctrl adds, Shift toggles.
+    /// The last element taken becomes the primary one the panels show.
+    fn area_select(
+        &mut self,
+        area: egui::Rect,
+        pane: egui::Rect,
+        view: &crate::camera::View,
+        crossing: bool,
+        ctrl: bool,
+        shift: bool,
+    ) {
+        let Some(loaded) = self.loaded.as_ref() else {
+            return;
+        };
+        let shown = self.views.active_view();
+        let hits = area_hits(
+            &loaded.snapshot,
+            pane,
+            view,
+            loaded.summary.origin_mm,
+            area,
+            crossing,
+            |kind| {
+                *kind != beamcraft_engine::ElementKind::Grid
+                    && shown.is_none_or(|v| v.shows_kind(*kind))
+            },
+        );
+        let mut many: Vec<String> = if ctrl || shift {
+            let mut now = self.selected_many.clone();
+            if now.is_empty()
+                && let Some(one) = self.editor.selected()
+            {
+                now.push(one.id.clone());
+            }
+            now
+        } else {
+            Vec::new()
+        };
+        for id in hits {
+            match many.iter().position(|m| *m == id) {
+                Some(at) if shift => {
+                    many.remove(at);
+                }
+                Some(_) => {}
+                None => many.push(id),
+            }
+        }
+        self.grid_edit = None;
+        match many.last().cloned() {
+            Some(last) => {
+                self.editor.select_id(last);
+                self.edit_note = Some(Ok(format!("{} selected.", many.len())));
+            }
+            None => self.editor.deselect(),
+        }
+        self.selected_many = many;
+    }
+
+    /// The ids an edit acts on: the area selection when the primary element belongs to it,
+    /// else the primary element alone.
+    pub(super) fn selection_ids(&self) -> Vec<String> {
+        let Some(primary) = self.editor.selected() else {
+            return Vec::new();
+        };
+        if self.selected_many.len() > 1 && self.selected_many.contains(&primary.id) {
+            self.selected_many.clone()
+        } else {
+            vec![primary.id.clone()]
+        }
+    }
+
     /// Width over height of the active pane's image; 1.6 without a pane.
     pub(super) fn aspect(&self) -> f32 {
         self.views.active_pane().map_or(1.6, |p| p.target.aspect())
@@ -751,12 +1018,26 @@ impl App {
             zoom_out,
             self.invert_zoom,
         );
+        // Tekla's keyboard rotation, in the active pane only: Ctrl+arrows turn the view 15
+        // degrees, Shift+arrows 5, about the same rotation point the mouse uses.
+        let orbit = if keys.is_some() && !ui.ctx().egui_wants_keyboard_input() {
+            let step = arrow_orbit(ui);
+            [orbit[0] + step[0], orbit[1] + step[1]]
+        } else {
+            orbit
+        };
         // A contour grip holding the pointer takes the primary drag from the camera (V18): a
         // trackpad's primary drag would otherwise orbit while the grip is being dragged.
         let (orbit, pan) = if self.contour.holds_pointer() || self.member_grips.holds_pointer() {
             ([0.0; 2], [0.0; 2])
         } else {
             (orbit, pan)
+        };
+        // F8 locks rotation; pan and zoom still work.
+        let orbit = if self.rotation_locked {
+            [0.0; 2]
+        } else {
+            orbit
         };
         let aspect = pane.target.aspect();
         // Zoom toward the cursor: keep the point under the pointer still while zooming. A
@@ -778,11 +1059,33 @@ impl App {
                 _ => pan,
             }
         };
-        let mut view = match pane
-            .camera
-            .navigate(orbit, pan, zoom)
-            .and_then(|()| pane.camera.view(aspect))
-        {
+        // The rotation point (Tekla's): the selected element's centre while one is selected,
+        // else the point the user set, else the camera's own target. The orbit turns rigidly
+        // about it; pan and zoom stay as they are.
+        let display_origin = self
+            .loaded
+            .as_ref()
+            .map_or([0.0; 3], |l| l.summary.origin_mm);
+        let selected_centre = self
+            .editor
+            .selected()
+            .zip(self.loaded.as_ref())
+            .and_then(|(selected, l)| element_centre(&l.snapshot, &selected.id));
+        let pivot = selected_centre.or(pane.pivot);
+        let scene_pivot = pivot.map(|p| {
+            std::array::from_fn::<f32, 3, _>(|i| {
+                (p.get(i).copied().unwrap_or(0.0) - display_origin.get(i).copied().unwrap_or(0.0))
+                    as f32
+            })
+        });
+        let moved = match scene_pivot {
+            Some(p) if orbit != [0.0; 2] => pane
+                .camera
+                .orbit_about(p, orbit)
+                .and_then(|()| pane.camera.navigate([0.0; 2], pan, zoom)),
+            _ => pane.camera.navigate(orbit, pan, zoom),
+        };
+        let mut view = match moved.and_then(|()| pane.camera.view(aspect)) {
             Ok(view) => view,
             Err(e) => {
                 self.error = Some(e.to_string());
@@ -790,6 +1093,49 @@ impl App {
             }
         };
         view.tint = tint;
+        // Setting the rotation point: Ctrl+Shift+middle click, or V, at the model point under
+        // the pointer (a face, else the ground).
+        let set_pivot = hovered
+            && ((ctrl && shift && response.clicked_by(egui::PointerButton::Middle))
+                || (!ui.ctx().egui_wants_keyboard_input()
+                    && ui.input(|i| {
+                        // A layout or input method that types the letter without a key event
+                        // still sets the point.
+                        (i.key_pressed(egui::Key::V) && i.modifiers.is_none())
+                            || i.events.iter().any(|e| {
+                                matches!(e, egui::Event::Text(t) if t.eq_ignore_ascii_case("v"))
+                            })
+                    })));
+        if set_pivot
+            && let Some(pos) = response.hover_pos()
+            && let Some(ndc) = ndc_of(
+                [pos.x, pos.y],
+                [response.rect.min.x, response.rect.min.y],
+                [response.rect.width(), response.rect.height()],
+            )
+            && let Some(ray) = ray_through(&view, ndc, display_origin)
+            && let Some(l) = self.loaded.as_ref()
+        {
+            let shown = pane.view.and_then(|id| self.views.book.get(&id));
+            if let Some(point) = model_point(&l.snapshot, shown, self.cut.as_ref(), &ray) {
+                pane.pivot = Some(point);
+            }
+        }
+        // The working coordinate under the pointer, for the status bar. Only a pane the
+        // pointer is over writes it; the frame stamp lets a stale reading expire when the
+        // pointer leaves every pane.
+        if let Some(pos) = response.hover_pos()
+            && let Some(ndc) = ndc_of(
+                [pos.x, pos.y],
+                [response.rect.min.x, response.rect.min.y],
+                [response.rect.width(), response.rect.height()],
+            )
+            && let Some(ray) = ray_through(&view, ndc, display_origin)
+        {
+            self.pointer_world =
+                working_coordinates(&pane.camera, display_origin, self.tools.plane, &ray)
+                    .map(|point| (ui.ctx().cumulative_pass_nr(), point));
+        }
         // The same clear colours `screenshot-view` answers with (issue 562 item 36): the dark
         // theme sits on the renderer's dark background, the light one on the paper tone.
         let background = if dark {
@@ -915,9 +1261,20 @@ impl App {
         if let Some(l) = &self.loaded {
             // A view that hides the grid kind hides its lines and bubbles too, like it hides
             // beams (issue 569 item 13): `pane.grids` is only the pane's guides switch.
+            // The New grid form shows the grid it would create before Create: the editor of
+            // an existing grid has `grid_edit`, a new one does not.
+            if self.bench == workbench::Bench::Grid && self.grid_edit.is_none() {
+                crate::grid::paint_preview(
+                    ui,
+                    response.rect,
+                    &view,
+                    l.summary.origin_mm,
+                    &self.grid_form.preview_lines(),
+                );
+            }
             if pane.grids && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
             {
-                self.grid_scene.paint(
+                let bubbles = self.grid_scene.paint(
                     ui,
                     response.rect,
                     &view,
@@ -932,7 +1289,10 @@ impl App {
                     l.summary.origin_mm[2],
                     self.grid_scene.bounds(&l.summary),
                     &self.tools.definitions.levels,
-                    self.level_panel.selected_id(),
+                    crate::levels::SectionMarks {
+                        selected: self.level_panel.selected_id(),
+                        avoid: &bubbles,
+                    },
                 );
             }
             if let Ok(rows) = self.annotation.rows.as_deref()
@@ -957,6 +1317,30 @@ impl App {
                     Some(Some(_)) => &selected_rows,
                 };
                 annotation_panel::paint(ui, response.rect, &view, l.summary.origin_mm, rows, keep);
+            }
+            // The rotation point, seen while it is in effect.
+            if let Some(point) = pivot {
+                paint_pivot(ui, response.rect, &view, l.summary.origin_mm, point);
+            }
+            // The rest of an area selection, outlined like the primary element.
+            let ids = self.selection_ids();
+            if ids.len() > 1 {
+                let key = format!("{}|{}", ids.join(","), l.snapshot.token().as_str());
+                if self.many_edges.0 != key {
+                    let edges = ids
+                        .iter()
+                        .flat_map(|id| selection_edges(&l.snapshot, id))
+                        .collect();
+                    self.many_edges = (key, edges);
+                }
+                draw_selection(
+                    &ui.painter_at(response.rect),
+                    response.rect,
+                    &view,
+                    l.summary.origin_mm,
+                    &self.many_edges.1,
+                    cut.as_ref(),
+                );
             }
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
@@ -1080,6 +1464,50 @@ impl App {
                 picked = Some(ray);
             }
         }
+        // Area selection (Tekla): a left drag on the Select bench draws a rectangle. Left to
+        // right takes what lies wholly inside, right to left what it touches. Ctrl adds, Shift
+        // toggles, no modifier replaces. Only the mouse preset: on a trackpad a left drag orbits.
+        if !swallow
+            && !grip_hold
+            && self.preset == super::Preset::Mouse
+            && matches!(
+                self.bench,
+                workbench::Bench::Select | workbench::Bench::View
+            )
+            && !self.beam_mode
+            && !self.plate_mode
+            && self.views.picking.is_none()
+            && self.two_point.is_none()
+        {
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                self.area_start = response.interact_pointer_pos();
+            }
+            if let Some(start) = self.area_start {
+                // The raw pointer, not the pane response: the release may land outside it.
+                let (now, down, released, ctrl, shift) = ui.input(|i| {
+                    (
+                        i.pointer.latest_pos(),
+                        i.pointer.primary_down(),
+                        i.pointer.primary_released(),
+                        i.modifiers.ctrl,
+                        i.modifiers.shift,
+                    )
+                });
+                let now = now.unwrap_or(start);
+                let area = egui::Rect::from_two_pos(start, now);
+                let crossing = now.x < start.x;
+                if released || !down {
+                    self.area_start = None;
+                    if area.width() > 3.0 && area.height() > 3.0 {
+                        self.area_select(area, response.rect, view, crossing, ctrl, shift);
+                    }
+                } else {
+                    paint_area(ui, response.rect, area, crossing);
+                }
+            }
+        } else {
+            self.area_start = None;
+        }
         if self.plate_mode {
             let resolved = response
                 .hover_pos()
@@ -1138,6 +1566,22 @@ impl App {
                 &draft,
             );
         }
+        // Copy or move by two points: a rubber line from the origin to the pointer.
+        if let Some(from) = self.two_point.and_then(|t| t.from)
+            && let Some(loaded) = self.loaded.as_ref()
+            && let Some(pos) = response.hover_pos()
+            && let Some(start) =
+                crate::grid::project(from, response.rect, view, loaded.summary.origin_mm)
+        {
+            let painter = ui.painter_at(response.rect);
+            painter.add(egui::Shape::dashed_line(
+                &[start, pos],
+                Stroke::new(1.5, theme::BRAND),
+                6.0,
+                4.0,
+            ));
+            painter.circle_filled(start, 3.5, theme::BRAND);
+        }
         if self.views.picking.is_some() {
             let hover = response.hover_pos().and_then(|pos| {
                 ndc_of(
@@ -1156,6 +1600,8 @@ impl App {
         } else if let Some(ray) = picked {
             if self.views.picking.is_some() {
                 self.view_click(ray);
+            } else if self.two_point.is_some() {
+                self.two_point_click(ray);
             } else if self.plane_pick {
                 if let Some(loaded) = &self.loaded {
                     match beamcraft_engine::work_plane::pick_work_plane(
@@ -1186,6 +1632,8 @@ impl App {
             } else if self.bench == workbench::Bench::Bolt {
                 self.bolt_click(ray);
             } else if !self.other_command_running() {
+                // A click picks one element: the area selection ends.
+                self.selected_many.clear();
                 self.start_select(ray);
             }
         }
@@ -1196,6 +1644,19 @@ impl App {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_takes_what_is_inside_and_a_crossing_what_it_touches() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
+        let inside = [egui::pos2(10.0, 10.0), egui::pos2(90.0, 90.0)];
+        let across = [egui::pos2(50.0, 50.0), egui::pos2(150.0, 150.0)];
+        let outside = [egui::pos2(200.0, 200.0), egui::pos2(250.0, 250.0)];
+        assert!(area_takes(area, &inside, false));
+        assert!(!area_takes(area, &across, false));
+        assert!(area_takes(area, &across, true));
+        assert!(!area_takes(area, &outside, true));
+        assert!(!area_takes(area, &[], true));
+    }
 
     #[test]
     fn a_box_outline_has_twelve_edges_around_its_bounds() {

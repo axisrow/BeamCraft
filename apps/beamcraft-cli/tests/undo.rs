@@ -391,3 +391,68 @@ fn undo_restores_a_move_and_a_deleted_element() {
     f.ok(&["redo-workspace", "--workspace-dir", &dir]);
     assert!(f.plates(&dir).is_empty());
 }
+
+#[test]
+fn a_project_store_undoes_and_redoes_its_own_edits() {
+    // Owner decision 2026-11-14: Ctrl+Z works in a project opened without a personal
+    // workspace, one command per undo unit, as in Tekla.
+    let f = Fixture::new();
+    let store = f.dir("published");
+    // The store's first revision has no earlier state to return to, as a project made by
+    // create-project starts with its empty one: the second plate is the undo unit here.
+    for x in ["0", "1000"] {
+        let created = f.ok(&[
+            "create-plate",
+            "--store",
+            &store,
+            "--width",
+            "400",
+            "--length",
+            "200",
+            "--thickness",
+            "10",
+            "--translation",
+            &format!("{x},0,0"),
+        ]);
+        assert_eq!(text(&created, "outcome"), "plate_created");
+    }
+    let plates = |f: &Fixture| {
+        at(&f.ok(&["inspect-elements", "--store", &store]), &["plates"])
+            .array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(plates(&f), 2);
+    let op = "01890a5d-ac96-774b-b9cc-0000000000f1";
+    let undone = f.ok(&["undo-revision", "--store", &store, "--op-id", op]);
+    assert_eq!(text(&undone, "outcome"), "revision_undone");
+    assert_eq!(plates(&f), 1, "the second plate is undone");
+    // The same operation again is a replay and changes nothing.
+    let again = f.ok(&["undo-revision", "--store", &store, "--op-id", op]);
+    assert_eq!(text(&again, "outcome"), "revision_undo_replayed");
+    assert_eq!(plates(&f), 1);
+    let redone = f.ok(&["redo-revision", "--store", &store]);
+    assert_eq!(text(&redone, "outcome"), "revision_redone");
+    assert_eq!(plates(&f), 2, "the plate is back");
+    // Nothing left to redo.
+    assert_eq!(
+        f.code(&["redo-revision", "--store", &store]).1,
+        "INVALID_ARGUMENT"
+    );
+    // A personal workspace keeps its own history: the project command refuses it.
+    let workspace = f.dir("workspace");
+    fs::create_dir(&workspace).unwrap();
+    f.ok(&[
+        "create-workspace",
+        "--store",
+        &store,
+        "--workspace-dir",
+        &workspace,
+        "--user-id",
+        USER,
+    ]);
+    assert_eq!(
+        f.code(&["undo-revision", "--store", &workspace]).1,
+        "INVALID_ARGUMENT"
+    );
+}

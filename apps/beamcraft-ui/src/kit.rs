@@ -393,13 +393,6 @@ pub fn prop_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> 
     let painter = ui.painter();
     painter.hline(rect.left()..=rect.left() + width, rect.max.y, line);
     painter.vline(rect.left() + LABEL_WIDTH, rect.y_range(), line);
-    if row.response.hovered() {
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, vec2(LABEL_WIDTH, rect.height())),
-            0,
-            palette.head.gamma_multiply(0.5),
-        );
-    }
     row.inner
 }
 

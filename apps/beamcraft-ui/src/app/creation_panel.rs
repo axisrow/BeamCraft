@@ -128,6 +128,14 @@ impl App {
         if self.other_command_running() {
             return false;
         }
+        // Ctrl+Shift+middle click sets the rotation point; it never finishes a tool.
+        let pivot_click = response
+            .ctx
+            .input(|i| i.modifiers.ctrl && i.modifiers.shift)
+            && response.clicked_by(egui::PointerButton::Middle);
+        if pivot_click {
+            return false;
+        }
         let finish_click = response.clicked_by(egui::PointerButton::Secondary)
             || response.clicked_by(egui::PointerButton::Middle);
         if self.beam_mode && finish_click {

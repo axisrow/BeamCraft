@@ -539,6 +539,22 @@ resolve-workspace --workspace-dir DIR --op-id UUID --discard UUID --expected-dra
     [--actor-id UUID]
 ```
 
+### undo-revision
+
+write.
+
+```text
+undo-revision --store ROOT [--revision-id UUID] [--op-id UUID]
+```
+
+### redo-revision
+
+write.
+
+```text
+redo-revision --store ROOT [--revision-id UUID] [--op-id UUID]
+```
+
 ### undo-workspace
 
 write.
