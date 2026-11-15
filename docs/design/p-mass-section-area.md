@@ -155,6 +155,35 @@ Not hard-coded anywhere. Proposal: **gross** for the material order and purchase
 must be bought: nominal body before cutting), **net** for the fabricated or shipping weight (what
 the finished part weighs). Both are available now; the BOM chooses by use.
 
+## The declared-area convention (owner decision of 2026-11-15)
+
+A published catalogue area can follow one of two conventions, and the D3 declared-area check
+compares a declared value like-for-like against its convention's reference:
+
+| Convention (`AreaConvention`, default) | D3 reference |
+|---|---|
+| `exact_filleted` (default) | the exact closed-form area of the admitted geometry, fillet terms included |
+| `nominal_sharp` | the sharp constant-flange nominal `h*s + 2*t*(b-s)` (tapered-flange families only; refused elsewhere) |
+
+The trigger is EN 10365's UPN channel series (europe pack, #639): the standard is a nominal
+dimensions-and-masses standard, and its printed UPN areas split between the two conventions —
+the UPN 50-300 rows print the sharp constant-flange value with no fillet allowance (712 = 712,
+2040 = 2040, 5880 = 5880 mm2 exactly; every row of the group within 0.4 percent of the sharp
+form), while the UPN 320/350/380/400 rows print the exact filleted tapered area (within
+0.07 percent) — an internal heterogeneity inherited from the DIN 1026 continuity, not a
+transcription error. Against the single exact reference those fourteen rows sit 1.2-1.9 percent
+above their printed areas, which would fire the D3 typo detector on true data.
+
+The convention is declared per row (`steel:profile:areaConvention = "nominal_sharp"`, absent is
+the exact default), stored in the definition content (another convention is another digest), and
+the warning stays a full-strength typo detector either way: the sharp form still pins h, b, s and
+t, and the radii remain pinned by the family's geometric admission rules. The quantities
+themselves are unaffected (the declared catalogue area wins, as before). Implemented in
+`model::section::AreaConvention`, `model::section::ParametricSection::nominal_sharp_area_mm2`,
+the like-for-like branch of `engine::member::declared_section_area_warning`, the library loader
+and renderer, and the definition layer reader/writer (`steel:profile:areaConvention`, written
+only when non-default).
+
 ## Evidence
 
 - `cargo test -p beamcraft-model section`: hand values of the exact area of every family (30B1-like

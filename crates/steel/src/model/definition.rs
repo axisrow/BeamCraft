@@ -5,7 +5,7 @@
 //! section profile specs (P02.2). The material, which every discipline has, stays in
 //! [`beamcraft_model::definition`].
 
-use crate::model::section::SectionShape;
+use crate::model::section::{AreaConvention, SectionShape};
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::definition::declared_label;
@@ -33,6 +33,10 @@ pub struct SectionProperties {
     /// Readable name shown in listings and used to select the definition by name (A07.2). Part
     /// of the definition content, so another name is another digest. A label only.
     pub display_name: Option<String>,
+    /// The convention the declared area was published in (owner decision of 2026-11-15): the
+    /// D3 declared-area check compares against the same convention's reference. Part of the
+    /// definition content, so another convention is another digest.
+    pub area_convention: AreaConvention,
 }
 
 impl SectionProperties {
@@ -150,6 +154,20 @@ impl RectangleProfileSpec {
                 "declared surface differs from the perimeter",
             ));
         }
+        Self::admit_area_convention(&self.section)
+    }
+
+    /// A rectangle declares its area against `width * height` alone: the nominal sharp
+    /// convention is a published-table convention of the tapered-flange families and has no
+    /// meaning here, so it is refused.
+    fn admit_area_convention(section: &SectionProperties) -> Result<(), CommandError> {
+        if section.area_convention == AreaConvention::NominalSharp {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "area_convention",
+                "the nominal sharp area convention has no reference for this profile",
+            ));
+        }
         Ok(())
     }
 }
@@ -167,9 +185,22 @@ pub struct SectionProfileSpec {
 impl SectionProfileSpec {
     /// Admits the shape and the declared values. The declared area is a catalogue value and is
     /// never refused for disagreeing with the outline; [`Self::declared_area_warning`] reports it.
+    /// The nominal sharp area convention is admissible only for a tapered-flange family, the
+    /// one place a standard publishes it (`INVALID_ARGUMENT` naming `area_convention`
+    /// elsewhere).
     pub fn validate(&self) -> Result<(), CommandError> {
         self.shape.validate()?;
-        self.section.validate()
+        self.section.validate()?;
+        if self.section.area_convention == AreaConvention::NominalSharp
+            && self.shape.nominal_sharp_area_mm2().is_none()
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "area_convention",
+                "the nominal sharp area convention has no reference for this section family",
+            ));
+        }
+        Ok(())
     }
 
     /// Compares the declared area, if any, with the EXACT area of the section in mm2 (P-Mass:

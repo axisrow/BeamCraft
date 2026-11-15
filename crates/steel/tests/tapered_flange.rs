@@ -72,6 +72,7 @@ fn declared_warning(
             mass_per_meter_kg: None,
             surface_per_meter_m2: None,
             display_name: None,
+            area_convention: steel::model::section::AreaConvention::ExactFilleted,
         },
     };
     declared_section_area_warning(&spec)

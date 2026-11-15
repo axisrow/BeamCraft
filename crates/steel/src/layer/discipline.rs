@@ -184,6 +184,7 @@ impl Discipline for Steel {
                 | "steel:profile:heightMm"
                 | "steel:profile:designation"
                 | "steel:profile:standard"
+                | "steel:profile:areaConvention"
                 | "steel:profile:areaMm2"
                 | "steel:profile:massPerMeterKg"
                 | "steel:profile:surfacePerMeterM2"

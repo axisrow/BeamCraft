@@ -9,6 +9,7 @@
 use super::BoltGroup;
 use crate::model::command::{BendRecord, CutRecord, PlateCorner};
 use crate::model::definition::SectionProperties;
+use crate::model::section::AreaConvention;
 use beamcraft_layer_engine::authored::seam::author::{
     attr, attribute, author_record_history, points,
 };
@@ -36,7 +37,20 @@ pub(super) fn section_properties(
         p,
         "steel:profile:surfacePerMeterM2",
         section.surface_per_meter_m2,
-    )
+    )?;
+    // The declared-area convention stores only when it is not the default: an absent
+    // attribute is the exact convention.
+    if section.area_convention == AreaConvention::NominalSharp {
+        attr(
+            data,
+            p,
+            "steel:profile:areaConvention",
+            "string",
+            sdf::Value::String(section.area_convention.token().to_owned()),
+        )
+    } else {
+        Ok(())
+    }
 }
 pub(super) fn optional_text(
     data: &mut sdf::Data,

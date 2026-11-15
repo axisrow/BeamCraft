@@ -67,8 +67,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use steel::model::definition::SectionProperties;
 use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use steel::model::section::{
-    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
-    profile_attribute,
+    AreaConvention, CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily,
+    SectionShape, profile_attribute,
 };
 
 /// Largest library file, in bytes.
@@ -278,6 +278,23 @@ fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Refusal> {
         .transpose()
 }
 
+fn optional_string(prim: &Prim, name: &str) -> Result<Option<String>, Refusal> {
+    Ok(field(prim, name, "string")
+        .map_err(as_input)?
+        .and_then(text)
+        .map(str::to_owned))
+}
+
+/// The declared-area convention of an entry: absent is the default exact convention; anything
+/// present must be a known convention token.
+fn area_convention(prim: &Prim) -> Result<AreaConvention, Refusal> {
+    match optional_string(prim, "steel:profile:areaConvention")? {
+        None => Ok(AreaConvention::default()),
+        Some(token) => AreaConvention::from_token(&token)
+            .ok_or_else(|| invalid("the area convention is not a known token")),
+    }
+}
+
 fn required_number(prim: &Prim, name: &str) -> Result<f64, Refusal> {
     optional_number(prim, name)?.ok_or_else(|| invalid("a required dimension is missing"))
 }
@@ -292,7 +309,7 @@ const DAMAGED_OUTLINE: &str = "the custom outline attributes are inconsistent";
 /// that disagrees with the outline is not a reason to refuse the entry (see
 /// [`DefinitionRecord::declared_area_warning`]).
 fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Refusal> {
-    let section = SectionProperties {
+    let mut section = SectionProperties {
         designation: Some(designation.to_owned()),
         standard: field(prim, "steel:profile:standard", "string")
             .map_err(as_input)?
@@ -306,29 +323,40 @@ fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Ref
         mass_per_meter_kg: optional_number(prim, "steel:profile:massPerMeterKg")?,
         surface_per_meter_m2: optional_number(prim, "steel:profile:surfacePerMeterM2")?,
         display_name: Some(designation.to_owned()),
+        area_convention: AreaConvention::default(),
     };
     let family = required_text(prim, "steel:profile:family", "token")?;
     let record = match family {
-        "rectangle" => DefinitionRecord::RectangleProfile {
-            width_mm: required_number(prim, "steel:profile:bMm")?,
-            height_mm: required_number(prim, "steel:profile:hMm")?,
-            section,
-        },
-        "custom" => DefinitionRecord::SectionProfile {
-            shape: SectionShape::Custom(CustomSection {
-                outer: decode_polygon(prim, "steel:profile:outerPointsMm", DAMAGED_OUTLINE)
+        "rectangle" => {
+            if optional_string(prim, "steel:profile:areaConvention")?.is_some() {
+                return Err(invalid("a rectangle profile declares no area convention"));
+            }
+            DefinitionRecord::RectangleProfile {
+                width_mm: required_number(prim, "steel:profile:bMm")?,
+                height_mm: required_number(prim, "steel:profile:hMm")?,
+                section,
+            }
+        }
+        "custom" => {
+            if optional_string(prim, "steel:profile:areaConvention")?.is_some() {
+                return Err(invalid("a custom profile declares no area convention"));
+            }
+            DefinitionRecord::SectionProfile {
+                shape: SectionShape::Custom(CustomSection {
+                    outer: decode_polygon(prim, "steel:profile:outerPointsMm", DAMAGED_OUTLINE)
+                        .map_err(as_input)?,
+                    cavities: decode_polygons(
+                        prim,
+                        "steel:profile:cavityPointsMm",
+                        "steel:profile:cavityVertexCounts",
+                        MAX_CUSTOM_CAVITIES,
+                        DAMAGED_OUTLINE,
+                    )
                     .map_err(as_input)?,
-                cavities: decode_polygons(
-                    prim,
-                    "steel:profile:cavityPointsMm",
-                    "steel:profile:cavityVertexCounts",
-                    MAX_CUSTOM_CAVITIES,
-                    DAMAGED_OUTLINE,
-                )
-                .map_err(as_input)?,
-            }),
-            section,
-        },
+                }),
+                section,
+            }
+        }
         token => {
             let family = SectionFamily::from_token(token)
                 .ok_or_else(|| invalid("unknown section family"))?;
@@ -337,6 +365,7 @@ fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Ref
                 .iter()
                 .map(|name| required_number(prim, &profile_attribute(name)))
                 .collect::<Result<Vec<_>, _>>()?;
+            section.area_convention = area_convention(prim)?;
             DefinitionRecord::SectionProfile {
                 shape: SectionShape::Parametric(
                     ParametricSection::new(family, values).map_err(command)?,
@@ -1425,6 +1454,14 @@ fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, Re
             lines.push(format!("double steel:profile:{name} = {value}"));
         }
     }
+    // The declared-area convention stores only when it is not the default: an absent
+    // attribute reads back as the exact convention.
+    if section.area_convention == AreaConvention::NominalSharp {
+        lines.push(format!(
+            "string steel:profile:areaConvention = {}",
+            usda_string(section.area_convention.token())
+        ));
+    }
     Ok(lines
         .iter()
         .map(|line| format!("            {line}\n"))
@@ -2064,6 +2101,66 @@ mod tests {
         }
     }
 
+    const UPN_BODY: &str = "            token steel:profile:family = \"tapered_c\"\n            double steel:profile:hMm = 100\n            double steel:profile:bMm = 50\n            double steel:profile:sMm = 6\n            double steel:profile:tMm = 8.5\n            double steel:profile:rMm = 8.5\n            double steel:profile:r1Mm = 4.5\n            double steel:profile:k = 0.08\n            double steel:profile:areaMm2 = 1350\n            double steel:profile:massPerMeterKg = 10.6\n";
+
+    #[test]
+    fn a_declared_area_convention_round_trips_and_is_admitted_by_token_only() {
+        // The EN 10365 UPN convention: the nominal sharp declaration reads back as such, and
+        // a rendered library carries the attribute so the round trip keeps it.
+        let nominal = format!(
+            "{UPN_BODY}            string steel:profile:areaConvention = \"nominal_sharp\"\n"
+        );
+        let original = load_text(
+            "o",
+            &library(&[
+                entry("A", "UPN100", UPN_BODY),
+                entry("B", "UPN200", &nominal),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(original.entries.len(), 2);
+        for (designation, convention) in [
+            ("UPN100", AreaConvention::ExactFilleted),
+            ("UPN200", AreaConvention::NominalSharp),
+        ] {
+            let found = original.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile { section, .. } = &found.record else {
+                panic!("{designation} is not a section profile");
+            };
+            assert_eq!(section.area_convention, convention, "{designation}");
+        }
+        let named: Vec<(String, &LibraryEntry)> = original
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(n, e)| (format!("E{n}"), e))
+            .collect();
+        let info = LibraryInfo {
+            id: "r".into(),
+            title: None,
+            version: None,
+            source: None,
+            licence: Some("MPL-2.0".into()),
+            digest: digest_of(b"").unwrap(),
+            bytes: 0,
+            binary: false,
+        };
+        let again = load_text("r", &render_library(&info, &named).unwrap()).unwrap();
+        for (got, want) in again.entries.iter().zip(&original.entries) {
+            assert_eq!(got.record, want.record);
+        }
+        // An unknown convention token refuses the entry; a rectangle or custom profile
+        // declaring one has no reference and is refused as well.
+        let unknown = format!(
+            "{UPN_BODY}            string steel:profile:areaConvention = \"approximate\"\n"
+        );
+        let loaded = load_text("u", &library(&[entry("A", "UPNX", &unknown)])).unwrap();
+        assert_eq!(loaded.rejected.len(), 1);
+        let rectangle = "            token steel:profile:family = \"rectangle\"\n            double steel:profile:hMm = 80\n            double steel:profile:bMm = 20\n            string steel:profile:areaConvention = \"nominal_sharp\"\n";
+        let loaded = load_text("x", &library(&[entry("A", "RECT", rectangle)])).unwrap();
+        assert_eq!(loaded.rejected.len(), 1);
+    }
+
     #[test]
     fn hostile_layers_are_refused_without_a_panic() {
         let no_id = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
@@ -2098,7 +2195,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "europe-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("2"));
+        assert_eq!(library.info.version.as_deref(), Some("3"));
         assert!(
             library
                 .info
@@ -2117,7 +2214,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 69);
+        assert_eq!(library.entries.len(), 87);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -2127,10 +2224,12 @@ mod tests {
             else {
                 panic!("{} is not a parametric section", entry.designation);
             };
-            // The UPE channels are the pack's parallel-flange channel series; the rest are
-            // I and H shapes.
+            // The UPE channels are the pack's parallel-flange channel series, the UPN channels
+            // its taper-flange series, and the rest are I and H shapes.
             let want_family = if entry.designation.starts_with("UPE") {
                 SectionFamily::Channel
+            } else if entry.designation.starts_with("UPN") {
+                SectionFamily::TaperedC
             } else {
                 SectionFamily::IShape
             };
@@ -2141,9 +2240,10 @@ mod tests {
                 "{}",
                 entry.designation
             );
-            // The closed-form area of the declared dimensions must match the declared catalogue
-            // area (the D3 1 percent warning never fires) and the declared mass must be that
-            // area at the standard's 7850 kg/m3 within its published rounding.
+            // The declared catalogue area matches its convention's reference (the D3 1 percent
+            // warning never fires: like-for-like, EN 10365 publishes the UPN 50-300 areas as
+            // the nominal sharp-cornered value and the 320-400 areas exact) and the declared
+            // mass must be the area at the standard's 7850 kg/m3 within its published rounding.
             assert!(
                 entry.record.declared_area_warning().is_none(),
                 "{}",
@@ -2157,12 +2257,29 @@ mod tests {
                 "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
                 entry.designation
             );
+            // The convention declaration itself: nominal sharp exactly on the UPN 50-300 rows,
+            // the exact default on the 320-400 rows and everywhere else.
+            let want_convention = if entry.designation.starts_with("UPN") {
+                let depth: f64 = entry.designation[3..].parse().unwrap();
+                if depth <= 300.0 {
+                    AreaConvention::NominalSharp
+                } else {
+                    AreaConvention::ExactFilleted
+                }
+            } else {
+                AreaConvention::ExactFilleted
+            };
+            assert_eq!(
+                section.area_convention, want_convention,
+                "{}",
+                entry.designation
+            );
             designations.push(entry.designation.clone());
         }
         // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
         // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270),
-        // and no UPE 250/260 (the channel sequence steps 240 to 270). The taper-flange UPN series
-        // of the same standard is a different geometry family and is not part of the pack.
+        // no UPE 250/260 (the channel sequence steps 240 to 270), and the UPN series runs
+        // 50 to 400 with its own steps (320/350/380 after 300; no 270/330/360).
         assert_eq!(
             designations,
             [
@@ -2174,7 +2291,9 @@ mod tests {
                 "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
                 "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600", "UPE100",
                 "UPE120", "UPE140", "UPE160", "UPE180", "UPE200", "UPE220", "UPE240", "UPE270",
-                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80",
+                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80", "UPN100", "UPN120", "UPN140",
+                "UPN160", "UPN180", "UPN200", "UPN220", "UPN240", "UPN260", "UPN280", "UPN300",
+                "UPN320", "UPN350", "UPN380", "UPN400", "UPN50", "UPN65", "UPN80",
             ]
         );
         // Spot checks against the transcribed values.
@@ -2233,9 +2352,31 @@ mod tests {
         assert_eq!(p.values(), [300.0, 100.0, 9.5, 15.0, 15.0]);
         assert_eq!(section.area_mm2, Some(5660.0));
         assert_eq!(section.mass_per_meter_kg, Some(44.4));
+        let upn100 = library.entry("UPN100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upn100.record
+        else {
+            panic!("UPN100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 50.0, 6.0, 8.5, 8.5, 4.5, 0.08]);
+        assert_eq!(section.area_mm2, Some(1350.0));
+        assert_eq!(section.mass_per_meter_kg, Some(10.6));
+        let upn400 = library.entry("UPN400").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upn400.record
+        else {
+            panic!("UPN400 is not a parametric section");
+        };
+        assert_eq!(p.values(), [400.0, 110.0, 14.0, 18.0, 18.0, 9.0, 0.05]);
+        assert_eq!(section.area_mm2, Some(9150.0));
+        assert_eq!(section.mass_per_meter_kg, Some(71.8));
         for absent in [
             "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700", "UPE250", "UPE260",
-            "UPE450", "UPN100", "UPN200",
+            "UPE450", "UPN250", "UPN270", "UPN330", "UPN360", "UPN450",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -2257,7 +2398,7 @@ mod tests {
         // The profile namespace is unchanged by the fastener listing: both profile libraries
         // keep their entries.
         assert_eq!(environment.sources.len(), 2);
-        assert_eq!(environment.sources[0].library.entries.len(), 69);
+        assert_eq!(environment.sources[0].library.entries.len(), 87);
         assert_eq!(environment.sources[1].library.entries.len(), 52);
         // The DIN fastener set rides the same environment, admitted with declared provenance;
         // the pack carries the M12-30 designations since the EN 1090-2 hole-series rows.

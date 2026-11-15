@@ -1,13 +1,13 @@
 #usda 1.0
 (
-    doc = "BeamCraft Europe environment: hot-rolled I and H sections of the IPE, HEA and HEB series and the parallel-flange UPE channel series. The nominal dimensions, areas and masses are the published values of the public standard EN 10365:2022, re-entered by hand as our own data; no text or table is copied. Reference data for modelling; it is not a substitute for the standard itself."
+    doc = "BeamCraft Europe environment: hot-rolled I and H sections of the IPE, HEA and HEB series, the parallel-flange UPE channel series and the taper-flange UPN channel series. The nominal dimensions, areas and masses are the published values of the public standard EN 10365:2022, re-entered by hand as our own data; no text or table is copied. The UPN rows carry the taper-flange channel geometry: the inner flange faces rise at the slope the standard prints (8 percent up to UPN 300, 5 percent for UPN 320 to 400), t is the mid-leg flange thickness, r and r1 are the root and toe radii. The declared UPN areas follow the convention the standard publishes (steel:profile:areaConvention): the UPN 50 to 300 areas are the nominal sharp-cornered constant-flange value the standard prints (no fillet allowance), and the UPN 320 to 400 areas are the exact area of the filleted tapered section; the D3 declared-area check compares like-for-like. Reference data for modelling; it is not a substitute for the standard itself."
     metersPerUnit = 0.001
     upAxis = "Z"
     customLayerData = {
         string "bim:library:id" = "europe-en-10365-profiles"
-        string "bim:library:title" = "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, UPE)"
-        string "bim:library:version" = "2"
-        string "bim:library:source" = "EN 10365:2022 nominal facts (IPE/HEA/HEB 100-600, UPE 80-400) re-entered by hand as our own data; cross-checked against the DSTV digitale Stahlbautabellen (bauforumstahl.de), montanstahl.com, structurecalcs.com, wauben.nl and masteel.co.uk; no table copied"
+        string "bim:library:title" = "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, UPE, UPN)"
+        string "bim:library:version" = "3"
+        string "bim:library:source" = "EN 10365:2022 nominal facts (IPE/HEA/HEB 100-600, UPE 80-400, UPN 50-400) re-entered by hand; cross-checked against bauforumstahl.de, montanstahl.com, millstockgroup.com, structurecalcs.com, mesteel.com and masteel.co.uk; no table copied"
         string "bim:library:licence" = "MPL-2.0"
     }
 )
@@ -979,6 +979,308 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 9190
             double steel:profile:massPerMeterKg = 72.2
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_50"
+        {
+            string steel:profile:designation = "UPN50"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 38
+            double steel:profile:sMm = 5
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 7
+            double steel:profile:r1Mm = 3.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 712
+            double steel:profile:massPerMeterKg = 5.6
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_65"
+        {
+            string steel:profile:designation = "UPN65"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 65
+            double steel:profile:bMm = 42
+            double steel:profile:sMm = 5.5
+            double steel:profile:tMm = 7.5
+            double steel:profile:rMm = 7.5
+            double steel:profile:r1Mm = 4
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 903
+            double steel:profile:massPerMeterKg = 7.1
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_80"
+        {
+            string steel:profile:designation = "UPN80"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 80
+            double steel:profile:bMm = 45
+            double steel:profile:sMm = 6
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 4
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 1100
+            double steel:profile:massPerMeterKg = 8.6
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_100"
+        {
+            string steel:profile:designation = "UPN100"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 6
+            double steel:profile:tMm = 8.5
+            double steel:profile:rMm = 8.5
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 1350
+            double steel:profile:massPerMeterKg = 10.6
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_120"
+        {
+            string steel:profile:designation = "UPN120"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 120
+            double steel:profile:bMm = 55
+            double steel:profile:sMm = 7
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 1700
+            double steel:profile:massPerMeterKg = 13.4
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_140"
+        {
+            string steel:profile:designation = "UPN140"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 60
+            double steel:profile:sMm = 7
+            double steel:profile:tMm = 10
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 2040
+            double steel:profile:massPerMeterKg = 16
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_160"
+        {
+            string steel:profile:designation = "UPN160"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 65
+            double steel:profile:sMm = 7.5
+            double steel:profile:tMm = 10.5
+            double steel:profile:rMm = 10.5
+            double steel:profile:r1Mm = 5.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 2400
+            double steel:profile:massPerMeterKg = 18.8
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_180"
+        {
+            string steel:profile:designation = "UPN180"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 180
+            double steel:profile:bMm = 70
+            double steel:profile:sMm = 8
+            double steel:profile:tMm = 11
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 5.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 2800
+            double steel:profile:massPerMeterKg = 22
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_200"
+        {
+            string steel:profile:designation = "UPN200"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 8.5
+            double steel:profile:tMm = 11.5
+            double steel:profile:rMm = 11.5
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 3220
+            double steel:profile:massPerMeterKg = 25.3
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_220"
+        {
+            string steel:profile:designation = "UPN220"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 220
+            double steel:profile:bMm = 80
+            double steel:profile:sMm = 9
+            double steel:profile:tMm = 12.5
+            double steel:profile:rMm = 12.5
+            double steel:profile:r1Mm = 6.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 3740
+            double steel:profile:massPerMeterKg = 29.4
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_240"
+        {
+            string steel:profile:designation = "UPN240"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 240
+            double steel:profile:bMm = 85
+            double steel:profile:sMm = 9.5
+            double steel:profile:tMm = 13
+            double steel:profile:rMm = 13
+            double steel:profile:r1Mm = 6.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 4230
+            double steel:profile:massPerMeterKg = 33.2
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_260"
+        {
+            string steel:profile:designation = "UPN260"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 260
+            double steel:profile:bMm = 90
+            double steel:profile:sMm = 10
+            double steel:profile:tMm = 14
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 7
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 4830
+            double steel:profile:massPerMeterKg = 37.9
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_280"
+        {
+            string steel:profile:designation = "UPN280"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 280
+            double steel:profile:bMm = 95
+            double steel:profile:sMm = 10
+            double steel:profile:tMm = 15
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7.5
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 5330
+            double steel:profile:massPerMeterKg = 41.8
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_300"
+        {
+            string steel:profile:designation = "UPN300"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 10
+            double steel:profile:tMm = 16
+            double steel:profile:rMm = 16
+            double steel:profile:r1Mm = 8
+            double steel:profile:k = 0.08
+            double steel:profile:areaMm2 = 5880
+            double steel:profile:massPerMeterKg = 46.2
+            string steel:profile:areaConvention = "nominal_sharp"
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_320"
+        {
+            string steel:profile:designation = "UPN320"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 320
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 14
+            double steel:profile:tMm = 17.5
+            double steel:profile:rMm = 17.5
+            double steel:profile:r1Mm = 8.75
+            double steel:profile:k = 0.05
+            double steel:profile:areaMm2 = 7580
+            double steel:profile:massPerMeterKg = 59.5
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_350"
+        {
+            string steel:profile:designation = "UPN350"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 14
+            double steel:profile:tMm = 16
+            double steel:profile:rMm = 16
+            double steel:profile:r1Mm = 8
+            double steel:profile:k = 0.05
+            double steel:profile:areaMm2 = 7720
+            double steel:profile:massPerMeterKg = 60.6
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_380"
+        {
+            string steel:profile:designation = "UPN380"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 380
+            double steel:profile:bMm = 102
+            double steel:profile:sMm = 13.5
+            double steel:profile:tMm = 16
+            double steel:profile:rMm = 16
+            double steel:profile:r1Mm = 8
+            double steel:profile:k = 0.05
+            double steel:profile:areaMm2 = 8040
+            double steel:profile:massPerMeterKg = 63.1
+            string steel:profile:standard = "EN 10365:2022"
+        }
+
+        def Scope "UPN_400"
+        {
+            string steel:profile:designation = "UPN400"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 110
+            double steel:profile:sMm = 14
+            double steel:profile:tMm = 18
+            double steel:profile:rMm = 18
+            double steel:profile:r1Mm = 9
+            double steel:profile:k = 0.05
+            double steel:profile:areaMm2 = 9150
+            double steel:profile:massPerMeterKg = 71.8
             string steel:profile:standard = "EN 10365:2022"
         }
 

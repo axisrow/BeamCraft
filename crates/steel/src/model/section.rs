@@ -122,6 +122,43 @@ impl SectionFamily {
     }
 }
 
+/// How the standard that prints a catalogue area computed it (owner decision of 2026-11-15):
+/// the exact closed-form area of the admitted geometry, or the nominal sharp-cornered value
+/// that omits the fillet allowance. EN 10365 publishes the UPN rows of the 8 percent slope
+/// series in the nominal sharp convention (their printed areas equal the sharp
+/// constant-flange value `h*s + 2*t*(b-s)` within the printed rounding, with no fillet
+/// allowance) and the UPN 320/350/380/400 rows in the exact convention. The D3 declared-area
+/// check compares a declared area like-for-like against its convention's reference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AreaConvention {
+    /// The declared area is the exact closed-form area of the admitted geometry, fillet terms
+    /// included. The default: every pack shipped before the UPN rows.
+    #[default]
+    ExactFilleted,
+    /// The declared area is the nominal sharp-cornered value of the tapered-flange form, the
+    /// convention EN 10365 publishes for the UPN 50-300 rows.
+    NominalSharp,
+}
+
+impl AreaConvention {
+    /// Stable schema token.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::ExactFilleted => "exact_filleted",
+            Self::NominalSharp => "nominal_sharp",
+        }
+    }
+
+    /// The convention with this token, or `None`.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "exact_filleted" => Some(Self::ExactFilleted),
+            "nominal_sharp" => Some(Self::NominalSharp),
+            _ => None,
+        }
+    }
+}
+
 /// An admitted-shape candidate of a parametric family: the family and its values in the order of
 /// [`SectionFamily::parameters`].
 #[derive(Debug, Clone, PartialEq)]
@@ -314,6 +351,23 @@ impl ParametricSection {
                 t * (b + 2.0 * h + 2.0 * c - 4.0 * t) + bends(r, t, 4.0)
             }
             _ => 0.0,
+        }
+    }
+
+    /// The nominal sharp-cornered area of the section in mm2: the closed-form area with the
+    /// fillet terms omitted. EN 10365 publishes its UPN 8-percent-slope rows in this
+    /// convention: their printed areas are the sharp constant-flange value
+    /// `h*s + 2*t*(b-s)` (with `t` the stored mid-leg thickness) at the printed rounding, so
+    /// the declared values are checked against the same form. Only the tapered-flange
+    /// families carry such a nominal convention; any other family gives `None`, and a
+    /// declaration of the convention there is refused. The value is only meaningful for
+    /// admitted values.
+    pub fn nominal_sharp_area_mm2(&self) -> Option<f64> {
+        match (self.family, self.values.as_slice()) {
+            (SectionFamily::TaperedI | SectionFamily::TaperedC, &[h, b, s, t, ..]) => {
+                Some(h * s + 2.0 * t * (b - s))
+            }
+            _ => None,
         }
     }
 
@@ -578,6 +632,16 @@ impl SectionShape {
         match self {
             Self::Parametric(p) => p.exact_area_mm2(),
             Self::Custom(c) => c.exact_area_mm2(),
+        }
+    }
+
+    /// The nominal sharp-cornered area in mm2 (see
+    /// [`ParametricSection::nominal_sharp_area_mm2`]); a custom outline has no such convention
+    /// and gives `None`.
+    pub fn nominal_sharp_area_mm2(&self) -> Option<f64> {
+        match self {
+            Self::Parametric(p) => p.nominal_sharp_area_mm2(),
+            Self::Custom(_) => None,
         }
     }
 

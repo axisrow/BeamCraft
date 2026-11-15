@@ -953,6 +953,9 @@ pub(crate) fn profile_record(options: &BTreeMap<&str, &str>) -> Run<DefinitionRe
         mass_per_meter_kg: optional_float("--mass-per-meter-kg")?,
         surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
         display_name: None,
+        // The CLI declares against the exact convention; the nominal sharp convention
+        // enters through a profile library that cites a standard publishing it.
+        area_convention: Default::default(),
     };
     Ok(match given("--family") {
         None if SECTION_ONLY_OPTIONS

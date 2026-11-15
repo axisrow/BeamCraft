@@ -34,7 +34,7 @@ use crate::model::command::{
 use crate::model::definition::{
     DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
 };
-use crate::model::section::{CustomSection, SectionShape};
+use crate::model::section::{AreaConvention, CustomSection, SectionShape};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::solid::SolidMesh;
 use beamcraft_geom::{MemberFrame, Point3};
@@ -684,16 +684,27 @@ pub fn section_outline_area_mm2(shape: &SectionShape) -> Result<f64, CommandErro
     Ok(result.net_area_mm2())
 }
 
-/// The warning for a declared section area that differs from the EXACT area of the section by
-/// more than 1 percent (owner decision D3: a warning, never a refusal; the comparison is with the
-/// closed-form area, not the polygon of the mesh). `None` when no area is declared, when it
-/// agrees, or when the shape is not admitted (the declared value stays authoritative and the
-/// failure surfaces where the body is built). The `kernel_mm2` field of the warning carries the
-/// exact area.
+/// The warning for a declared section area that differs from its declared convention's
+/// reference area by more than 1 percent (owner decision D3: a warning, never a refusal; the
+/// comparison is with the closed-form area, never the polygon of the mesh). The reference is
+/// like-for-like (owner decision of 2026-11-15): a row declared in the exact convention is
+/// compared against the exact closed-form area of the section, and a row declared in the
+/// nominal sharp convention (EN 10365 publishes its UPN 8-percent rows that way, without a
+/// fillet allowance) against the nominal sharp-cornered value — so the check stays a
+/// full-strength typo detector on h, b, s and t either way, while the radii remain pinned by
+/// the family's geometric admission rules. `None` when no area is declared, when it agrees,
+/// when the shape is not admitted, or when the convention has no reference for the shape
+/// (admission refuses that combination; the declared value stays authoritative and the
+/// failure surfaces where the body is built). The `kernel_mm2` field of the warning carries
+/// the reference area.
 pub fn declared_section_area_warning(spec: &SectionProfileSpec) -> Option<DeclaredAreaWarning> {
     spec.section.area_mm2?;
     spec.shape.validate().ok()?;
-    spec.declared_area_warning(spec.shape.exact_area_mm2())
+    let reference = match spec.section.area_convention {
+        AreaConvention::ExactFilleted => spec.shape.exact_area_mm2(),
+        AreaConvention::NominalSharp => spec.shape.nominal_sharp_area_mm2()?,
+    };
+    spec.declared_area_warning(reference)
 }
 
 /// Evaluates an authored member with its resolved profile. The profile values are re-admitted
@@ -1236,6 +1247,94 @@ mod tests {
             None
         );
         assert!(declared_section_area_warning(&spec(Some(exact * 1.0101))).is_some());
+    }
+
+    #[test]
+    fn a_nominal_sharp_declaration_is_checked_like_for_like() {
+        use crate::model::section::{AreaConvention, ParametricSection, SectionFamily};
+        // EN 10365 UPN 100 as published: h 100, b 50, s 6, t (mid-leg) 8.5, r 8.5, r1 4.5,
+        // slope 0.08. The standard prints A = 1350 mm2, the sharp constant-flange nominal
+        // h*s + 2*t*(b-s) = 1348 at its rounding; the exact area additionally carries the
+        // fillet terms and is 1.3 percent above the printed value.
+        let upn100 = SectionShape::Parametric(
+            ParametricSection::new(
+                SectionFamily::TaperedC,
+                vec![100.0, 50.0, 6.0, 8.5, 8.5, 4.5, 0.08],
+            )
+            .unwrap(),
+        );
+        let exact = upn100.exact_area_mm2();
+        let sharp = upn100.nominal_sharp_area_mm2().unwrap();
+        assert!(((sharp - 1348.0).abs()) <= 0.5, "{sharp}");
+        assert!((exact - sharp).abs() / sharp > 0.01, "{exact} vs {sharp}");
+        let spec = |convention: AreaConvention, area: Option<f64>| SectionProfileSpec {
+            shape: upn100.clone(),
+            section: SectionProperties {
+                area_mm2: area,
+                area_convention: convention,
+                ..SectionProperties::default()
+            },
+        };
+        // The published row: silent against its own sharp reference, warned against the
+        // exact one, so the convention decides the reference.
+        assert_eq!(
+            declared_section_area_warning(&spec(AreaConvention::NominalSharp, Some(1350.0))),
+            None
+        );
+        let warned =
+            declared_section_area_warning(&spec(AreaConvention::ExactFilleted, Some(1350.0)))
+                .unwrap();
+        assert_eq!(warned.kernel_mm2, exact);
+        // Typo detection keeps full strength against the sharp reference.
+        let warned =
+            declared_section_area_warning(&spec(AreaConvention::NominalSharp, Some(1400.0)))
+                .unwrap();
+        assert_eq!(warned.kernel_mm2, sharp);
+        assert!(warned.relative_difference > 0.03);
+        // The exact convention stays silent at its own reference.
+        assert_eq!(
+            declared_section_area_warning(&spec(
+                AreaConvention::ExactFilleted,
+                Some((exact * 1.009).round())
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn the_nominal_sharp_convention_is_refused_where_it_has_no_reference() {
+        use crate::model::section::{AreaConvention, ParametricSection, SectionFamily};
+        let section = |shape: SectionShape| SectionProfileSpec {
+            shape,
+            section: SectionProperties {
+                area_mm2: Some(1000.0),
+                area_convention: AreaConvention::NominalSharp,
+                ..SectionProperties::default()
+            },
+        };
+        // A parallel-flange family and a custom outline carry no sharp nominal convention.
+        let channel = SectionShape::Parametric(
+            ParametricSection::new(SectionFamily::Channel, vec![200.0, 80.0, 6.0, 10.0, 10.0])
+                .unwrap(),
+        );
+        let custom = SectionShape::Custom(CustomSection {
+            outer: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 50.0], [0.0, 50.0]],
+            cavities: Vec::new(),
+        });
+        for shape in [channel, custom] {
+            let error = section(shape).validate().unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidArgument);
+            assert_eq!(error.field, "area_convention");
+        }
+        // The tapered-flange families admit it: the reference exists.
+        let upn100 = SectionShape::Parametric(
+            ParametricSection::new(
+                SectionFamily::TaperedC,
+                vec![100.0, 50.0, 6.0, 8.5, 8.5, 4.5, 0.08],
+            )
+            .unwrap(),
+        );
+        assert!(section(upn100).validate().is_ok());
     }
 
     fn i_section(r: f64) -> SectionShape {

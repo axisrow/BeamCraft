@@ -104,7 +104,7 @@ fn the_europe_environment_lists_both_profile_libraries_and_their_hollow_rows() {
         !text(at(hollow, &["library"]), "source").is_empty(),
         "the source is declared"
     );
-    assert_eq!(num(&listed, &["entry_count"]), 121.0);
+    assert_eq!(num(&listed, &["entry_count"]), 139.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let entries = at(&listed, &["entries"]).array().unwrap();
     let shs = entries
