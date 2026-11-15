@@ -54,6 +54,9 @@ pub struct ElementBody {
     pub kind: &'static str,
     /// The certified mesh in world coordinates.
     pub mesh: TriMesh,
+    /// The world corner extents of the mesh, cached once so a pair prefilter
+    /// never rescans either mesh.
+    pub bounds: ([f64; 3], [f64; 3]),
     /// The mesh approximation bound in millimetres: the largest chord
     /// deviation any faceted arc of this body keeps.
     pub mesh_bound_mm: f64,
@@ -122,33 +125,37 @@ impl ElementBody {
             .map(|v| [v[0] + x, v[1] + y, v[2] + z])
             .collect::<Vec<_>>();
         let mesh = TriMesh::from_buffers(&world, solid.triangles())?;
+        let bounds = Self::extent(&mesh);
         Ok(Self {
             id,
             name,
             kind,
             mesh,
+            bounds,
             mesh_bound_mm,
         })
+    }
+
+    /// The world corner extents of a mesh.
+    fn extent(mesh: &TriMesh) -> ([f64; 3], [f64; 3]) {
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        for v in mesh.vertices() {
+            lo[0] = lo[0].min(v[0]);
+            hi[0] = hi[0].max(v[0]);
+            lo[1] = lo[1].min(v[1]);
+            hi[1] = hi[1].max(v[1]);
+            lo[2] = lo[2].min(v[2]);
+            hi[2] = hi[2].max(v[2]);
+        }
+        (lo, hi)
     }
 
     /// The cheap world-bounds overlap with another body, before the exact
     /// pair decision.
     pub fn bounds_overlap(&self, other: &Self) -> bool {
-        let extent = |mesh: &TriMesh| {
-            let mut lo = [f64::INFINITY; 3];
-            let mut hi = [f64::NEG_INFINITY; 3];
-            for v in mesh.vertices() {
-                lo[0] = lo[0].min(v[0]);
-                hi[0] = hi[0].max(v[0]);
-                lo[1] = lo[1].min(v[1]);
-                hi[1] = hi[1].max(v[1]);
-                lo[2] = lo[2].min(v[2]);
-                hi[2] = hi[2].max(v[2]);
-            }
-            (lo, hi)
-        };
-        let (alo, ahi) = extent(&self.mesh);
-        let (blo, bhi) = extent(&other.mesh);
+        let (alo, ahi) = (&self.bounds.0, &self.bounds.1);
+        let (blo, bhi) = (&other.bounds.0, &other.bounds.1);
         (alo[0] <= bhi[0] && blo[0] <= ahi[0])
             && (alo[1] <= bhi[1] && blo[1] <= ahi[1])
             && (alo[2] <= bhi[2] && blo[2] <= ahi[2])
@@ -391,6 +398,64 @@ mod tests {
         // The measurement is the deepest contained point of the insert: its
         // top face sits 13 mm above the base's bottom wall.
         assert_eq!(out.measured_mm, Some(13.0));
+    }
+
+    #[test]
+    fn a_flush_buried_insert_is_a_clash_even_without_a_surface_crossing() {
+        // The insert shares both side walls with the base (flush at x=0 and
+        // x=1000), lies fully inside, and its flush-face region dodges the
+        // base wall diagonals, so the surface facts alone read as touching.
+        // The contained samples promote it, and the clash verdict fires.
+        let big = plate_body(AuthoredPlate {
+            id: id(6),
+            name: "Pocket".into(),
+            class: 0,
+            contour_points_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 300.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            placement: Placement::IDENTITY,
+            material: None,
+            holes_mm: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+            bends: Vec::new(),
+        })
+        .unwrap();
+        let insert = plate_body(AuthoredPlate {
+            id: id(7),
+            name: "Liner".into(),
+            class: 0,
+            contour_points_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 200.0, 0.0],
+                [0.0, 200.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            placement: Placement {
+                translation_mm: [0.0, 30.0, 150.0],
+                ..Placement::IDENTITY
+            },
+            material: None,
+            holes_mm: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+            bends: Vec::new(),
+        })
+        .unwrap();
+        let out = clash_verdict(&big, &insert, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(out.state, ClashState::Penetrated);
+        assert_eq!(out.contact, "contained");
+        let measured = out.measured_mm.unwrap_or_default();
+        assert!(measured > 30.0, "{measured}");
     }
 
     #[test]

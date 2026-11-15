@@ -132,18 +132,20 @@ impl Shell {
     }
 }
 
-/// One strict point answer per shell, sampled over its vertices. Disjoint
-/// closed surfaces are all-in or all-out, so mixed strict answers would mean a
-/// crossing this scan missed. Corners lie on the other shell's edge lines more
-/// often than not, so one vertex is not enough; 64 keep the work bounded.
+/// One strict point answer per shell, sampled over the other shell's
+/// containment samples (vertices and face probes). Disjoint closed surfaces
+/// are all-in or all-out, so mixed strict answers would mean a crossing this
+/// scan missed. Corners and flush walls lie on the other shell's edge lines
+/// more often than not, so the face probes are what decide the buried
+/// cases; 4096 samples keep the work bounded.
 fn sampled_contains(
     preds: &mut Predicates,
     shell: &Shell,
     other: &TriMesh,
 ) -> Result<Option<bool>, ContactError> {
     let mut seen: Option<bool> = None;
-    for vertex in other.vertices().iter().take(64) {
-        if let Some(inside) = shell_contains(preds, shell, *vertex)? {
+    for vertex in samples_of(other)?.into_iter().take(4096) {
+        if let Some(inside) = shell_contains(preds, shell, vertex)? {
             if seen.is_some() && seen != Some(inside) {
                 return Err(ContactError::Range);
             }
@@ -197,19 +199,25 @@ pub fn contact(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<PairReport, C
             }
         }
     }
-    if report.relation == Relation::Separated {
+    if matches!(report.relation, Relation::Separated | Relation::Touching) {
+        // A strict interior point decides what the surface meeting pattern
+        // cannot: a flush-buried part meets the host only along coplanar
+        // walls, its surface fact is Touching, and its interior still
+        // overlaps. Exact face contact samples on-surface or outside and
+        // keeps Touching; mixed strict answers under Separated stay the
+        // defensive error they always were.
         let a_inside_b = sampled_contains(&mut preds, &shell_b, a)?;
         let b_inside_a = sampled_contains(&mut preds, &shell_a, b)?;
-        report.relation = match (a_inside_b, b_inside_a) {
-            (Some(true), _) | (_, Some(true)) => Relation::Overlapping {
+        if a_inside_b == Some(true) || b_inside_a == Some(true) {
+            report.relation = Relation::Overlapping {
                 surface_crossing: false,
-            },
-            (Some(false), Some(false)) => Relation::Separated,
-            // On-surface or unresolved everywhere: the shells meet without a
-            // meeting triangle pair, which a consistent closed shell cannot
-            // produce.
-            _ => return Err(ContactError::Range),
-        };
+            };
+        } else if report.relation == Relation::Separated {
+            match (a_inside_b, b_inside_a) {
+                (Some(false), Some(false)) => {}
+                _ => return Err(ContactError::Range),
+            }
+        }
     }
     Ok(report)
 }
@@ -336,39 +344,48 @@ pub fn penetration_depth(
 ) -> Result<Option<f64>, ContactError> {
     let shell = Shell::of(shell)?;
     let mut preds = Predicates::new(limits.max_exact_predicates);
-    let mut samples: Vec<[f64; 3]> = Vec::new();
-    samples.extend_from_slice(inside.vertices());
-    for t in inside.triangles() {
-        let at = |i: u32| -> Result<[f64; 3], ContactError> {
-            usize::try_from(i)
-                .ok()
-                .and_then(|i| inside.vertices().get(i))
-                .copied()
-                .ok_or(ContactError::Range)
-        };
-        let (v0, v1, v2) = (at(t[0])?, at(t[1])?, at(t[2])?);
-        samples.extend(face_probes(v0, v1, v2));
-    }
     let mut deepest: Option<f64> = None;
     let mut measured = 0u64;
-    for vertex in &samples {
-        if !shell.bounds.contains_point(*vertex) {
+    for sample in &samples_of(inside)? {
+        if !shell.bounds.contains_point(*sample) {
             continue;
         }
-        if shell_contains(&mut preds, &shell, *vertex)? != Some(true) {
+        if shell_contains(&mut preds, &shell, *sample)? != Some(true) {
             continue;
         }
         measured += 1;
         if measured > limits.max_candidate_pairs {
             break;
         }
-        let depth = point_shell_distance(*vertex, &shell);
+        let depth = point_shell_distance(*sample, &shell);
         deepest = Some(match deepest {
             Some(best) if best >= depth => best,
             _ => depth,
         });
     }
     Ok(deepest)
+}
+
+/// The containment samples of a mesh: its vertices and, per triangle, the
+/// midpoint between one corner and the midpoint of the opposite edge — a
+/// point strictly inside the face by convexity with exactly representable
+/// coordinates, which reaches the interior of aligned prisms whose vertices
+/// all lie on the other shell's walls.
+fn samples_of(mesh: &TriMesh) -> Result<Vec<[f64; 3]>, ContactError> {
+    let mut samples: Vec<[f64; 3]> = Vec::with_capacity(mesh.vertices().len());
+    samples.extend_from_slice(mesh.vertices());
+    for t in mesh.triangles() {
+        let at = |i: u32| -> Result<[f64; 3], ContactError> {
+            usize::try_from(i)
+                .ok()
+                .and_then(|i| mesh.vertices().get(i))
+                .copied()
+                .ok_or(ContactError::Range)
+        };
+        let (v0, v1, v2) = (at(t[0])?, at(t[1])?, at(t[2])?);
+        samples.extend(face_probes(v0, v1, v2));
+    }
+    Ok(samples)
 }
 
 /// The distance from a point to a shell's triangles in `f64` (a measurement,
@@ -583,6 +600,29 @@ mod tests {
         assert_eq!(
             penetration_depth(&sunk, &wall, limits()).unwrap(),
             Some(5.0)
+        );
+        // The flush-buried case whose side walls poke through the shell's
+        // top face: the surfaces genuinely cross along the meeting lines,
+        // and the crossing is the decided fact.
+        let report = contact(&wall, &sunk, limits()).unwrap();
+        assert!(matches!(
+            report.relation,
+            Relation::Overlapping {
+                surface_crossing: true
+            }
+        ));
+        // Buried flush with one wall, fully inside the shell and placed so
+        // that no edge of either shell strictly pierces the other (the
+        // insert's flush-face region dodges both diagonals of the flush
+        // wall): the surface facts alone say Touching, and the strict
+        // interior point promotes the relation in the same call.
+        let buried = shell_box([0.0, 12.0, 4.75], [8.0, 14.0, 5.25]);
+        let report = contact(&wall, &buried, limits()).unwrap();
+        assert_eq!(
+            report.relation,
+            Relation::Overlapping {
+                surface_crossing: false
+            }
         );
     }
 

@@ -18,7 +18,6 @@
 //! supported set today never reports pass or fail for them.
 
 use crate::plate::Inspection;
-use beamcraft_engine::limits::MAX_ELEMENTS;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use session::Refusal;
@@ -172,10 +171,10 @@ pub fn check_model(
     let mut unknown_elements = 0usize;
     let mut covered: std::collections::BTreeSet<ElementId> = std::collections::BTreeSet::new();
 
+    // Every finding is kept: the counts and the total below cover the whole
+    // scope, and only the returned page is a slice of this list.
     let mut push = |finding: Finding| {
-        if findings.len() < MAX_ELEMENTS {
-            findings.push(finding);
-        }
+        findings.push(finding);
     };
 
     // The parts the checks run on, in element-id order, with their
@@ -255,72 +254,71 @@ pub fn check_model(
         });
     }
 
-    // PART_CLASH over the evaluated pairs, pruned by their bounding boxes.
-    let mut clash_pairs = Vec::new();
+    // PART_CLASH over the evaluated pairs, streamed: the pairs are visited
+    // in place and pruned by the cached corner extents, never materialized
+    // (a store at the engine's element cap would not fit them in memory).
     for index in 0..bodies.len() {
         let Some(a) = bodies.get(index) else {
             break;
         };
-        for other in bodies.iter().skip(index + 1) {
-            clash_pairs.push((a, other));
-        }
-    }
-    for (a, b) in clash_pairs {
-        if !pair_bounds_overlap(a, b) {
-            continue;
-        }
-        let outcome = check::clash_verdict(a, b, CONTACT_TOLERANCE_MM);
-        let Ok(outcome) = outcome else {
-            push(Finding {
-                rule: "PART_CLASH",
-                status: "unknown",
-                elements: vec![(a.id, a.name.clone()), (b.id, b.name.clone())],
-                message: "the contact decision could not be completed for this pair".into(),
-                basis: "geometric identity: solid interior overlap".into(),
-                measured_mm: None,
-                required_mm: None,
-                tolerance_mm: Some(CONTACT_TOLERANCE_MM),
-                missing_inputs: vec!["unresolved contact predicates"],
-            });
-            continue;
-        };
-        match outcome.state {
-            ClashState::Clear => {}
-            ClashState::Indeterminate => {
+        for b in bodies.iter().skip(index + 1) {
+            if !pair_bounds_overlap(a, b) {
+                continue;
+            }
+            let outcome = check::clash_verdict(a, b, CONTACT_TOLERANCE_MM);
+            let Ok(outcome) = outcome else {
                 push(Finding {
                     rule: "PART_CLASH",
                     status: "unknown",
                     elements: vec![(a.id, a.name.clone()), (b.id, b.name.clone())],
-                    message: format!(
-                        "the parts overlap ({}) but the measured depth {} sits at the \
+                    message: "the contact decision could not be completed for this pair".into(),
+                    basis: "geometric identity: solid interior overlap".into(),
+                    measured_mm: None,
+                    required_mm: None,
+                    tolerance_mm: Some(CONTACT_TOLERANCE_MM),
+                    missing_inputs: vec!["unresolved contact predicates"],
+                });
+                continue;
+            };
+            match outcome.state {
+                ClashState::Clear => {}
+                ClashState::Indeterminate => {
+                    push(Finding {
+                        rule: "PART_CLASH",
+                        status: "unknown",
+                        elements: vec![(a.id, a.name.clone()), (b.id, b.name.clone())],
+                        message: format!(
+                            "the parts overlap ({}) but the measured depth {} sits at the \
                          tolerance band edge",
-                        outcome.contact,
-                        outcome
-                            .measured_mm
-                            .map_or_else(|| "is unmeasured".to_owned(), |m| format!("{m:.3} mm")),
-                    ),
-                    basis: "geometric identity: solid interior overlap".into(),
-                    measured_mm: outcome.measured_mm,
-                    required_mm: Some(CONTACT_TOLERANCE_MM),
-                    tolerance_mm: Some(CONTACT_TOLERANCE_MM),
-                    missing_inputs: vec!["indeterminate"],
-                });
-            }
-            ClashState::Penetrated => {
-                push(Finding {
-                    rule: "PART_CLASH",
-                    status: "fail",
-                    elements: vec![(a.id, a.name.clone()), (b.id, b.name.clone())],
-                    message: format!(
-                        "the parts penetrate each other ({}) beyond the contact tolerance",
-                        outcome.contact,
-                    ),
-                    basis: "geometric identity: solid interior overlap".into(),
-                    measured_mm: outcome.measured_mm,
-                    required_mm: Some(CONTACT_TOLERANCE_MM),
-                    tolerance_mm: Some(CONTACT_TOLERANCE_MM),
-                    missing_inputs: Vec::new(),
-                });
+                            outcome.contact,
+                            outcome.measured_mm.map_or_else(
+                                || "is unmeasured".to_owned(),
+                                |m| format!("{m:.3} mm")
+                            ),
+                        ),
+                        basis: "geometric identity: solid interior overlap".into(),
+                        measured_mm: outcome.measured_mm,
+                        required_mm: Some(CONTACT_TOLERANCE_MM),
+                        tolerance_mm: Some(CONTACT_TOLERANCE_MM),
+                        missing_inputs: vec!["indeterminate"],
+                    });
+                }
+                ClashState::Penetrated => {
+                    push(Finding {
+                        rule: "PART_CLASH",
+                        status: "fail",
+                        elements: vec![(a.id, a.name.clone()), (b.id, b.name.clone())],
+                        message: format!(
+                            "the parts penetrate each other ({}) beyond the contact tolerance",
+                            outcome.contact,
+                        ),
+                        basis: "geometric identity: solid interior overlap".into(),
+                        measured_mm: outcome.measured_mm,
+                        required_mm: Some(CONTACT_TOLERANCE_MM),
+                        tolerance_mm: Some(CONTACT_TOLERANCE_MM),
+                        missing_inputs: Vec::new(),
+                    });
+                }
             }
         }
     }
