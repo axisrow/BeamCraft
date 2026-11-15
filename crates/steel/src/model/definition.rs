@@ -203,12 +203,13 @@ impl SectionProfileSpec {
         Ok(())
     }
 
-    /// Compares the declared area, if any, with the EXACT area of the section in mm2 (P-Mass:
-    /// the closed-form area of [`crate::model::section::SectionShape::exact_area_mm2`], supplied by the
-    /// caller; never the polygon of the mesh). A relative gap above 1 percent
-    /// (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a refusal: owner decision D3
-    /// (2026-10-18), catalogue values are authoritative. No declared area, or an exact area
-    /// that is not a positive finite number, gives no warning.
+    /// Compares the declared area, if any, with the reference area of its declared convention
+    /// in mm2 (P-Mass: supplied by the caller — [`crate::model::section::SectionShape::exact_area_mm2`]
+    /// for the exact convention, the nominal sharp-cornered value for the nominal sharp one;
+    /// like-for-like per the owner decision of 2026-11-15; never the polygon of the mesh). A
+    /// relative gap above 1 percent (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a
+    /// refusal: owner decision D3 (2026-10-18), catalogue values are authoritative. No declared
+    /// area, or a reference that is not a positive finite number, gives no warning.
     pub fn declared_area_warning(&self, exact_area_mm2: f64) -> Option<DeclaredAreaWarning> {
         let declared = self.section.area_mm2?;
         if !exact_area_mm2.is_finite() || exact_area_mm2 <= 0.0 {
@@ -224,14 +225,16 @@ impl SectionProfileSpec {
     }
 }
 
-/// A declared section area that differs from the exact area of the section by more than the
+/// A declared section area that differs from its convention's reference area by more than the
 /// threshold. Informational: the definition is created and keeps the declared value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeclaredAreaWarning {
     /// The declared (catalogue) area in mm2.
     pub declared_mm2: f64,
-    /// The exact area of the section in mm2 (the name is kept from the first slice, where the
-    /// kernel's polygon was the reference; the wire key is `kernel_mm2`).
+    /// The reference area of the declared convention in mm2: the exact area for the exact
+    /// convention, the nominal sharp-cornered value for the nominal sharp one (the name is
+    /// kept from the first slice, where the kernel's polygon was the reference; the wire key
+    /// is `kernel_mm2`).
     pub kernel_mm2: f64,
     /// `|declared - exact| / exact`.
     pub relative_difference: f64,

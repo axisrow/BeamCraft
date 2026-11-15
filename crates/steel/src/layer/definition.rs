@@ -298,6 +298,7 @@ fn section_fields() -> Vec<(&'static str, &'static str)> {
     vec![
         ("steel:profile:designation", "string"),
         ("steel:profile:standard", "string"),
+        ("steel:profile:areaConvention", "string"),
         ("steel:profile:areaMm2", "double"),
         ("steel:profile:massPerMeterKg", "double"),
         ("steel:profile:surfacePerMeterM2", "double"),

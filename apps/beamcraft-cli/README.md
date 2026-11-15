@@ -209,7 +209,11 @@ surface per metre must agree with `width * height` and the perimeter within 0.1 
 against area times density only when a member quantity uses it (P04). A grade never selects a
 density. The numbers are plain USD attributes (`steel:profile:areaMm2`, `steel:profile:massPerMeterKg`,
 `steel:profile:surfacePerMeterM2`, `steel:profile:designation`, `steel:profile:standard`,
-`bim:materialGrade`, `bim:materialStandard`).
+`steel:profile:areaConvention`, `bim:materialGrade`, `bim:materialStandard`). The optional
+`steel:profile:areaConvention` declares which reference the printed area follows (owner decision
+of 2026-11-15): `nominal_sharp` compares the D3 declared-area warning against the nominal
+sharp-cornered value (EN 10365 publishes its UPN 50-300 rows that way), absent or
+`exact_filleted` compares against the exact closed-form area.
 
 `define-material` and `define-profile` publish one immutable definition as the next revision: a
 `/World/Definitions/Materials/MAT_<sha256>` or
