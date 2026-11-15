@@ -80,9 +80,9 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "russia");
-    assert_eq!(num(&listed, &["entry_count"]), 271.0);
+    assert_eq!(num(&listed, &["entry_count"]), 345.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
-    // The environment now lists 271 entries, over the 256-entry page cap, so the second page
+    // The environment now lists 345 entries, over the 256-entry page cap, so the second page
     // completes the listing before the per-entry assertions.
     let mut entries = at(&listed, &["entries"]).array().unwrap().to_vec();
     assert_eq!(entries.len(), 256);
@@ -95,9 +95,9 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         "--limit",
         "256",
     ]);
-    assert_eq!(num(&rest, &["entry_count"]), 271.0);
+    assert_eq!(num(&rest, &["entry_count"]), 345.0);
     entries.extend(at(&rest, &["entries"]).array().unwrap().iter().cloned());
-    assert_eq!(entries.len(), 271);
+    assert_eq!(entries.len(), 345);
     let libraries = at(&listed, &["libraries"]).array().unwrap();
     assert_eq!(libraries.len(), 3);
     let info = at(&libraries[0], &["library"]);
@@ -106,8 +106,8 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let square_info = at(&libraries[1], &["library"]);
-    assert_eq!(text(square_info, "id"), "russia-gost-30245-squares");
-    assert_eq!(text(square_info, "version"), "2");
+    assert_eq!(text(square_info, "id"), "russia-gost-30245-profiles");
+    assert_eq!(text(square_info, "version"), "3");
     assert_eq!(text(square_info, "licence"), "MPL-2.0");
     assert!(
         !text(square_info, "source").is_empty(),
@@ -140,7 +140,7 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         .iter()
         .find(|e| text(e, "designation") == "60x60x3")
         .unwrap();
-    assert_eq!(text(square, "library_id"), "russia-gost-30245-squares");
+    assert_eq!(text(square, "library_id"), "russia-gost-30245-profiles");
     assert_eq!(num(square, &["parameters_mm", "h"]), 60.0);
     assert_eq!(num(square, &["parameters_mm", "t"]), 3.0);
     assert_eq!(num(square, &["parameters_mm", "r"]), 6.0);
@@ -166,6 +166,16 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         .unwrap();
     assert_eq!(num(channel, &["parameters_mm", "b"]), 68.0);
     assert_eq!(num(channel, &["parameters_mm", "k"]), 0.07);
+    // The rectangular band rides the second library: h carries the height, b the width.
+    let rectangle = entries
+        .iter()
+        .find(|e| text(e, "designation") == "80x60x3")
+        .unwrap();
+    assert_eq!(text(rectangle, "library_id"), "russia-gost-30245-profiles");
+    assert_eq!(num(rectangle, &["parameters_mm", "h"]), 80.0);
+    assert_eq!(num(rectangle, &["parameters_mm", "b"]), 60.0);
+    assert_eq!(num(rectangle, &["parameters_mm", "t"]), 3.0);
+    assert_eq!(num(rectangle, &["parameters_mm", "r"]), 6.0);
 }
 
 #[test]
@@ -346,9 +356,10 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
 
     // A designation the shipped series do not publish is refused, not silently substituted:
     // 30K4 and 80Sh1 exist only in the newer GOST R 57837-2017, GOST 8239-89 publishes no 25
-    // and GOST 8240-89 no 24a (the a-variants are 16a and 18a only), and GOST 30245-2003
-    // publishes no 220 mm square at all.
-    for absent in ["30K4", "80Sh1", "I25", "C24a", "220x220x10"] {
+    // and GOST 8240-89 no 24a (the a-variants are 16a and 18a only), GOST 30245-2003
+    // publishes no 220 mm square at all, and its 50x30 rectangular group steps over the
+    // 4.5 mm wall.
+    for absent in ["30K4", "80Sh1", "I25", "C24a", "220x220x10", "50x30x4.5"] {
         assert_eq!(
             f.code(&[
                 "create-member",
@@ -370,11 +381,34 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
         );
     }
 
+    // A cold-bent rectangular designation: 80x60x3, catalogue area 781 mm2, corner radius
+    // 2t = 6 mm, the height along h and the width along b.
+    let made = f.ok(&[
+        "create-member",
+        "--store",
+        &store,
+        "--kind",
+        "beam",
+        "--start",
+        "22000,0,0",
+        "--end",
+        "28000,0,0",
+        "--profile",
+        "80x60x3",
+        "--material",
+        "Steel",
+    ]);
+    let q = at(&made, &["member", "quantities"]).clone();
+    assert_eq!(text(&q, "area_source"), "catalogue");
+    assert_eq!(num(&q, &["section_area_mm2"]), 781.0);
+    // 781 mm2 x 6000 mm x 7850 kg/m3.
+    close(num(&q, &["mass", "kg"]), 36.7851, 1e-9);
+
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 7);
+    assert_eq!(members.len(), 8);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
