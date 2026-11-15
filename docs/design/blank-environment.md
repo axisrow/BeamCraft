@@ -22,10 +22,10 @@ saved setting.
   EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
   the hollow closed-form area); `environments/russia/` holds the GOST 26020-83 parallel-flange
   beam (Б), wide-flange (Ш) and column (К) series and, since 2026-11-15, a second profile
-  library with the GOST 30245-2003 cold-bent square hollow sections (sizes 60x60 to 200x200,
-  the 250 and 300 mm squares of the same table following; validated against the hollow
-  closed-form area) and the GOST 7798-70 hex-bolt fastener set (M12/16/20/24, the environment's
-  fastener library, BC-ENV-002); `environments/australia/` (2026-11-15) holds the
+  library with the GOST 30245-2003 cold-bent square hollow sections (the complete square
+  series, sizes 40x40 to 300x300; validated against the hollow closed-form area) and the
+  GOST 7798-70 hex-bolt fastener set (M12/16/20/24, the environment's fastener library,
+  BC-ENV-002); `environments/australia/` (2026-11-15) holds the
   AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series,
   `environments/india/` holds the IS 808:2021
   narrow (NPB) and wide (WPB) parallel flange beam series, and `environments/china/`

@@ -2653,7 +2653,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "russia-gost-30245-squares");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -2672,7 +2672,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 115);
+        assert_eq!(library.entries.len(), 155);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -2723,11 +2723,24 @@ mod tests {
             );
             designations.push(entry.designation.clone());
         }
-        // The 60 to 200 mm band of table 1 exactly as GOST 30245-2003 publishes it: sizes
-        // 60, 70, 80, 90, 100, 120, 140, 150, 160, 180 and 200, each with its published wall
-        // thicknesses in 0.5 mm steps. The 40 and 50 mm squares and the 250 and 300 mm
-        // squares of the same table ship in further slices.
+        // Table 1 exactly as GOST 30245-2003 publishes it: the complete square series, sizes
+        // 40, 50, 60, 70, 80, 90, 100, 120, 140, 150, 160, 180, 200, 250 and 300, each with
+        // its published wall thicknesses in 0.5 mm steps.
         let mut expected = vec![
+            "40x40x2",
+            "40x40x2.5",
+            "40x40x3",
+            "40x40x3.5",
+            "40x40x4",
+            "50x50x2",
+            "50x50x2.5",
+            "50x50x3",
+            "50x50x3.5",
+            "50x50x4",
+            "50x50x4.5",
+            "50x50x5",
+            "50x50x5.5",
+            "50x50x6",
             "60x60x2",
             "60x60x2.5",
             "60x60x3",
@@ -2843,6 +2856,32 @@ mod tests {
             "200x200x11",
             "200x200x11.5",
             "200x200x12",
+            "250x250x6",
+            "250x250x6.5",
+            "250x250x7",
+            "250x250x7.5",
+            "250x250x8",
+            "250x250x8.5",
+            "250x250x9",
+            "250x250x9.5",
+            "250x250x10",
+            "250x250x10.5",
+            "250x250x11",
+            "250x250x11.5",
+            "250x250x12",
+            "300x300x6",
+            "300x300x6.5",
+            "300x300x7",
+            "300x300x7.5",
+            "300x300x8",
+            "300x300x8.5",
+            "300x300x9",
+            "300x300x9.5",
+            "300x300x10",
+            "300x300x10.5",
+            "300x300x11",
+            "300x300x11.5",
+            "300x300x12",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -2877,6 +2916,16 @@ mod tests {
         // 24.34; the library carries 24.34.
         spot("150x150x5.5", [150.0, 150.0, 5.5, 11.0], 3101.0, 24.34);
         spot("200x200x12", [200.0, 200.0, 12.0, 36.0], 8406.0, 65.99);
+        spot("40x40x2", [40.0, 40.0, 2.0, 4.0], 294.0, 2.31);
+        // 50x50x4: the scans' printed mass 5.45 truncates the relation (0.785 * 6.95 =
+        // 5.4558 rounds to 5.46); the text layer and the raster print 5.45, the typeset
+        // 5.46, and the library carries the majority print.
+        spot("50x50x4", [50.0, 50.0, 4.0, 8.0], 695.0, 5.45);
+        // 250x250x11.5: the row the raster scan drops at its page break; the text layer and
+        // the typeset carry it and the closed form confirms it. Areas of 100 cm2 and above
+        // print with one decimal.
+        spot("250x250x11.5", [250.0, 250.0, 11.5, 34.5], 10400.0, 81.67);
+        spot("300x300x12", [300.0, 300.0, 12.0, 36.0], 13210.0, 103.7);
         // Designations the standard does not publish are NOT_FOUND, never a near match:
         // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
         // published thickness range. The Cyrillic authenticity form is not a lookup key.
@@ -2909,15 +2958,6 @@ mod tests {
                 library.entry(absent).unwrap_err().code,
                 ErrorCode::NotFound,
                 "{absent} is not in the shipped series"
-            );
-        }
-        // Rows the standard publishes but this slice does not ship yet: the 40 and 50 mm
-        // squares and the 250 and 300 mm squares.
-        for not_yet in ["40x40x4", "50x50x2", "250x250x6", "300x300x12"] {
-            assert_eq!(
-                library.entry(not_yet).unwrap_err().code,
-                ErrorCode::NotFound,
-                "{not_yet} is not in the shipped series"
             );
         }
     }
