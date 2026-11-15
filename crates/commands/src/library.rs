@@ -3054,4 +3054,245 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_shipped_china_h_section_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/china/profiles-gb-t-11263.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "china-gb-t-11263-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 103);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // The HW/HM/HN flanges are parallel: the i_shape family, no slope, no toe radius.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("GB/T 11263-2017"),
+                "{}",
+                entry.designation
+            );
+            // The closed-form area of the declared dimensions must match the declared catalogue
+            // area (the D3 1 percent warning never fires) and the declared mass must be that
+            // area at 7850 kg/m3 within the standard's published rounding. The mass prints
+            // with one decimal to 100 kg/m and as an integer above it (HW400x400 "172" is
+            // 171.68 rounded), so 0.55 kg/m covers every row.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() <= 0.55,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The HW, HM and HN series exactly as table 1 of GB/T 11263-2017 publishes them: 103
+        // designations (the lookup lists them lexicographically). The thin-wall HT series
+        // (27 rows) and the HP pile series of the same table stay outside this pack.
+        assert_eq!(
+            designations,
+            [
+                "HM148x100",
+                "HM194x150",
+                "HM244x175",
+                "HM294x200",
+                "HM298x201",
+                "HM340x250",
+                "HM390x300",
+                "HM440x300",
+                "HM482x300",
+                "HM488x300",
+                "HM544x300",
+                "HM550x300",
+                "HM582x300",
+                "HM588x300",
+                "HM594x302",
+                "HN1000x300",
+                "HN1008x302",
+                "HN100x50",
+                "HN125x60",
+                "HN150x75",
+                "HN175x90",
+                "HN198x99",
+                "HN200x100",
+                "HN248x124",
+                "HN250x125",
+                "HN298x149",
+                "HN300x150",
+                "HN346x174",
+                "HN350x175",
+                "HN396x199",
+                "HN400x150",
+                "HN400x200",
+                "HN446x150",
+                "HN446x199",
+                "HN450x151",
+                "HN450x200",
+                "HN470x150",
+                "HN475x151.5",
+                "HN482x153.5",
+                "HN492x150",
+                "HN496x199",
+                "HN500x152",
+                "HN500x200",
+                "HN504x153",
+                "HN506x201",
+                "HN546x199",
+                "HN550x200",
+                "HN596x199",
+                "HN600x200",
+                "HN606x201",
+                "HN625x198.5",
+                "HN630x200",
+                "HN638x202",
+                "HN646x299",
+                "HN650x300",
+                "HN656x301",
+                "HN692x300",
+                "HN700x300",
+                "HN734x299",
+                "HN742x300",
+                "HN750x300",
+                "HN758x303",
+                "HN792x300",
+                "HN800x300",
+                "HN834x298",
+                "HN842x299",
+                "HN850x300",
+                "HN858x301",
+                "HN890x299",
+                "HN900x300",
+                "HN912x302",
+                "HN970x297",
+                "HN980x298",
+                "HN990x298",
+                "HW100x100",
+                "HW125x125",
+                "HW150x150",
+                "HW175x175",
+                "HW200x200",
+                "HW200x204",
+                "HW244x252",
+                "HW250x250",
+                "HW250x255",
+                "HW294x302",
+                "HW300x300",
+                "HW300x305",
+                "HW338x351",
+                "HW344x348",
+                "HW344x354",
+                "HW350x350",
+                "HW350x357",
+                "HW388x402",
+                "HW394x398",
+                "HW394x405",
+                "HW400x400",
+                "HW400x408",
+                "HW414x405",
+                "HW428x407",
+                "HW458x417",
+                "HW492x465",
+                "HW498x432",
+                "HW502x465",
+                "HW502x470",
+            ]
+        );
+        // Spot checks against the transcribed values.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("HW100x100", [100.0, 100.0, 6.0, 8.0, 8.0], 2158.0, 16.9);
+        spot(
+            "HM594x302",
+            [594.0, 302.0, 14.0, 23.0, 13.0],
+            21710.0,
+            170.0,
+        );
+        spot(
+            "HN1008x302",
+            [1008.0, 302.0, 21.0, 40.0, 18.0],
+            43930.0,
+            345.0,
+        );
+        // The 625x200 and 650x300 groups where a 2017-labeled web transcription disagrees with
+        // the official text: the 2017 foreword changes no table 1 value against the 2010
+        // printing, so the official values stand (HN630x200 tw 13, not 15).
+        spot(
+            "HN630x200",
+            [630.0, 200.0, 13.0, 20.0, 13.0],
+            15820.0,
+            124.0,
+        );
+        spot(
+            "HN646x299",
+            [646.0, 299.0, 10.0, 15.0, 13.0],
+            15280.0,
+            120.0,
+        );
+        // The HT thin-wall series, the HP pile series and the depths no series publishes stay
+        // NOT_FOUND, and the bare prefix without the series letter is no designation.
+        for absent in [
+            "HT100x50",
+            "HT200x100",
+            "HP200x200",
+            "HP250x250",
+            "H200x100",
+            "HW110x110",
+            "HM160x150",
+            "HN225x125",
+            "HW500x500",
+            "HN550x300",
+            "HW498x417",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
 }
