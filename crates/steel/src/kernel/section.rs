@@ -84,6 +84,10 @@ pub struct SectionOutline {
     pub height_mm: f64,
     /// Whether any curve of the section is replaced by a polygon (or dropped).
     pub approximated: bool,
+    /// The chord-sagitta bound the detailed outline's arcs keep, in
+    /// millimetres (`0.0` for an exactly polygonal outline; the simplified
+    /// representation is coarser and carries no bound here).
+    pub sagitta_bound_mm: f64,
 }
 
 /// Why a section could not be built: the failure of the stage that refused it.
@@ -623,6 +627,13 @@ pub fn outline(
     }
 }
 
+/// The chord-sagitta bound the detailed outline's faceted arcs keep, in
+/// millimetres (`0.0` when the outline is exactly polygonal). The mesh
+/// approximation bound of a section member's wall faces comes from here.
+pub fn detailed_sagitta_bound(shape: &SectionShape) -> Result<f64, SectionFailure> {
+    Ok(outline(shape, Representation::Detailed)?.sagitta_bound_mm)
+}
+
 fn custom_outline(custom: &CustomSection) -> SectionOutline {
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     for [x, y] in &custom.outer {
@@ -646,6 +657,7 @@ fn custom_outline(custom: &CustomSection) -> SectionOutline {
         width_mm: hi[0] - lo[0],
         height_mm: hi[1] - lo[1],
         approximated: false,
+        sagitta_bound_mm: 0.0,
     }
 }
 
@@ -679,6 +691,7 @@ fn parametric_outline_with(
             width_mm: d,
             height_mm: d,
             approximated: true,
+            sagitta_bound_mm: detailed_arcs(d / 2.0).max_sagitta_mm,
         });
     }
     let used = if simplified {
@@ -696,6 +709,7 @@ fn parametric_outline_with(
             width_mm: b,
             height_mm: h,
             approximated: r > 0.0 || r1 > 0.0 || simplified,
+            sagitta_bound_mm: detailed_arcs(r.max(r1)).max_sagitta_mm,
         });
     }
     let radius = used.values().last().copied().unwrap_or(0.0);
@@ -731,6 +745,7 @@ fn parametric_outline_with(
         width_mm: width,
         height_mm: height,
         approximated: radius > 0.0 || simplified,
+        sagitta_bound_mm: detailed_arcs(largest).max_sagitta_mm,
     })
 }
 

@@ -10,6 +10,7 @@
 //! request adapter. No rotation, I/O or dependency keys are exposed.
 
 pub mod build;
+pub mod contact;
 pub mod diagnostic;
 pub mod feature_id;
 pub mod input;

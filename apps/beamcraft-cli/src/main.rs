@@ -23,6 +23,7 @@ mod attribute_cmd;
 mod bolt_cmd;
 mod bom_cmd;
 mod changeset_cmd;
+mod check_cmd;
 mod command_context;
 mod compensate_cmd;
 mod construction_cmd;
@@ -184,6 +185,7 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
         Some(Route::Weld) => weld_cmd::execute(args),
         Some(Route::Bolt) => bolt_cmd::execute(args),
         Some(Route::Bom) => bom_cmd::execute(args),
+        Some(Route::Check) => check_cmd::execute(args),
         Some(Route::Schedule) => schedule_cmd::execute(args),
         Some(Route::Library) => library_cmd::execute(args),
         Some(Route::Fastener) => fastener_cmd::execute(args),
