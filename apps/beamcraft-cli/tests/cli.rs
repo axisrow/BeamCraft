@@ -47,6 +47,7 @@ mod environments;
 mod europe_environment;
 mod europe_fasteners;
 mod europe_hollow_environment;
+mod europe_materials;
 mod export_ifc;
 mod f04_cases;
 mod f06_cases;

@@ -146,7 +146,8 @@ write.
 
 ```text
 define-material --store ROOT [--density N] [--grade TEXT] [--standard TEXT] [--name TEXT]
-    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+    [--library FILE] [--environment FILE] [--designation TEXT] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### define-profile

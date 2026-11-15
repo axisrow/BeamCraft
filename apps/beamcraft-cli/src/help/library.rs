@@ -45,5 +45,11 @@ pub(super) const HELP: &str = concat!(
     "--fastener-library FILE --designation NAME list and resolve fastener definitions ",
     "(--fastener-library is an alternative to --library/--environment); define-fastener ",
     "--store ROOT --fastener-library FILE --designation NAME [--name TEXT] pins the entry into ",
-    "the project by digest (see definitions help).",
+    "the project by digest (see definitions help). Material libraries (#636): the same layer ",
+    "format, entries under /Library/Materials with steel:material:* attributes (grade, ",
+    "density, optional standard and display name): define-material --store ROOT (--library ",
+    "FILE | --environment FILE) --designation GRADE [--name TEXT] pins the entry by digest, ",
+    "and a --material GRADE a project whose environment lists material libraries does not ",
+    "have yet is defined from it on first use (see definitions help); a library an ",
+    "environment lists declares its source and licence, like its profiles and bolts.",
 );

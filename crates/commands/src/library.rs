@@ -26,6 +26,12 @@
 //! library file is written only by [`add_entry`], which renders the whole library again and reads
 //! it back before it installs the file.
 //!
+//! Fastener libraries (A14.1, #668) and material libraries (#636) ride the same machinery under
+//! `/Library/Fasteners` and `/Library/Materials`: the fastener entries carry
+//! `steel:fastener:*` attributes, the material entries `steel:material:*` (grade, density,
+//! optional standard and display name), and both are admitted by the same rules, provenance
+//! included, when an environment lists them.
+//!
 //! Limits, none of them hidden: a project-level library is not read; the environment is chosen on
 //! the command line, there is no application setting or data directory yet; a bad entry is
 //! reported and skipped, while a duplicate designation refuses the whole library; the library
@@ -61,6 +67,8 @@ pub const MAX_LIBRARY_ENTRIES: usize = foreign::MAX_LIBRARY_ENTRIES;
 const ENTRY_PARENT: &str = "/Library/Profiles";
 /// Parent path of every fastener entry prim (A14.1).
 const FASTENER_ENTRY_PARENT: &str = "/Library/Fasteners";
+/// Parent path of every material entry prim (#636).
+const MATERIAL_ENTRY_PARENT: &str = "/Library/Materials";
 
 /// What the library file declares about itself and what was read.
 #[derive(Debug, Clone, PartialEq)]
@@ -353,6 +361,19 @@ pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
     load_bytes_as(bytes, FASTENER_ENTRY_PARENT, decode_fastener_record)
 }
 
+/// [`load`] for the material library at `path` (#636): the same layer format and loading rules,
+/// entries under `/Library/Materials` carrying `steel:material:*` attributes. The designation of
+/// an entry is its grade.
+pub fn load_material(path: &str) -> Result<Library, Refusal> {
+    check_source_path(path).map_err(command)?;
+    load_material_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
+}
+
+/// [`load_bytes`] for the bytes of a material library.
+pub fn load_material_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
+    load_bytes_as(bytes, MATERIAL_ENTRY_PARENT, decode_material_record)
+}
+
 /// [`load_bytes`] for one entry parent path and its entry decoder; everything else (layer
 /// budgets, identity, admission, refused-entry reporting) is shared with the profile loading.
 fn load_bytes_as(
@@ -439,11 +460,13 @@ fn load_bytes_as(
     })
 }
 
-/// The designation attribute of one entry kind: `steel:profile:designation` or
-/// `steel:fastener:designation`.
+/// The designation attribute of one entry kind: `steel:profile:designation`,
+/// `steel:fastener:designation` or `steel:material:grade`.
 fn designation_attribute(entry_parent: &str) -> &'static str {
     if entry_parent == FASTENER_ENTRY_PARENT {
         "steel:fastener:designation"
+    } else if entry_parent == MATERIAL_ENTRY_PARENT {
+        "steel:material:grade"
     } else {
         "steel:profile:designation"
     }
@@ -529,6 +552,34 @@ fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRe
     };
     spec.validate().map_err(command)?;
     Ok(DefinitionRecord::Fastener { spec })
+}
+
+/// The material definition of one entry prim, admitted by the F04 value rules (#636). The
+/// density and the grade are required; the standard and the display name are optional, and a
+/// display name that is not declared is the grade. Nothing is inferred from the grade: an
+/// unknown density is refused, never substituted.
+fn decode_material_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Refusal> {
+    let optional_text = |name: &str| -> Result<Option<String>, Refusal> {
+        field(prim, &format!("steel:material:{name}"), "string")
+            .map_err(as_input)?
+            .map(|v| {
+                text(v)
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid("a material label is not a string"))
+            })
+            .transpose()
+    };
+    let display_name = optional_text("displayName")?.unwrap_or_else(|| designation.to_owned());
+    let density = optional_number(prim, "steel:material:densityKgM3")?
+        .ok_or_else(|| invalid("a material entry has no density"))?;
+    let record = DefinitionRecord::Material {
+        density_kg_m3: Some(density),
+        grade: Some(designation.to_owned()),
+        standard: optional_text("standard")?,
+        display_name: Some(display_name),
+    };
+    record.validate().map_err(command)?;
+    Ok(record)
 }
 
 /// One library of a lookup, with the path it was read from.
@@ -665,6 +716,9 @@ pub struct Environment {
     /// The listed fastener libraries, strongest first (BC-ENV-002: bolts ride the same
     /// environment as profiles).
     pub fastener_sources: Vec<Source>,
+    /// The listed material libraries, strongest first (#636: grades ride the same environment
+    /// as profiles and bolts).
+    pub material_sources: Vec<Source>,
 }
 
 impl Environment {
@@ -675,11 +729,19 @@ impl Environment {
     pub fn fastener_lookup(&self) -> Lookup {
         Lookup::new(self.fastener_sources.clone())
     }
+
+    /// The resolver over the environment's material libraries, strongest first: the same
+    /// [`Lookup`] machinery answers a grade. The namespaces stay separate; a profile library
+    /// never answers a material lookup and the other way round.
+    #[must_use]
+    pub fn material_lookup(&self) -> Lookup {
+        Lookup::new(self.material_sources.clone())
+    }
 }
 
 /// Admits one listed library of an environment: its provenance is declared (`bim:library:source`
 /// and `bim:library:licence`, empty is undeclared) and its `bim:library:id` is new among every
-/// library of the environment, profile or fastener. A single-file `--library` needs no
+/// library of the environment, profile, fastener or material. A single-file `--library` needs no
 /// provenance, so the rule lives here, at the environment's edge.
 fn admit_library(
     sources: &mut Vec<Source>,
@@ -719,12 +781,12 @@ fn resolve_reference(directory: &std::path::Path, reference: &str) -> Result<Str
 /// Loads an environment file and every library it lists, in order.
 ///
 /// Each listed path is resolved against the directory of the environment file and loaded with
-/// [`load`] (profile libraries) or [`load_fastener`] (fastener libraries), so every library
-/// keeps its own bounds and admission. A library that cannot be loaded, one that declares no
-/// `source` or `licence`, or two listed libraries with the same `bim:library:id`, refuse the
-/// whole environment: a missing library would silently change which section or bolt a
-/// designation selects. The containment of a listed path is lexical; the files themselves are
-/// read like any `--library` file.
+/// [`load`] (profile libraries), [`load_fastener`] (fastener libraries) or [`load_material`]
+/// (material libraries), so every library keeps its own bounds and admission. A library that
+/// cannot be loaded, one that declares no `source` or `licence`, or two listed libraries with
+/// the same `bim:library:id`, refuse the whole environment: a missing library would silently
+/// change which section, bolt or grade a designation selects. The containment of a listed path
+/// is lexical; the files themselves are read like any `--library` file.
 pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     check_source_path(path).map_err(command)?;
     let bytes = read_file(path, MAX_ENVIRONMENT_BYTES).map_err(|code| match code {
@@ -753,11 +815,47 @@ pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
         let library = load_fastener(&resolved)?;
         admit_library(&mut fastener_sources, &mut ids, resolved, library)?;
     }
+    let mut material_sources: Vec<Source> = Vec::with_capacity(info.material_libraries.len());
+    for reference in &info.material_libraries {
+        let resolved = resolve_reference(&directory, reference)?;
+        let library = load_material(&resolved)?;
+        admit_library(&mut material_sources, &mut ids, resolved, library)?;
+    }
     Ok(Environment {
         info,
         sources,
         fastener_sources,
+        material_sources,
     })
+}
+
+/// The material lookup that a command names (#636): exactly one of a single `--library` file
+/// (a material library, no provenance required) or an `--environment` file (its material
+/// libraries in order), like [`open_lookup`] for profiles. The environment's own declarations
+/// are returned when one was named.
+///
+/// # Errors
+/// The same refusals as [`open_lookup`], with the material loading rules.
+pub fn open_material_lookup(
+    library: Option<&str>,
+    environment: Option<&str>,
+) -> Result<(Lookup, Option<EnvironmentInfo>), Refusal> {
+    match (library, environment) {
+        (Some(_), Some(_)) => Err(invalid("--library and --environment are alternatives")),
+        (None, None) => Err(invalid("--library or --environment is required")),
+        (Some(path), None) => Ok((
+            Lookup::new(vec![Source {
+                path: path.to_owned(),
+                library: load_material(path)?,
+            }]),
+            None,
+        )),
+        (None, Some(path)) => {
+            let loaded = load_environment(path)?;
+            let info = loaded.info.clone();
+            Ok((loaded.material_lookup(), Some(info)))
+        }
+    }
 }
 
 /// The lookup that a command names: exactly one of a single `--library` file or an
@@ -1313,6 +1411,101 @@ mod tests {
         assert_eq!(error.code, ErrorCode::InvalidArgument);
     }
 
+    fn material_entry(name: &str, grade: &str, body: &str) -> String {
+        format!(
+            "        def Scope \"{name}\" {{\n            string steel:material:grade = \"{grade}\"\n{body}        }}\n"
+        )
+    }
+
+    fn material_library(entries: &[String]) -> String {
+        format!(
+            "{HEADER}def Scope \"Library\" {{\n    def Scope \"Materials\" {{\n{}    }}\n}}\n",
+            entries.concat()
+        )
+    }
+
+    const MATERIAL_BODY: &str = "            double steel:material:densityKgM3 = 7850\n            string steel:material:standard = \"EN 10025-2\"\n";
+
+    #[test]
+    fn a_material_entry_resolves_to_a_complete_named_definition() {
+        let named = format!(
+            "{MATERIAL_BODY}            string steel:material:displayName = \"Structural steel S355\"\n"
+        );
+        let text = material_library(&[
+            material_entry("A", "S235JR", MATERIAL_BODY),
+            material_entry("B", "S355J2", &named),
+        ]);
+        let loaded = load_material_bytes(text.clone().into_bytes()).unwrap();
+        assert_eq!(loaded.info.id, "t");
+        assert_eq!(loaded.entries.len(), 2);
+        let plain = loaded.entry("S235JR").unwrap();
+        let DefinitionRecord::Material {
+            density_kg_m3,
+            grade,
+            standard,
+            display_name,
+        } = &plain.record
+        else {
+            panic!("the entry is not a material definition");
+        };
+        assert_eq!(*density_kg_m3, Some(7850.0));
+        assert_eq!(grade.as_deref(), Some("S235JR"));
+        assert_eq!(standard.as_deref(), Some("EN 10025-2"));
+        // Without a declared display name the entry answers under its grade.
+        assert_eq!(display_name.as_deref(), Some("S235JR"));
+        let overridden = loaded.entry("S355J2").unwrap();
+        let DefinitionRecord::Material { display_name, .. } = &overridden.record else {
+            panic!("the entry is not a material definition");
+        };
+        assert_eq!(display_name.as_deref(), Some("Structural steel S355"));
+        // A profile loader never sees a material entry and the other way round.
+        assert_eq!(
+            load_text("p.usda", &text).unwrap().entries.len(),
+            0,
+            "the material entry is not a profile entry"
+        );
+        assert_eq!(
+            loaded.entry("S355").unwrap_err().code,
+            ErrorCode::NotFound,
+            "the grade is exact, never a near match"
+        );
+    }
+
+    #[test]
+    fn a_bad_material_entry_is_reported_and_the_others_load() {
+        // A grade without its density is refused; so is a density the definition's own rules
+        // refuse. Nothing is inferred or substituted.
+        let dense = format!("{MATERIAL_BODY}            double steel:material:densityKgM3 = -1\n");
+        let text = material_library(&[
+            material_entry("A", "S235JR", MATERIAL_BODY),
+            material_entry(
+                "B",
+                "NO-DENSITY",
+                "            string steel:material:standard = \"X\"\n",
+            ),
+            material_entry("C", "NEGATIVE", &dense),
+        ]);
+        let loaded = load_material_bytes(text.into_bytes()).unwrap();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.rejected.len(), 2);
+        assert_eq!(
+            loaded
+                .rejected
+                .iter()
+                .map(|r| r.designation.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("NO-DENSITY"), Some("NEGATIVE")]
+        );
+        assert_eq!(
+            loaded.entry("NO-DENSITY").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            loaded.entry("NEGATIVE").unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
     #[test]
     fn an_entry_resolves_to_a_complete_named_definition() {
         let text = library(&[entry("A", "T-I300", I_BODY)]);
@@ -1711,6 +1904,136 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_europe_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/materials-en-10025.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "europe-en-10025-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 33);
+        // The complete structural steel grade sets of the EN 10025-2/-3/-4:2019 editions,
+        // S235 to S500, in the loader's designation order, each with its part and the pack
+        // density: part 2 grew in 2019 by the S460 qualities and S500J0 (and dropped S450J0,
+        // which is not shipped), part 4 by S500M/ML; part 3 is unchanged. The weathering
+        // steels of part 5 and the quenched and tempered flat products of part 6 are not in
+        // the pack.
+        let part2 = "EN 10025-2:2019";
+        let part3 = "EN 10025-3:2019";
+        let part4 = "EN 10025-4:2019";
+        let expected: [(&str, &str); 33] = [
+            ("S235J0", part2),
+            ("S235J2", part2),
+            ("S235JR", part2),
+            ("S275J0", part2),
+            ("S275J2", part2),
+            ("S275JR", part2),
+            ("S275M", part4),
+            ("S275ML", part4),
+            ("S275N", part3),
+            ("S275NL", part3),
+            ("S355J0", part2),
+            ("S355J2", part2),
+            ("S355JR", part2),
+            ("S355K2", part2),
+            ("S355M", part4),
+            ("S355ML", part4),
+            ("S355N", part3),
+            ("S355NL", part3),
+            ("S420M", part4),
+            ("S420ML", part4),
+            ("S420N", part3),
+            ("S420NL", part3),
+            ("S460J0", part2),
+            ("S460J2", part2),
+            ("S460JR", part2),
+            ("S460K2", part2),
+            ("S460M", part4),
+            ("S460ML", part4),
+            ("S460N", part3),
+            ("S460NL", part3),
+            ("S500J0", part2),
+            ("S500M", part4),
+            ("S500ML", part4),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_europe_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-en-10025.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "europe-en-10025-materials");
+        assert_eq!(materials.library.entries.len(), 33);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, s355) = lookup.find("S355J2").unwrap();
+        assert_eq!(source.library.info.id, "europe-en-10025-materials");
+        assert!(matches!(
+            &s355.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("EN 10025-2:2019")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no lowercase, no grade of another part or of the superseded 2004 edition.
+        for absent in ["S235", "S355", "s355j2", "S355K2+N", "S500N", "S450J0"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
@@ -1743,15 +2066,29 @@ mod tests {
             &fastener_entry("B", "F-1", BOLT_BODY),
             "\n        string \"bim:library:licence\" = \"MPL-2.0\"",
         );
+        // A material library whose source is missing rides the same provenance edge (#636).
+        let material = library(
+            "m",
+            "Materials",
+            &material_entry("C", "S235JR", MATERIAL_BODY),
+            "\n        string \"bim:library:source\" = \"s\"",
+        );
         write("profiles-nolicence.usda", &profile);
         write("profiles-complete.usda", &complete);
         write("fasteners-nosource.usda", &fastener);
-        let env = |profiles: &str, fasteners: Option<&str>| {
+        write("materials-nolicence.usda", &material);
+        let env = |profiles: &str, fasteners: Option<&str>, materials: Option<&str>| {
             format!(
-                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}\n    }}\n)\n",
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"{profiles}\"]{}{}\n    }}\n)\n",
                 match fasteners {
                     Some(name) => format!(
                         "\n        string[] \"bim:environment:fastener-libraries\" = [\"{name}\"]"
+                    ),
+                    None => String::new(),
+                },
+                match materials {
+                    Some(name) => format!(
+                        "\n        string[] \"bim:environment:material-libraries\" = [\"{name}\"]"
                     ),
                     None => String::new(),
                 }
@@ -1759,11 +2096,23 @@ mod tests {
         };
         write(
             "no-profile-licence.usda",
-            &env("profiles-nolicence.usda", None),
+            &env("profiles-nolicence.usda", None, None),
         );
         write(
             "no-fastener-source.usda",
-            &env("profiles-complete.usda", Some("fasteners-nosource.usda")),
+            &env(
+                "profiles-complete.usda",
+                Some("fasteners-nosource.usda"),
+                None,
+            ),
+        );
+        write(
+            "no-material-licence.usda",
+            &env(
+                "profiles-complete.usda",
+                None,
+                Some("materials-nolicence.usda"),
+            ),
         );
         let refused =
             load_environment(dir.join("no-profile-licence.usda").to_str().unwrap()).unwrap_err();
@@ -1778,6 +2127,13 @@ mod tests {
         assert!(
             refused.message.contains("source"),
             "the fastener library's missing record is named: {refused:?}"
+        );
+        let refused =
+            load_environment(dir.join("no-material-licence.usda").to_str().unwrap()).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert!(
+            refused.message.contains("licence"),
+            "the material library's missing record is named: {refused:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
