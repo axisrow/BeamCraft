@@ -28,6 +28,7 @@ mod changeset;
 mod changeset_base;
 mod china_environment;
 mod china_fasteners;
+mod china_materials;
 mod command_evidence;
 mod compensation;
 mod construction;
