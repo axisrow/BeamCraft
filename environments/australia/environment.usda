@@ -4,7 +4,8 @@
     upAxis = "Z"
     customLayerData = {
         string "bim:environment:id" = "australia"
-        string "bim:environment:title" = "Australia (AS/NZS 3679.1, AS/NZS 1163)"
+        string "bim:environment:title" = "Australia (AS/NZS 3679.1, AS/NZS 1163, AS/NZS 1252)"
         string[] "bim:environment:libraries" = ["profiles-as-nzs-3679-1.usda", "hollows-as-nzs-1163.usda"]
+        string[] "bim:environment:fastener-libraries" = ["fasteners-as-nzs-1252.usda"]
     }
 )

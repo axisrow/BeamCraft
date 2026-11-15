@@ -36,7 +36,10 @@ saved setting.
   where the leading С of «сталь строительная» is part of the standard's designation and is
   not Latinized the way the profile series letters are);
   `environments/australia/` (2026-11-15) holds the
-  AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series,
+  AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series and,
+  since 2026-11-15, the AS/NZS 1252 high-strength structural hex-bolt fastener set
+  (M12/16/20/24/30/36, the environment's fastener library, BC-ENV-002; the holes follow the
+  AS/NZS 5131 standard-hole series; see `ATTRIBUTION.md`),
   `environments/india/` holds the IS 808:2021
   narrow (NPB) and wide (WPB) parallel flange beam series and, since 2026-11-15, the IS 3757
   high-strength structural hex-bolt fastener set (M16/20/24, the environment's fastener library,
