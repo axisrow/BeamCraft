@@ -20,7 +20,9 @@ saved setting.
   `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions, the
   parallel-flange UPE channel series and, since 2026-11-15, a second profile library with the
   EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
-  the hollow closed-form area); `environments/russia/` holds the GOST 26020-83 parallel-flange
+  the hollow closed-form area) and, since 2026-11-15, the DIN hex-bolt fastener set completed
+  with the EN 1090-2 hole-series rows (M12 to M30, the environment's fastener library,
+  BC-ENV-002); `environments/russia/` holds the GOST 26020-83 parallel-flange
   beam (Б), wide-flange (Ш) and column (К) series and, since 2026-11-15, a second profile
   library with the GOST 30245-2003 cold-bent square hollow sections (the complete square
   series, sizes 40x40 to 300x300; validated against the hollow closed-form area), a third
