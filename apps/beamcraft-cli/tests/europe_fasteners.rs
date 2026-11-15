@@ -24,6 +24,10 @@ const ENVIRONMENT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../environments/europe/environment.usda"
 );
+const LIBRARY: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../environments/europe/din-fasteners.usda"
+);
 const ACTOR: &str = "0199e7a0-0000-7000-8000-0000000000a3";
 
 struct Fixture {
@@ -188,8 +192,10 @@ fn the_europe_environment_lists_and_carries_its_fastener_library() {
     assert_eq!(text(&groups[0], "name"), "SE16");
     assert_eq!(text(&groups[0], "length_mm"), "70");
 
-    // A designation the set does not publish stays NOT_FOUND, never a near match.
-    for absent in ["M24", "m16"] {
+    // A designation the pack does not list stays NOT_FOUND, never a near match: M36 is a real
+    // DIN EN ISO 4014 size outside the pack's 12-30 range, and the lookup never answers a
+    // lowercase variant of a listed designation.
+    for absent in ["M36", "m16"] {
         assert_eq!(
             f.code(&[
                 "create-bolt-group",
@@ -220,6 +226,138 @@ fn the_europe_environment_lists_and_carries_its_fastener_library() {
             "{absent}"
         );
     }
+}
+
+/// The catalogue facts of one of the new pack rows, the values the standards print, so no
+/// declared field ships unchecked: nominal diameter, head across flats, head height, nut
+/// height, thread protrusion (the contributor default of the library) and the washer's outer,
+/// inner and thickness dimensions.
+fn assert_series_row(entry: &Json, designation: &str, facts: [f64; 8], expected: &[f64]) {
+    let [
+        nominal,
+        across_flats,
+        head_height,
+        nut_height,
+        protrusion,
+        washer_outer,
+        washer_inner,
+        washer_thickness,
+    ] = facts;
+    assert_eq!(text(entry, "designation"), designation);
+    assert_eq!(text(entry, "standard"), "DIN EN ISO 4014");
+    assert_eq!(text(entry, "grade"), "8.8");
+    assert_eq!(text(entry, "fastener_kind"), "bolt");
+    assert_eq!(text(entry, "head_kind"), "hex");
+    assert_eq!(num(entry, &["nominal_diameter_mm"]), nominal);
+    assert_eq!(num(entry, &["head_across_flats_mm"]), across_flats);
+    assert_eq!(num(entry, &["nut_across_flats_mm"]), across_flats);
+    assert_eq!(num(entry, &["head_height_mm"]), head_height);
+    assert_eq!(num(entry, &["nut_height_mm"]), nut_height);
+    assert_eq!(num(entry, &["thread_protrusion_mm"]), protrusion);
+    assert_eq!(num(entry, &["washer_outer_diameter_mm"]), washer_outer);
+    assert_eq!(num(entry, &["washer_inner_diameter_mm"]), washer_inner);
+    assert_eq!(num(entry, &["washer_thickness_mm"]), washer_thickness);
+    // EN 1090-2 table 11 normal round holes for the follow-up sizes only: two millimetres over
+    // the bolt at M24 and three from M27, the 26/30/33 hole series these rows ship. The M12 row
+    // is not part of this series: it keeps its A14.1 close-fit 13 mm hole (the EN 1090-2 normal
+    // value for M12 is 14) and is asserted by the older test above.
+    assert_eq!(lengths(entry), expected);
+    assert!(at(entry, &["washer_under_head"]).boolean().unwrap());
+    assert!(at(entry, &["washer_under_nut"]).boolean().unwrap());
+    assert_eq!(text(entry, "hole_mode"), "generate");
+}
+
+#[test]
+fn the_europe_environment_lists_the_en_1090_2_hole_series_rows() {
+    let f = Fixture::new();
+
+    // The pack now carries the six designations of the DIN set: the three original rows and
+    // the EN 1090-2 hole-series follow-up rows M24, M27 and M30.
+    let pack = f.ok(&["list-library", "--fastener-library", LIBRARY]);
+    assert_eq!(num(&pack, &["entry_count"]), 6.0);
+    assert_eq!(num(&pack, &["rejected_count"]), 0.0);
+    let designations: Vec<String> = at(&pack, &["entries"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|e| text(e, "designation"))
+        .collect();
+    assert_eq!(designations, ["M12", "M16", "M20", "M24", "M27", "M30"]);
+
+    // Every follow-up row field by field: the DIN EN ISO 4014 head and the DIN EN ISO 4032
+    // nut, the DIN EN ISO 7089 washer and the EN 1090-2 hole series (26/30/33, the +2 up to
+    // M24 and +3 from M27 normal round holes).
+    let m24_shown = f.ok(&[
+        "show-library",
+        "--fastener-library",
+        LIBRARY,
+        "--designation",
+        "M24",
+    ]);
+    assert_series_row(
+        at(&m24_shown, &["entry"]),
+        "M24",
+        [24.0, 36.0, 15.0, 21.5, 7.0, 44.0, 25.0, 4.0],
+        &[
+            55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0, 140.0, 150.0,
+        ],
+    );
+    let m27_shown = f.ok(&[
+        "show-library",
+        "--fastener-library",
+        LIBRARY,
+        "--designation",
+        "M27",
+    ]);
+    assert_series_row(
+        at(&m27_shown, &["entry"]),
+        "M27",
+        [27.0, 41.0, 17.0, 23.6, 8.0, 50.0, 28.0, 4.0],
+        &[
+            65.0, 70.0, 75.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0, 140.0, 150.0,
+        ],
+    );
+    let m30_shown = f.ok(&[
+        "show-library",
+        "--fastener-library",
+        LIBRARY,
+        "--designation",
+        "M30",
+    ]);
+    assert_series_row(
+        at(&m30_shown, &["entry"]),
+        "M30",
+        [30.0, 46.0, 18.7, 25.6, 9.0, 56.0, 31.0, 4.0],
+        &[75.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0, 140.0, 150.0],
+    );
+
+    // The EN 1090-2 hole series is the point of the follow-up: assert the clearances
+    // directly, two millimetres on M24 and three on M27 and M30.
+    assert_eq!(num(at(&m24_shown, &["entry"]), &["hole_clearance_mm"]), 2.0);
+    assert_eq!(num(at(&m27_shown, &["entry"]), &["hole_clearance_mm"]), 3.0);
+    assert_eq!(num(at(&m30_shown, &["entry"]), &["hole_clearance_mm"]), 3.0);
+
+    // A designation the pack does not list stays NOT_FOUND: M36 is a real DIN EN ISO 4014
+    // size outside the pack's 12-30 range.
+    assert_eq!(
+        f.code(&[
+            "show-library",
+            "--fastener-library",
+            LIBRARY,
+            "--designation",
+            "M36"
+        ]),
+        "NOT_FOUND"
+    );
+}
+
+fn lengths(json: &Json) -> Vec<f64> {
+    at(json, &["lengths_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect()
 }
 
 fn num(json: &Json, path: &[&str]) -> f64 {
