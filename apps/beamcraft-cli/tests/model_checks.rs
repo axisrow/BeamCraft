@@ -484,6 +484,37 @@ fn reason_of(reply: &Json, rule: &str) -> String {
 }
 
 #[test]
+fn a_subtree_check_is_quiet_about_declared_members_outside_it() {
+    // A narrowed check of one joint member stays quiet about its other
+    // members: they exist and are evaluated in the model, so the connection
+    // is simply outside the checked scope, not unresolved.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,10");
+    f.intent(&[&base, &column], &[&format!("{base}:contact:{column}")]);
+    let (code, reply) = f.check(&["--element", &base]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(list(&reply, "findings").len(), 0);
+    // The ghost is a different case: declared and absent from the model, so
+    // the same subtree check reports it unresolved.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,10");
+    let ghost = "019a7bf0-0000-7000-8000-00000000dead";
+    f.intent(
+        &[&base, &column, ghost],
+        &[&format!("{base}:weld:{ghost}")],
+    );
+    let (code, reply) = f.check(&["--element", &base]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    assert_eq!(reason_of(&reply, "PART_UNCONNECTED"), "target_unresolved");
+}
+
+#[test]
 fn a_declared_contact_over_touching_parts_is_green() {
     // The connected variant of the sample column base: the owner declares the
     // parts in contact, and they touch within the product tolerance.

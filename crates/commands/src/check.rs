@@ -368,7 +368,18 @@ pub fn check_model(
     // established absence the coverage paragraph names; with intent, each
     // declared connection is judged and every finding carries the element
     // labels of its parts.
-    for finding in check::connectivity_findings(inputs, &bodies, &scope, CONTACT_TOLERANCE_MM) {
+    // The model's element vocabulary: a declared member absent from it is the
+    // unresolved ghost, while one the model carries but the checked scope
+    // omits is simply outside the scope (a subtree check of one joint member
+    // never reports findings about its other members).
+    let model_elements: Vec<ElementId> = inspection.elements.keys().copied().collect();
+    for finding in check::connectivity_findings(
+        inputs,
+        &bodies,
+        &scope,
+        &model_elements,
+        CONTACT_TOLERANCE_MM,
+    ) {
         push(Finding {
             elements: finding
                 .elements
