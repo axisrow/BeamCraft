@@ -23,6 +23,7 @@ mod bent_plates;
 mod bolt_groups;
 mod bolt_groups_view;
 mod bom;
+mod canada_materials;
 mod changeset;
 mod changeset_base;
 mod china_environment;

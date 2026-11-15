@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "canada"
+        string "bim:environment:title" = "Canada (CSA G40.21 material grades, weldable category)"
+        string[] "bim:environment:material-libraries" = ["materials-csa-g4021.usda"]
+    }
+)
