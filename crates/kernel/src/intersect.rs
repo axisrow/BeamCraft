@@ -92,7 +92,7 @@ pub(crate) fn segment_meets_triangle(
 }
 
 /// Closed triangle-triangle intersection of vertex-disjoint triangles.
-fn triangles_meet(p: &mut Predicates, ta: &Tri, tb: &Tri) -> Result<bool, PredError> {
+pub(crate) fn triangles_meet(p: &mut Predicates, ta: &Tri, tb: &Tri) -> Result<bool, PredError> {
     let [a0, a1, a2] = *ta;
     let [b0, b1, b2] = *tb;
     for (s0, s1) in [(a0, a1), (a1, a2), (a2, a0)] {
@@ -106,6 +106,128 @@ fn triangles_meet(p: &mut Predicates, ta: &Tri, tb: &Tri) -> Result<bool, PredEr
         }
     }
     Ok(false)
+}
+
+/// True when the closed segment strictly crosses the triangle: its endpoints
+/// lie on strictly opposite sides of the triangle's plane, and the pierce
+/// point lies in the closed triangle (the exact closed sign pattern of the
+/// three tetrahedra against the segment admits it). A segment that merely
+/// touches the plane or the triangle is not a crossing.
+pub(crate) fn segment_crosses_triangle(
+    p: &mut Predicates,
+    s0: [f64; 3],
+    s1: [f64; 3],
+    tri: &Tri,
+) -> Result<bool, PredError> {
+    let [a, b, c] = *tri;
+    let d0 = p.orient3d(a, b, c, s0)?;
+    let d1 = p.orient3d(a, b, c, s1)?;
+    if d0 == 0 || d1 == 0 || d0 == d1 {
+        return Ok(false);
+    }
+    let signs = [
+        p.orient3d(s0, s1, a, b)?,
+        p.orient3d(s0, s1, b, c)?,
+        p.orient3d(s0, s1, c, a)?,
+    ];
+    Ok(!(signs.contains(&1) && signs.contains(&-1)))
+}
+
+/// True when two coplanar triangles overlap in area, not only along their
+/// boundaries.
+///
+/// The candidates are exact: a strict 2D crossing of their edges, a vertex of
+/// one strictly inside the other's region (either winding), and, for a vertex
+/// lying in the other's closed region, the midpoint between it and the
+/// midpoint of its own opposite edge — a point strictly inside its own
+/// triangle by convexity, which decides the coincident-boundary cases (equal
+/// squares, strips sharing an edge) that leave no strict vertex or crossing.
+pub(crate) fn coplanar_area_overlap(
+    p: &mut Predicates,
+    ta: &Tri,
+    tb: &Tri,
+) -> Result<bool, PredError> {
+    let Some((k, _)) = p.normal_axis(ta[0], ta[1], ta[2])? else {
+        return Err(PredError::Range);
+    };
+    let a2: [[f64; 2]; 3] = [project(ta[0], k), project(ta[1], k), project(ta[2], k)];
+    let b2: [[f64; 2]; 3] = [project(tb[0], k), project(tb[1], k), project(tb[2], k)];
+    if strictly_contains_vertices(p, a2, b2)? || strictly_contains_vertices(p, b2, a2)? {
+        return Ok(true);
+    }
+    for (s0, s1) in [(a2[0], a2[1]), (a2[1], a2[2]), (a2[2], a2[0])] {
+        for (q0, q1) in [(b2[0], b2[1]), (b2[1], b2[2]), (b2[2], b2[0])] {
+            let (o1, o2) = (p.orient2d(s0, s1, q0)?, p.orient2d(s0, s1, q1)?);
+            let (o3, o4) = (p.orient2d(q0, q1, s0)?, p.orient2d(q0, q1, s1)?);
+            if o1 * o2 < 0 && o3 * o4 < 0 {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(midpoint_chain(p, a2, b2)? || midpoint_chain(p, b2, a2)?)
+}
+
+/// True when `q` lies strictly inside the `region` triangle, whatever its
+/// winding.
+fn strictly_inside_region(
+    p: &mut Predicates,
+    region: [[f64; 2]; 3],
+    q: [f64; 2],
+) -> Result<bool, PredError> {
+    let [a, b, c] = region;
+    let signs = [
+        p.orient2d(a, b, q)?,
+        p.orient2d(b, c, q)?,
+        p.orient2d(c, a, q)?,
+    ];
+    Ok(signs.iter().all(|&s| s != 0) && !(signs.contains(&1) && signs.contains(&-1)))
+}
+
+/// True when any vertex of `vertices` lies strictly inside the `region`
+/// triangle, whatever its winding.
+fn strictly_contains_vertices(
+    p: &mut Predicates,
+    region: [[f64; 2]; 3],
+    vertices: [[f64; 2]; 3],
+) -> Result<bool, PredError> {
+    for q in vertices {
+        if strictly_inside_region(p, region, q)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The midpoint chains: for a vertex of `own` in `other`'s closed region, the
+/// midpoint between it and the midpoint of its own opposite edge is strictly
+/// inside `own` by convexity; if `other` strictly contains it too, the regions
+/// overlap in area. This decides the coincident-boundary cases (equal squares,
+/// strips sharing an edge) that leave no strict vertex or crossing.
+fn midpoint_chain(
+    p: &mut Predicates,
+    own: [[f64; 2]; 3],
+    other: [[f64; 2]; 3],
+) -> Result<bool, PredError> {
+    for (i, v) in own.iter().enumerate() {
+        if !point_in_triangle_2d(p, other, *v)? {
+            continue;
+        }
+        let opposite = match i {
+            0 => midpoint(own[1], own[2]),
+            1 => midpoint(own[2], own[0]),
+            _ => midpoint(own[0], own[1]),
+        };
+        let probe = midpoint(*v, opposite);
+        if strictly_inside_region(p, other, probe)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The exact midpoint of two points (division by two is exact in binary64).
+fn midpoint(u: [f64; 2], w: [f64; 2]) -> [f64; 2] {
+    [(u[0] + w[0]) / 2.0, (u[1] + w[1]) / 2.0]
 }
 
 /// True when two distinct non-degenerate triangles touch beyond the feature they share.

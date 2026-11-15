@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! A07.2 and A07.3 headless commands: `list-library`, `show-library` and `add-library`. They read
-//! the files named on the command line (one `--library`, or an `--environment` with its
-//! libraries, and an optional `--user-library` that comes first; never a hidden global), never a
-//! store, and print one JSON object with the error shape and exit codes of the plate commands.
+//! the files named on the command line (one `--library`, an `--environment` with its libraries,
+//! or a project's own layered chain through `--project`; never a hidden global), never the
+//! model, and print one JSON object with the error shape and exit codes of the plate commands.
 //! Only `add-library` writes, and only the one library file it names.
 
 use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
 use crate::report::report;
 use beamcraft_commands::library::{
-    LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed, Source, add_entry,
-    load_fastener, open_lookup,
+    FirmFileRefused, LAYER_LIBRARY, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry,
+    Shadowed, Source, add_entry, load_fastener, open_lookup, project_library_chain,
 };
 use beamcraft_json::Json;
 use session::environment::EnvironmentInfo;
@@ -63,6 +63,7 @@ fn environment_json(info: &EnvironmentInfo) -> Json {
 fn source_json(source: &Source) -> Json {
     Json::object([
         ("path", Json::text(source.path.clone())),
+        ("layer", Json::text(source.layer)),
         ("library", info_json(&source.library.info)),
         (
             "entry_count",
@@ -116,7 +117,24 @@ fn shadow_json(records: impl IntoIterator<Item = Shadowed>) -> Json {
                 Json::object([
                     ("designation", Json::text(s.designation)),
                     ("used_library", Json::text(s.used_library)),
+                    ("used_layer", Json::text(s.used_layer)),
                     ("shadowed_library", Json::text(s.shadowed_library)),
+                    ("shadowed_layer", Json::text(s.shadowed_layer)),
+                ])
+            })
+            .collect(),
+    )
+}
+
+fn firm_refused_json(refused: &[FirmFileRefused]) -> Json {
+    Json::Array(
+        refused
+            .iter()
+            .map(|r| {
+                Json::object([
+                    ("path", Json::text(r.path.clone())),
+                    ("code", Json::text(r.code.as_str())),
+                    ("message", Json::text(r.message)),
                 ])
             })
             .collect(),
@@ -164,6 +182,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "--environment",
         "--user-library",
         "--fastener-library",
+        "--project",
     ];
     let allowed: Vec<&str> = match *command {
         "list-library" => [
@@ -198,15 +217,42 @@ fn run(args: &[OsString]) -> Run<Json> {
     if *command == "add-library" {
         return add(&options);
     }
+    if let Some(store) = options.get("--project") {
+        // The project's own layered chain: its environment copy, the firm libraries of the
+        // application data, and the built-in neutral environment. No store is opened; only the
+        // copy's files are read.
+        if [
+            "--library",
+            "--environment",
+            "--fastener-library",
+            "--user-library",
+        ]
+        .iter()
+        .any(|used| options.contains_key(*used))
+        {
+            return Err(invalid(
+                "--project is an alternative to --library, --environment, --fastener-library and --user-library",
+            ));
+        }
+        let chain = project_library_chain(std::path::Path::new(store), None)?;
+        return finish(
+            command,
+            &options,
+            chain.lookup,
+            chain.environment,
+            chain.firm_refused,
+        );
+    }
     // A14.1: a fastener library is a single file, no environment yet (O-B2); the same listing
     // and lookup machinery answers it.
-    let (lookup, environment) = if let Some(path) = options.get("--fastener-library") {
-        if ["--library", "--environment", "--user-library"]
+    let (lookup, environment, firm_refused) = if let Some(path) = options.get("--fastener-library")
+    {
+        if ["--library", "--environment", "--user-library", "--project"]
             .iter()
             .any(|used| options.contains_key(*used))
         {
             return Err(invalid(
-                "--fastener-library is an alternative to --library and --environment",
+                "--fastener-library is an alternative to --library, --environment, --user-library and --project",
             ));
         }
         let library = load_fastener(path)?;
@@ -214,36 +260,64 @@ fn run(args: &[OsString]) -> Run<Json> {
             Lookup::new(vec![Source {
                 path: (*path).to_owned(),
                 library,
+                layer: LAYER_LIBRARY,
             }]),
             None,
+            Vec::new(),
         )
     } else {
-        open_lookup(
+        let opened = open_lookup(
             options.get("--library").copied(),
             options.get("--environment").copied(),
             options.get("--user-library").copied(),
-        )?
+            None,
+        )?;
+        (opened.lookup, opened.environment, opened.firm_refused)
     };
+    finish(command, &options, lookup, environment, firm_refused)
+}
+
+/// The reply of `list-library` and `show-library` over the lookup that was built: the entry
+/// view, the shadowed designations with their layers, and the firm files that did not read.
+fn finish(
+    command: &&str,
+    options: &BTreeMap<&str, &str>,
+    lookup: Lookup,
+    environment: Option<EnvironmentInfo>,
+    firm_refused: Vec<FirmFileRefused>,
+) -> Run<Json> {
     if *command == "show-library" {
         let designation = options
             .get("--designation")
             .ok_or_else(|| invalid("--designation is required"))?;
         let (source, entry) = lookup.find(designation)?;
+        let shadows = shadow_json(lookup.shadowed_for(designation));
+        if firm_refused.is_empty() {
+            return Ok(Json::object([
+                ("outcome", Json::text("library_entry")),
+                ("library", info_json(&source.library.info)),
+                ("library_path", Json::text(source.path.clone())),
+                ("entry", entry_json(entry, &source.library.info.id)?),
+                ("shadowed", shadows),
+            ]));
+        }
         return Ok(Json::object([
             ("outcome", Json::text("library_entry")),
             ("library", info_json(&source.library.info)),
             ("library_path", Json::text(source.path.clone())),
             ("entry", entry_json(entry, &source.library.info.id)?),
-            ("shadowed", shadow_json(lookup.shadowed_for(designation))),
+            ("shadowed", shadows),
+            ("firm_refused", firm_refused_json(&firm_refused)),
         ]));
     }
-    list(&options, &lookup, environment.as_ref())
+    list(options, &lookup, environment.as_ref(), &firm_refused)
 }
 
 fn list(
     options: &BTreeMap<&str, &str>,
     lookup: &Lookup,
     environment: Option<&EnvironmentInfo>,
+    firm_refused: &[FirmFileRefused],
 ) -> Run<Json> {
     let family = options.get("--family");
     let filter = options.get("--filter").map(|f| f.to_ascii_lowercase());
@@ -298,7 +372,13 @@ fn list(
             .iter()
             .skip(offset)
             .take(entries_here)
-            .map(|(source, entry)| entry_json(entry, &source.library.info.id))
+            .map(|(source, entry)| {
+                let mut object = entry_json(entry, &source.library.info.id)?;
+                if let Json::Object(fields) = &mut object {
+                    fields.insert("layer".into(), Json::text(source.layer));
+                }
+                Ok(object)
+            })
             .collect::<Run<Vec<_>>>()?;
         let rejected = rejected_json(
             refused
@@ -342,6 +422,9 @@ fn list(
         }
         if let Some(environment) = environment {
             object.insert("environment".to_owned(), environment_json(environment));
+        }
+        if !firm_refused.is_empty() {
+            object.insert("firm_refused".to_owned(), firm_refused_json(firm_refused));
         }
         Ok(Json::Object(object))
     })
