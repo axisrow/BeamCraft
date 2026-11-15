@@ -1510,7 +1510,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "europe-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -1529,7 +1529,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 55);
+        assert_eq!(library.entries.len(), 69);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -1539,7 +1539,14 @@ mod tests {
             else {
                 panic!("{} is not a parametric section", entry.designation);
             };
-            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // The UPE channels are the pack's parallel-flange channel series; the rest are
+            // I and H shapes.
+            let want_family = if entry.designation.starts_with("UPE") {
+                SectionFamily::Channel
+            } else {
+                SectionFamily::IShape
+            };
+            assert_eq!(parametric.family(), want_family);
             assert_eq!(
                 section.standard.as_deref(),
                 Some("EN 10365:2022"),
@@ -1565,7 +1572,9 @@ mod tests {
             designations.push(entry.designation.clone());
         }
         // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
-        // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270).
+        // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270),
+        // and no UPE 250/260 (the channel sequence steps 240 to 270). The taper-flange UPN series
+        // of the same standard is a different geometry family and is not part of the pack.
         assert_eq!(
             designations,
             [
@@ -1575,7 +1584,9 @@ mod tests {
                 "HEB200", "HEB220", "HEB240", "HEB260", "HEB280", "HEB300", "HEB320", "HEB340",
                 "HEB360", "HEB400", "HEB450", "HEB500", "HEB550", "HEB600", "IPE100", "IPE120",
                 "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
-                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600",
+                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600", "UPE100",
+                "UPE120", "UPE140", "UPE160", "UPE180", "UPE200", "UPE220", "UPE240", "UPE270",
+                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80",
             ]
         );
         // Spot checks against the transcribed values.
@@ -1612,7 +1623,32 @@ mod tests {
         assert_eq!(p.values(), [100.0, 100.0, 6.0, 10.0, 12.0]);
         assert_eq!(section.area_mm2, Some(2600.0));
         assert_eq!(section.mass_per_meter_kg, Some(20.4));
-        for absent in ["IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700"] {
+        let upe100 = library.entry("UPE100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upe100.record
+        else {
+            panic!("UPE100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 55.0, 4.5, 7.5, 10.0]);
+        assert_eq!(section.area_mm2, Some(1250.0));
+        assert_eq!(section.mass_per_meter_kg, Some(9.8));
+        let upe300 = library.entry("UPE300").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upe300.record
+        else {
+            panic!("UPE300 is not a parametric section");
+        };
+        assert_eq!(p.values(), [300.0, 100.0, 9.5, 15.0, 15.0]);
+        assert_eq!(section.area_mm2, Some(5660.0));
+        assert_eq!(section.mass_per_meter_kg, Some(44.4));
+        for absent in [
+            "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700", "UPE250", "UPE260",
+            "UPE450", "UPN100", "UPN200",
+        ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
                 ErrorCode::NotFound,
@@ -1630,9 +1666,11 @@ mod tests {
         let environment = load_environment(path).unwrap();
         assert_eq!(environment.info.id, "europe");
         assert_eq!(environment.info.fastener_libraries, ["din-fasteners.usda"]);
-        // The profile namespace is unchanged by the fastener listing.
-        assert_eq!(environment.sources.len(), 1);
-        assert_eq!(environment.sources[0].library.entries.len(), 55);
+        // The profile namespace is unchanged by the fastener listing: both profile libraries
+        // keep their entries.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.sources[0].library.entries.len(), 69);
+        assert_eq!(environment.sources[1].library.entries.len(), 52);
         // The DIN fastener set rides the same environment, admitted with declared provenance.
         assert_eq!(environment.fastener_sources.len(), 1);
         let bolts = &environment.fastener_sources[0];
@@ -2006,6 +2044,199 @@ mod tests {
             "200UC41.7",
             "350UC153",
             "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_europe_hollow_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/profiles-en-10219.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "europe-en-10219-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 52);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("EN 10219-2:2006"),
+                "{}",
+                entry.designation
+            );
+            // These are closed (hollow) sections, so the declared catalogue area is checked
+            // against the hollow closed form, not the I/H formula. EN 10219-2 computes the
+            // sectional properties with the outer corner radius 2t up to a 6 mm wall, 2.5t
+            // from 6 to 10 mm and 3t above 10 mm, and the inner radius is the outer minus
+            // the wall; the closed form of that geometry must reproduce the declared area
+            // within the standard's three-significant-figure print rounding (0.55 percent),
+            // and the declared mass must be that area at 7850 kg/m3 within the same rounding.
+            let (exact_area, exact_mass) = match (parametric.family(), parametric.values()) {
+                (SectionFamily::Rhs, &[h, b, t, r]) => {
+                    let want_radius = if t <= 6.0 {
+                        2.0 * t
+                    } else if t <= 10.0 {
+                        2.5 * t
+                    } else {
+                        3.0 * t
+                    };
+                    assert!(
+                        (r - want_radius).abs() <= 1e-9,
+                        "{}: corner radius {r} for a {t} mm wall",
+                        entry.designation
+                    );
+                    let inner = (r - t).max(0.0);
+                    let k = 1.0 - core::f64::consts::PI / 4.0;
+                    let area = (h * b - 4.0 * k * r * r)
+                        - ((h - 2.0 * t) * (b - 2.0 * t) - 4.0 * k * inner * inner);
+                    (area, area * 7850.0 / 1.0e6)
+                }
+                (SectionFamily::Chs, &[d, t]) => {
+                    let area = core::f64::consts::PI * t * (d - t);
+                    (area, area * 7850.0 / 1.0e6)
+                }
+                _ => panic!("{} is not a hollow section", entry.designation),
+            };
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            assert!(
+                (area - exact_area).abs() / exact_area <= 0.0055,
+                "{}: area {area} mm2 vs hollow closed form {exact_area}",
+                entry.designation
+            );
+            assert!(
+                (mass - exact_mass).abs() / exact_mass <= 0.0055,
+                "{}: mass {mass} kg/m vs hollow closed form {exact_mass}",
+                entry.designation
+            );
+            // The D3 1 percent warning never fires for these rows.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The shipped rows are a curated subset of the common EN 10219-2 sizes; the loader
+        // reports them in designation order.
+        let mut expected = vec![
+            "CHS114.3x4.0",
+            "CHS114.3x5.0",
+            "CHS139.7x5.0",
+            "CHS168.3x5.0",
+            "CHS219.1x6.0",
+            "CHS273.0x8.0",
+            "CHS323.9x8.0",
+            "CHS33.7x3.0",
+            "CHS406.4x10.0",
+            "CHS42.4x3.0",
+            "CHS48.3x3.0",
+            "CHS60.3x3.0",
+            "CHS76.1x3.0",
+            "CHS76.1x4.0",
+            "CHS88.9x4.0",
+            "RHS100x50x4",
+            "RHS100x50x5",
+            "RHS120x60x5",
+            "RHS120x80x5",
+            "RHS150x100x5",
+            "RHS150x100x8",
+            "RHS160x80x6",
+            "RHS200x100x6",
+            "RHS200x120x8",
+            "RHS250x150x8",
+            "RHS300x200x8",
+            "RHS60x40x3",
+            "RHS80x40x4",
+            "SHS100x100x4",
+            "SHS100x100x5",
+            "SHS100x100x6",
+            "SHS120x120x5",
+            "SHS120x120x6",
+            "SHS140x140x5",
+            "SHS150x150x5",
+            "SHS150x150x6",
+            "SHS150x150x8",
+            "SHS160x160x6",
+            "SHS180x180x6",
+            "SHS200x200x10",
+            "SHS200x200x12",
+            "SHS200x200x6",
+            "SHS200x200x8",
+            "SHS250x250x8",
+            "SHS300x300x6",
+            "SHS350x350x10",
+            "SHS50x50x3",
+            "SHS50x50x4",
+            "SHS60x60x3",
+            "SHS60x60x4",
+            "SHS80x80x4",
+            "SHS80x80x5",
+        ];
+        expected.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the transcribed values: one square, one rectangular and one
+        // circular row, including the 2.5t and 3t corner-radius bands.
+        let spot = |designation: &str, values: &[f64], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("SHS100x100x5", &[100.0, 100.0, 5.0, 10.0], 1840.0, 14.4);
+        spot("SHS200x200x10", &[200.0, 200.0, 10.0, 25.0], 7260.0, 57.0);
+        spot("SHS200x200x12", &[200.0, 200.0, 12.0, 36.0], 8410.0, 66.0);
+        spot("RHS200x100x6", &[200.0, 100.0, 6.0, 12.0], 3360.0, 26.4);
+        spot("CHS219.1x6.0", &[219.1, 6.0], 4020.0, 31.4);
+        // Designations and wall thicknesses the shipped series does not publish are refused,
+        // not silently substituted.
+        for absent in [
+            "SHS110x110x5",
+            "SHS50x50x3.2",
+            "SHS200x200x9",
+            "RHS100x70x4",
+            "RHS600x400x16",
+            "CHS100x5",
+            "CHS219.1x6.3",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -2454,6 +2685,7 @@ mod tests {
             );
         }
     }
+
 
     #[test]
     fn the_shipped_india_wpb_280_900_library_reads_with_every_entry_admitted() {
