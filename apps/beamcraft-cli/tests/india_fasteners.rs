@@ -335,7 +335,7 @@ fn a_project_created_with_the_india_environment_resolves_its_bolts() {
     let group = text(&made, "element_id");
 
     // A repin resolves through the environment the same way: M24 over the same grip needs
-    // 40 + 2 x 4.6 + 15 + 24.2 + 7 = 95.3, so the declared list answers 100.
+    // 40 + 2 x 4.6 + 15 + 24.2 + 7 = 95.4, so the declared list answers 100.
     let repinned = f.ok(&[
         "update-bolt-group",
         "--store",
