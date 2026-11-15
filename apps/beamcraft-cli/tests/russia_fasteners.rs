@@ -91,16 +91,21 @@ fn lengths(json: &Json) -> Vec<f64> {
         .collect()
 }
 
-/// The catalogue facts of one pack row, the values the standards print.
-fn assert_entry(
-    entry: &Json,
-    designation: &str,
-    nominal: f64,
-    across_flats: f64,
-    nut_height: f64,
-    washer: [f64; 3],
-    expected: &[f64],
-) {
+/// The catalogue facts of one pack row, the values the standards print, so no declared field
+/// ships unchecked: nominal diameter, head across flats, head height, nut height, thread
+/// protrusion (the contributor default of the library) and the washer's outer, inner and
+/// thickness dimensions.
+fn assert_entry(entry: &Json, designation: &str, facts: [f64; 8], expected: &[f64]) {
+    let [
+        nominal,
+        across_flats,
+        head_height,
+        nut_height,
+        protrusion,
+        washer_outer,
+        washer_inner,
+        washer_thickness,
+    ] = facts;
     assert_eq!(text(entry, "designation"), designation);
     assert_eq!(text(entry, "standard"), "GOST 7798-70");
     assert_eq!(text(entry, "grade"), "5.8");
@@ -109,10 +114,12 @@ fn assert_entry(
     assert_eq!(num(entry, &["nominal_diameter_mm"]), nominal);
     assert_eq!(num(entry, &["head_across_flats_mm"]), across_flats);
     assert_eq!(num(entry, &["nut_across_flats_mm"]), across_flats);
+    assert_eq!(num(entry, &["head_height_mm"]), head_height);
     assert_eq!(num(entry, &["nut_height_mm"]), nut_height);
-    assert_eq!(num(entry, &["washer_outer_diameter_mm"]), washer[0]);
-    assert_eq!(num(entry, &["washer_inner_diameter_mm"]), washer[1]);
-    assert_eq!(num(entry, &["washer_thickness_mm"]), washer[2]);
+    assert_eq!(num(entry, &["thread_protrusion_mm"]), protrusion);
+    assert_eq!(num(entry, &["washer_outer_diameter_mm"]), washer_outer);
+    assert_eq!(num(entry, &["washer_inner_diameter_mm"]), washer_inner);
+    assert_eq!(num(entry, &["washer_thickness_mm"]), washer_thickness);
     // GOST 11284-75 first row: hole 13/17/21/25, one millimetre over the nominal diameter.
     assert_eq!(num(entry, &["hole_clearance_mm"]), 1.0);
     assert_eq!(lengths(entry), expected);
@@ -163,10 +170,7 @@ fn the_russia_environment_lists_and_shows_its_fastener_set() {
     assert_entry(
         at(&m12, &["entry"]),
         "M12",
-        12.0,
-        18.0,
-        10.8,
-        [24.0, 13.0, 2.5],
+        [12.0, 18.0, 7.5, 10.8, 4.0, 24.0, 13.0, 2.5],
         &common,
     );
     let m16 = f.ok(&[
@@ -179,10 +183,7 @@ fn the_russia_environment_lists_and_shows_its_fastener_set() {
     assert_entry(
         at(&m16, &["entry"]),
         "M16",
-        16.0,
-        24.0,
-        14.8,
-        [30.0, 17.0, 3.0],
+        [16.0, 24.0, 10.0, 14.8, 5.0, 30.0, 17.0, 3.0],
         &common,
     );
     let m20 = f.ok(&[
@@ -195,10 +196,7 @@ fn the_russia_environment_lists_and_shows_its_fastener_set() {
     assert_entry(
         at(&m20, &["entry"]),
         "M20",
-        20.0,
-        30.0,
-        18.0,
-        [37.0, 21.0, 3.0],
+        [20.0, 30.0, 12.5, 18.0, 6.0, 37.0, 21.0, 3.0],
         &common[1..],
     );
     let m24 = f.ok(&[
@@ -211,10 +209,7 @@ fn the_russia_environment_lists_and_shows_its_fastener_set() {
     assert_entry(
         at(&m24, &["entry"]),
         "M24",
-        24.0,
-        36.0,
-        21.5,
-        [44.0, 25.0, 4.0],
+        [24.0, 36.0, 15.0, 21.5, 7.0, 44.0, 25.0, 4.0],
         &common[3..],
     );
 
