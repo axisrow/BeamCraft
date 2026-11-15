@@ -1,0 +1,176 @@
+#usda 1.0
+(
+    doc = "BeamCraft Europe structural steel grades: the grade designations of EN 10025-2 (non-alloy structural steels), EN 10025-3 (normalized/normalized rolled weldable fine grain steels) and EN 10025-4 (thermomechanical rolled weldable fine grain steels), re-entered by hand as our own data; the density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1). No text or table is copied from a standard document. BeamCraft contributors, MPL-2.0. Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "europe-en-10025-materials"
+        string "bim:library:title" = "EN 10025 structural steel grades (parts 2, 3 and 4)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standard EN 10025-2/-3/-4 grade designations, re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "S235J0"
+        {
+            string steel:material:grade = "S235J0"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S235J2"
+        {
+            string steel:material:grade = "S235J2"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S235JR"
+        {
+            string steel:material:grade = "S235JR"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275J0"
+        {
+            string steel:material:grade = "S275J0"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275J2"
+        {
+            string steel:material:grade = "S275J2"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275JR"
+        {
+            string steel:material:grade = "S275JR"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275M"
+        {
+            string steel:material:grade = "S275M"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275ML"
+        {
+            string steel:material:grade = "S275ML"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275N"
+        {
+            string steel:material:grade = "S275N"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275NL"
+        {
+            string steel:material:grade = "S275NL"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355J0"
+        {
+            string steel:material:grade = "S355J0"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355J2"
+        {
+            string steel:material:grade = "S355J2"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355JR"
+        {
+            string steel:material:grade = "S355JR"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355K2"
+        {
+            string steel:material:grade = "S355K2"
+            string steel:material:standard = "EN 10025-2:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355M"
+        {
+            string steel:material:grade = "S355M"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355ML"
+        {
+            string steel:material:grade = "S355ML"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355N"
+        {
+            string steel:material:grade = "S355N"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355NL"
+        {
+            string steel:material:grade = "S355NL"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420M"
+        {
+            string steel:material:grade = "S420M"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420ML"
+        {
+            string steel:material:grade = "S420ML"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420N"
+        {
+            string steel:material:grade = "S420N"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420NL"
+        {
+            string steel:material:grade = "S420NL"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460M"
+        {
+            string steel:material:grade = "S460M"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460ML"
+        {
+            string steel:material:grade = "S460ML"
+            string steel:material:standard = "EN 10025-4:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460N"
+        {
+            string steel:material:grade = "S460N"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460NL"
+        {
+            string steel:material:grade = "S460NL"
+            string steel:material:standard = "EN 10025-3:2019"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}
