@@ -406,6 +406,9 @@ acceptance region is `10 ± tolerance_mm`, and its upper edge is the overcut bas
 strictly above the band and "subject to the recorded tolerance" in the literal sense of the
 rule above. The upper edge here is the owner's recorded size, not a derived or normative
 maximum (section 3.2); a recorded gap requirement's permitted ends are bounded the same way.
+Where a rule measures two values against the two edges of one band (the corner-cut rule's
+admitted leg and largest setback, section 7.1), each edge is tested with the near-threshold
+rule against its own value, and the two findings are independent.
 
 ## 8. Findings and report semantics
 
