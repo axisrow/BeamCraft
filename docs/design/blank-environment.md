@@ -61,7 +61,9 @@ saved setting.
   profile pack waits on the #649 provenance audit, so the environment lists no profile or
   fastener libraries and the grades are its whole content — and `environments/canada/`
   (2026-11-15) is grades-only the same way: the complete weldable category of
-  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W).
+  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W), and `environments/australia/`
+  carries, since 2026-11-16, a material library with the AS/NZS 3678-2016 base grades
+  (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or

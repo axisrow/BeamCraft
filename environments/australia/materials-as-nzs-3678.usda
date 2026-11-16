@@ -1,0 +1,50 @@
+#usda 1.0
+(
+    doc = "BeamCraft Australia structural steel grades: the structural base grades of AS/NZS 3678-2016 (structural steel — hot-rolled plates, floorplates and slabs) — 250, 300, 350, 400 and 450, where the number is the nominal minimum yield strength in MPa; the grade set the ASI National Structural Steelwork Specification lists for plates and flats and the XLERPLATE structural range ships. The same steel-grade numbers 300 and 400 are the grades the welded beams and columns of AS/NZS 3679.2 are welded from, so a welded section to AS/NZS 3679.2 selects the 300 or 400 entry. The impact-test L suffixes (L0, L15, L20), the through-thickness Z values, the AS/NZS 1594 HA and HW product grades, the weathering WR350 product and the lighter Grade 200 are not in the pack. Re-entered by hand as our own data; no text or table is copied from the standard. The density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1). Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "australia-as-nzs-3678-materials"
+        string "bim:library:title" = "AS/NZS 3678 structural steel grades"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standard AS/NZS 3678-2016 base grade designations, the structural plate grades the ASI specification lists, re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "G_250"
+        {
+            string steel:material:grade = "250"
+            string steel:material:standard = "AS/NZS 3678-2016"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "G_300"
+        {
+            string steel:material:grade = "300"
+            string steel:material:standard = "AS/NZS 3678-2016"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "G_350"
+        {
+            string steel:material:grade = "350"
+            string steel:material:standard = "AS/NZS 3678-2016"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "G_400"
+        {
+            string steel:material:grade = "400"
+            string steel:material:standard = "AS/NZS 3678-2016"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "G_450"
+        {
+            string steel:material:grade = "450"
+            string steel:material:standard = "AS/NZS 3678-2016"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}
