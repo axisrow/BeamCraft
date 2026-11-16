@@ -187,6 +187,10 @@ pub struct ClashOutcome {
     pub contact: &'static str,
     /// The measured penetration depth in millimetres, when one was measured.
     pub measured_mm: Option<f64>,
+    /// The mesh approximation bound the measurement read, in millimetres: the
+    /// largest chord deviation among the evaluated bodies the measurement
+    /// used (contract section 7.2).
+    pub mesh_bound_mm: f64,
     /// The uncertainty radius of the measurement in millimetres:
     /// `max(mesh bound of the pair, t/2)`.
     pub delta_mm: f64,
@@ -329,6 +333,14 @@ pub struct ConnectivityFinding {
     pub tolerance_mm: Option<f64>,
     /// The named bounds of a range comparison (contract section 8.1).
     pub bounds: Vec<NamedBound>,
+    /// The mesh approximation bound the measurement read, in millimetres: the
+    /// largest chord deviation among the evaluated bodies the measurement
+    /// used (contract section 7.2); absent where nothing was measured.
+    pub mesh_bound_mm: Option<f64>,
+    /// The effective comparison tolerance the comparison applied, in
+    /// millimetres: `max(mesh bound, t/2)` (contract section 7.3); absent
+    /// where no comparison ran.
+    pub delta_mm: Option<f64>,
     /// The inputs whose absence kept the check from deciding.
     pub missing_inputs: Vec<&'static str>,
 }
@@ -575,11 +587,18 @@ pub fn connectivity_findings(
                     required_mm: None,
                     tolerance_mm: None,
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    delta_mm: None,
                     missing_inputs: vec!["target_unresolved"],
                 });
                 continue;
             }
         };
+        // The pair's mesh approximation bound and the effective comparison
+        // tolerance it feeds (contract sections 7.2 and 7.3), reported with
+        // every finding whose measurement used them.
+        let pair_bound = body_a.mesh_bound_mm.max(body_b.mesh_bound_mm);
+        let pair_delta = pair_bound.max(tolerance_mm / 2.0);
         let proximity = match proximity_verdict(body_a, body_b, tolerance_mm) {
             Ok(proximity) => proximity,
             Err(_) => {
@@ -595,6 +614,8 @@ pub fn connectivity_findings(
                     required_mm: None,
                     tolerance_mm: Some(tolerance_mm),
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    delta_mm: None,
                     missing_inputs: vec!["unresolved contact predicates"],
                 });
                 continue;
@@ -638,6 +659,8 @@ pub fn connectivity_findings(
                     required_mm: Some(tolerance_mm),
                     tolerance_mm: Some(tolerance_mm),
                     bounds: Vec::new(),
+                    mesh_bound_mm: Some(pair_bound),
+                    delta_mm: Some(pair_delta),
                     missing_inputs: Vec::new(),
                 }),
                 Proximity::Indeterminate { gap_mm } => findings.push(ConnectivityFinding {
@@ -656,6 +679,8 @@ pub fn connectivity_findings(
                     required_mm: Some(tolerance_mm),
                     tolerance_mm: Some(tolerance_mm),
                     bounds: Vec::new(),
+                    mesh_bound_mm: Some(pair_bound),
+                    delta_mm: Some(pair_delta),
                     missing_inputs: vec!["indeterminate"],
                 }),
             },
@@ -690,6 +715,8 @@ fn weld_connection(
             required_mm: None,
             tolerance_mm: None,
             bounds: Vec::new(),
+            mesh_bound_mm: None,
+            delta_mm: None,
             missing_inputs: Vec::new(),
         });
         if proximity == Proximity::Touching {
@@ -708,6 +735,8 @@ fn weld_connection(
                 required_mm: None,
                 tolerance_mm: Some(tolerance_mm),
                 bounds: Vec::new(),
+                mesh_bound_mm: None,
+                delta_mm: None,
                 missing_inputs: Vec::new(),
             });
         }
@@ -734,6 +763,8 @@ fn weld_connection(
             required_mm: None,
             tolerance_mm: None,
             bounds: Vec::new(),
+            mesh_bound_mm: None,
+            delta_mm: None,
             missing_inputs: vec!["no_supported_rule"],
         });
         return;
@@ -758,6 +789,8 @@ fn weld_connection(
                 required_mm: None,
                 tolerance_mm: None,
                 bounds: Vec::new(),
+                mesh_bound_mm: None,
+                delta_mm: None,
                 missing_inputs: vec!["attachment_unvalidated"],
             });
             continue;
@@ -777,15 +810,17 @@ fn weld_connection(
                     required_mm: None,
                     tolerance_mm: Some(requirement.tolerance_mm),
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    delta_mm: None,
                     missing_inputs: vec!["unresolved contact predicates"],
                 });
                 continue;
             }
         };
-        let delta = body_a
+        let bound = body_a
             .mesh_bound_mm
-            .max(body_b.mesh_bound_mm)
-            .max(tolerance_mm / 2.0);
+            .max(body_b.mesh_bound_mm);
+        let delta = bound.max(tolerance_mm / 2.0);
         match range_threshold(
             gap,
             requirement.permitted_min_mm,
@@ -821,6 +856,8 @@ fn weld_connection(
                         source: "owner",
                     },
                 ],
+                mesh_bound_mm: Some(bound),
+                delta_mm: Some(delta),
                 missing_inputs: vec!["indeterminate"],
             }),
             ClashState::Penetrated => {
@@ -853,6 +890,8 @@ fn weld_connection(
                             source: "owner",
                         },
                     ],
+                    mesh_bound_mm: Some(bound),
+                    delta_mm: Some(delta),
                     missing_inputs: Vec::new(),
                 });
             }
@@ -1268,6 +1307,8 @@ pub fn corner_cut_findings(
                     required_mm: Some(requirement.required_mm),
                     tolerance_mm: Some(requirement.tolerance_mm),
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    delta_mm: None,
                     missing_inputs: vec![status_reason],
                 },
                 corner_point_mm: corner,
@@ -1322,11 +1363,11 @@ pub fn corner_cut_findings(
         // One pass over the final evaluated body: per mesh vertex, the contact
         // decisions against the two neighbours feed the corner derivation, which
         // also measures the two legs (contract 7.1).
-        let delta = rib
+        let bound = rib
             .mesh_bound_mm
             .max(a.mesh_bound_mm)
-            .max(b.mesh_bound_mm)
-            .max(tolerance_mm / 2.0);
+            .max(b.mesh_bound_mm);
+        let delta = bound.max(tolerance_mm / 2.0);
         let upper_edge = match &requirement.upper_bound {
             Some(bound) => bound.max_mm + bound.tolerance_mm,
             None => requirement.required_mm + requirement.tolerance_mm,
@@ -1485,6 +1526,8 @@ pub fn corner_cut_findings(
                     required_mm: Some(requirement.required_mm),
                     tolerance_mm: Some(requirement.tolerance_mm),
                     bounds,
+                    mesh_bound_mm: Some(bound),
+                    delta_mm: Some(delta),
                     missing_inputs: missing,
                 },
                 corner_point_mm: Some(corner),
