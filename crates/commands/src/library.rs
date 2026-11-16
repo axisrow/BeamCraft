@@ -5743,8 +5743,14 @@ mod tests {
                 family => panic!("{}: unexpected family {family:?}", entry.designation),
             }
             let k = parametric.values()[6];
+            // tan() of the printed angle matches the row's stored decimal value only to
+            // the last ulp, and that last ulp differs between libm platforms (the exact
+            // equality failed on x86_64 Linux), so the printed-angle check compares
+            // within the same 1e-12 tolerance the india_environment e2e test uses.
             assert!(
-                k == k98 || k == k96 || k == k94 || k == k915,
+                [k98, k96, k94, k915]
+                    .iter()
+                    .any(|printed| (k - printed).abs() < 1e-12),
                 "{}: slope {k} is not one of the printed angles",
                 entry.designation
             );
