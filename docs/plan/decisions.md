@@ -4,6 +4,42 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-16
+
+- **The Russia parallel-flange packs stay declared GOST 26020-83.** The GOST edition question
+  of the Russia-pack findings (#628 comment 6879292471) is resolved by delegation through the
+  documentation and the shipped packs (#646): the `russia` Б/Ш/К libraries (81 entries, #633,
+  #667) carry `steel:profile:standard = "GOST 26020-83"` — the edition whose public tables the
+  rows were re-entered and verified against — and nothing in them changes. What the newer
+  editions change for the shipped shapes: GOST R 57837-2017 (introduced 2018; Rosstandart
+  cancelled GOST 26020-83 for RF use on 2018-11-30) extends the assortment (К rows such as
+  30К4/35К4 and the 50К series, 80Ш1–100Ш5, the С series) and republishes shared designations
+  with different geometry — 30B1 is 40.80 cm² there against 26020-83's 41.92 cm² — so a
+  designation alone is not unique across editions. The chain moved once more since the pack
+  research: GOST 35087-2024, the interstate standard in force in RF since 2024-12-01
+  (Rosstandart order 915-ст of 2024-07-11), carries the same extended assortment (including the
+  У series of inclined-flange beams) and is industry-recorded as the successor of
+  GOST R 57837-2017. The shipped edition therefore stays GOST 26020-83, declared on every
+  entry: the declared standard per entry is what disambiguates a designation, and the market
+  rolling both editions makes the declared edition a provenance statement, not a normative
+  claim. A pack of the 57837-2017/35087-2024 generation remains a separate owner decision,
+  taken under the standing pack discipline — its own PR naming the standard, edition and
+  verification sources; it never edits the existing rows in place.
+
+- **The inclined-flange GOST 8239/8240 series ride the kernel `tapered_i` and `tapered_c`
+  families.** The second delegated question of #628/#646: the shipped pack (#688) expresses
+  the GOST 8239-89 I beams through `tapered_i` and the GOST 8240-89 slope-series channels
+  through `tapered_c` — the inclined-flange families of #676 — not `custom` outlines or a new
+  family. The reasoning: the flange slope is data per row (`steel:profile:k`, rise over run),
+  so one family serves GB/T 706 (1:6 / 1:10 exactly), GOST 8239/8240 (roll-pass ranges
+  6–12 % / 4–10 %, shipped at the range middles — the standards print no per-row slope) and the
+  EN 10365 UPN channels (#703, k = 0.08 / 0.05); `t` is the mean flange thickness at the middle
+  of the leg, the convention both GOST standards dimension and the family's own parameter (a
+  root-measured thickness converts pack-side, as UPN did); and the exact closed-form area
+  degrades to the parallel-flange families at k = 0. The successor standard keeps the same
+  conventions: the type У rows of GOST 35087-2024 also dimension t as the mean flange
+  thickness.
+
 ## 2026-11-14
 
 - **Undo works in a project, not only in a personal workspace.** Owner decision: as in Tekla
