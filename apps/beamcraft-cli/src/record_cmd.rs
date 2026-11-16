@@ -141,9 +141,10 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .collect::<Run<Vec<_>>>()?;
             let mut connections = Vec::new();
             if let Some(texts) = given("--connection") {
-                // The declared kind travels inside one option value: `--connection
-                // UUID:weld:UUID`, repeated per declared connection. The pairs are
-                // comma-free so one option value carries one connection.
+                // The declared kind travels inside one option value, and several
+                // connections ride one `--connection` value comma-separated
+                // (`UUID:weld:UUID,UUID:contact:UUID`): the option parser refuses a
+                // repeated flag, and the triples themselves carry no commas.
                 let mut text_list = texts.split(',').peekable();
                 if text_list.peek().is_some() {
                     for text in text_list {
