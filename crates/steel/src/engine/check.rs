@@ -1674,6 +1674,7 @@ pub fn clash_verdict(
         state,
         contact: contact_kind,
         measured_mm: measured,
+        mesh_bound_mm: a.mesh_bound_mm.max(b.mesh_bound_mm),
         delta_mm: delta,
         tolerance_mm,
     })
