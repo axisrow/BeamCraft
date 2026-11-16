@@ -6,8 +6,8 @@
 use super::*;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::record::{
-    ConnectionKind, DeclaredConnection, GapRequirement, JointIntent, MAX_CONNECTIONS, MAX_SCOPE,
-    Record, RecordPayload,
+    ConnectionKind, CornerCutRequirement, CutPurpose, DeclaredConnection, GapRequirement,
+    JointIntent, MAX_CONNECTIONS, MAX_SCOPE, Record, RecordPayload, UpperBound,
 };
 use openusd::sdf;
 
@@ -23,6 +23,12 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("bim:record:permittedMinMm", "double"),
     ("bim:record:permittedMaxMm", "double"),
     ("bim:record:toleranceMm", "double"),
+    ("bim:record:target", "string"),
+    ("bim:record:neighbours", "string[]"),
+    ("bim:record:requiredMm", "double"),
+    ("bim:record:upperBoundMm", "double"),
+    ("bim:record:upperBoundToleranceMm", "double"),
+    ("bim:record:purpose", "token"),
 ];
 
 pub(super) fn validate_record(r: &Record) -> Result<(), Diagnostic> {
@@ -97,6 +103,58 @@ pub(super) fn author(data: &mut sdf::Data, path: &str, r: &Record) -> Result<(),
                 "bim:record:toleranceMm",
                 "double",
                 sdf::Value::Double(gap.tolerance_mm),
+            )?;
+        }
+        RecordPayload::CornerCut(corner) => {
+            let text = |data: &mut sdf::Data, name: &str, value: &str| {
+                edit::attr(
+                    data,
+                    path,
+                    name,
+                    "string",
+                    sdf::Value::String(value.to_owned()),
+                )
+            };
+            text(data, "bim:record:target", &corner.target.to_string())?;
+            strings(data, path, "bim:record:neighbours", &corner.neighbours)?;
+            edit::attr(
+                data,
+                path,
+                "bim:record:requiredMm",
+                "double",
+                sdf::Value::Double(corner.required_mm),
+            )?;
+            edit::attr(
+                data,
+                path,
+                "bim:record:toleranceMm",
+                "double",
+                sdf::Value::Double(corner.tolerance_mm),
+            )?;
+            // The standalone upper bound travels as its own attributes; their absence is
+            // the recorded `none` (contract section 4.1).
+            if let Some(bound) = &corner.upper_bound {
+                edit::attr(
+                    data,
+                    path,
+                    "bim:record:upperBoundMm",
+                    "double",
+                    sdf::Value::Double(bound.max_mm),
+                )?;
+                edit::attr(
+                    data,
+                    path,
+                    "bim:record:upperBoundToleranceMm",
+                    "double",
+                    sdf::Value::Double(bound.tolerance_mm),
+                )?;
+            }
+            edit::attr(
+                data,
+                path,
+                "bim:record:purpose",
+                "token",
+                sdf::Value::token(corner.purpose.token()),
             )?;
         }
     }
@@ -219,6 +277,34 @@ pub fn read(p: &Prim) -> Result<Record, Diagnostic> {
             permitted_max_mm: number(p, "bim:record:permittedMaxMm")?,
             tolerance_mm: number(p, "bim:record:toleranceMm")?,
         }),
+        "corner_cut" => {
+            let neighbours = strings_of(p, "bim:record:neighbours")?;
+            let [a, b] = neighbours.as_slice() else {
+                return Err(invalid());
+            };
+            let upper_bound = match p
+                .properties
+                .iter()
+                .find(|v| v.name == "bim:record:upperBoundMm" && v.type_name == "double")
+                .and_then(|v| v.value.as_ref())
+            {
+                Some(Value::Number(n)) => Some(UpperBound {
+                    max_mm: *n,
+                    tolerance_mm: number(p, "bim:record:upperBoundToleranceMm")?,
+                }),
+                None => None,
+                _ => return Err(invalid()),
+            };
+            RecordPayload::CornerCut(CornerCutRequirement {
+                target: element(text(p, "bim:record:target", "string")?)?,
+                neighbours: [element(a)?, element(b)?],
+                required_mm: number(p, "bim:record:requiredMm")?,
+                tolerance_mm: number(p, "bim:record:toleranceMm")?,
+                upper_bound,
+                purpose: CutPurpose::of_token(text(p, "bim:record:purpose", "token")?)
+                    .ok_or_else(invalid)?,
+            })
+        }
         _ => return Err(unsupported()),
     };
     let record = Record {

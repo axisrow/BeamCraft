@@ -324,6 +324,28 @@ measurement: a surface region no sample reaches can only make the true distance 
 a permitted range beyond roughly twice the contact tolerance can never be satisfied by an
 attached weld; both ceilings are recorded here.
 
+**Validated in slice 4 (2026-11-16).** The corner-cut rules derive the requirement's corner
+from the final evaluated geometry on every run: the candidate corners are the rib's authored
+contour vertices — a treated contour keeps its sharp corner points, so the ideal corner
+survives any parameterized treatment — whose position lies strictly within the contact
+tolerance of both recorded neighbours. Exactly one candidate is judged; zero or several are
+`unknown` (`target_unresolved`), and a contour vertex at a neighbour's contact band edge keeps
+the candidate set from being established (`indeterminate`). The measured cut is the **least
+leg**: the least, over the rib's evaluated mesh vertices that provably touch one neighbour,
+of the distance to the other neighbour — zero where the rib surface still reaches the corner,
+the setback (chamfer leg, contract section 3) where a treatment or cut removed the corner —
+with the near-threshold rule and `δ = max(mesh bounds, t/2)` deciding the acceptance band
+`[required − tolerance, upper edge]`, whose upper edge the recorded standalone `upper_bound`
+replaces. Recorded ceilings of that reading: the leg is the least retreat of the rib surface
+over the whole body, so a second approach to the neighbour pair elsewhere on the rib, without
+a dual-touch contour vertex of its own, would pull the leg down — the standard two-corner
+shapes (a rib flush with the neighbour face) report several candidates before the measurement
+runs; and the derivation reads authored plate contours, so a rib that is not an authored plate
+reports `target_unresolved`. The one unambiguous repair of `CORNER_NOT_CUT` (section 9) sets
+the required chamfer at the authored vertex the derived corner maps back to, and is offered
+only when that vertex exists, its treatment is absent or a chamfer, the adjacent vertices
+carry no treatments, the corner really turns, and the required leg fits both adjacent edges.
+
 ### 7.2 Two tolerance layers, kept separate
 
 - **Numerical robustness** is the kernel's own: exact predicates for orientation and

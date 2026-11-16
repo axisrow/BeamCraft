@@ -652,3 +652,305 @@ fn an_unresolved_declared_target_stays_unknown_and_named() {
         "{reply:?}"
     );
 }
+
+/// A standing plate: width along world X, height along world Z (a quarter
+/// turn about X), thickness running along world −Y.
+impl Fixture {
+    fn standing(
+        &self,
+        steel: &str,
+        width: &str,
+        length: &str,
+        thickness: &str,
+        translation: &str,
+        corners: &[&str],
+    ) -> String {
+        let corner_text = corners.join(";");
+        let mut args: Vec<&str> = vec![
+            "--width",
+            width,
+            "--length",
+            length,
+            "--thickness",
+            thickness,
+            "--material-digest",
+            steel,
+            "--orientation-xyzw",
+            "0.7071067811865476,0,0,0.7071067811865476",
+            "--translation",
+            translation,
+        ];
+        if !corners.is_empty() {
+            args.extend(["--corners", &corner_text]);
+        }
+        let created = self.ok("create-plate", &args);
+        text(at(&created, &["plate"]), "element_id")
+    }
+    /// The sample column base: the base plate on the floor, the column
+    /// standing on it with its face at x = 150, and the rib perpendicular to
+    /// that face with its welded edge on it and its bottom on the plate. The
+    /// standing parts sit one nanometre clear of their neighbours, so the
+    /// quarter-turn rounding never dips a corner into them and the pair
+    /// relations stay determinate.
+    fn joint(&self, steel: &str, rib_corners: &[&str]) -> (String, String, String) {
+        let base = self.plate(steel, "10", "0,0,0");
+        let column = self.standing(steel, "100", "200", "40", "50,40,10.000000001", &[]);
+        let rib = self.standing(
+            steel,
+            "80",
+            "100",
+            "10",
+            "150.000000001,10,10.000000001",
+            rib_corners,
+        );
+        (base, column, rib)
+    }
+    /// Records the corner-cut requirement of the sample's rib corner: the
+    /// owner's 10 mm cut with a 1 mm tolerance unless overridden.
+    fn corner(&self, rib: &str, base: &str, column: &str, extra: &[&str]) -> String {
+        let neighbours = format!("{base},{column}");
+        let mut extra_args: Vec<&str> = vec![
+            "--kind",
+            "corner_cut",
+            "--target",
+            rib,
+            "--neighbours",
+            &neighbours,
+            "--required-mm",
+            "10",
+            "--tolerance-mm",
+            "1",
+        ];
+        extra_args.extend(extra);
+        self.record("corner cut", &extra_args)
+    }
+}
+
+#[test]
+fn without_a_recorded_requirement_the_corner_rules_are_not_applicable() {
+    let f = Fixture::new();
+    let steel = f.material();
+    let _ = f.joint(&steel, &[]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(fail_count(&reply, "CORNER_NOT_CUT"), 0);
+    assert_eq!(unknown_count(&reply, "CORNER_NOT_CUT"), 0);
+    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    assert!(
+        limitations.contains("no corner-cut requirement is recorded"),
+        "{limitations}"
+    );
+    assert!(limitations.contains("not applicable"), "{limitations}");
+}
+
+#[test]
+fn the_record_vehicle_carries_the_corner_cut_end_to_end() {
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    let requirement = f.corner(&rib, &base, &column, &[]);
+    // The record lists the recorded values back.
+    let listed = f.run("record-list", &[]).1;
+    let rows = list(&listed, "records");
+    let row = rows
+        .iter()
+        .find(|row| text(row, "kind") == "corner_cut")
+        .unwrap_or_else(|| panic!("no corner_cut record in {listed:?}"));
+    assert_eq!(text(row, "id"), requirement);
+    assert_eq!(text(row, "target"), rib);
+    let neighbours = list(row, "neighbours");
+    assert_eq!(neighbours.len(), 2);
+    assert_eq!(neighbours.first().unwrap().string().unwrap(), base);
+    assert_eq!(neighbours.get(1).unwrap().string().unwrap(), column);
+    let required = at(row, &["required_mm"]).float().unwrap();
+    assert!((required - 10.0).abs() <= 1e-9, "{required}");
+    assert_eq!(text(row, "purpose"), "clearance");
+    assert!(matches!(row.get("upper_bound_mm"), Ok(Json::Null)));
+    // The correct 10 mm cut is green against the recorded requirement.
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(fail_count(&reply, "CORNER_NOT_CUT"), 0);
+    assert_eq!(unknown_count(&reply, "CORNER_NOT_CUT"), 0);
+    assert_eq!(unknown_count(&reply, "CORNER_OVERCUT"), 0);
+    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    assert!(
+        limitations.contains("corner-cut rules ran over 1 recorded requirement"),
+        "{limitations}"
+    );
+}
+
+#[test]
+fn the_model_without_the_cut_is_red_and_the_fix_hint_reaches_green() {
+    // The acceptance red case: the uncut rib against the recorded 10 mm
+    // requirement is red "no corner cut", measured 0 mm, and the finding
+    // carries the one unambiguous repair; applying it and rechecking lands
+    // green (contract section 9: apply one fix, then recheck).
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &[]);
+    f.corner(&rib, &base, &column, &[]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "fail");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!(measured.abs() <= 1e-9, "{measured}");
+    assert!(text(finding, "message").contains("absent or undersized"));
+    // The fix: set the required chamfer at the authored corner vertex.
+    let fix = at(finding, &["fix"]);
+    assert_eq!(text(fix, "command"), "set-plate-corner");
+    let arguments = list(fix, "arguments");
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|a| a.string().unwrap().to_owned())
+            .collect::<Vec<_>>(),
+        vec![
+            "--id".into(),
+            rib.clone(),
+            "--vertex".into(),
+            "0".into(),
+            "--corner".into(),
+            "chamfer:10".into(),
+        ]
+    );
+    assert!(text(fix, "effect").contains("produces the required final shape"));
+    // Apply one fix and recheck: green, no findings.
+    let argument_refs = arguments
+        .iter()
+        .map(|a| a.string().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let refs: Vec<&str> = argument_refs.iter().map(String::as_str).collect();
+    f.ok("set-plate-corner", &refs);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(list(&reply, "findings").len(), 0);
+}
+
+#[test]
+fn a_twenty_millimetre_cut_is_overcut_with_measured_and_required() {
+    // The acceptance red case: 20 mm instead of the recorded 10 mm is
+    // CORNER_OVERCUT, measured 20 mm and required 10 mm, subject to the
+    // recorded tolerance; no fix is offered.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:20"]);
+    f.corner(&rib, &base, &column, &[]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    let finding = finding_of(&reply, "CORNER_OVERCUT");
+    assert_eq!(text(finding, "status"), "fail");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
+    let required = at(finding, &["required_mm"]).float().unwrap();
+    assert!((required - 10.0).abs() <= 1e-9, "{required}");
+    let bounds = list(finding, "bounds");
+    assert_eq!(bounds.len(), 1);
+    assert_eq!(text(bounds.first().unwrap(), "name"), "required");
+    assert!(matches!(finding.get("fix"), Ok(Json::Null)));
+    // An undersized 5 mm cut stays CORNER_NOT_CUT with the leg reported.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:5"]);
+    f.corner(&rib, &base, &column, &[]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "fail");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
+}
+
+#[test]
+fn a_recorded_upper_bound_replaces_the_band_upper_edge_in_the_reply() {
+    // A 12 mm cut exceeds the required band's upper edge (10 + 1) and is red
+    // overcut; with the owner's standalone maximum of 12 ± 2 recorded, the
+    // same cut passes: the bound replaces the band's upper edge.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:12"]);
+    f.corner(&rib, &base, &column, &[]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(finding_of(&reply, "CORNER_OVERCUT"), "status"), "fail");
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:12"]);
+    f.corner(
+        &rib,
+        &base,
+        &column,
+        &["--upper-bound-mm", "12", "--upper-bound-tolerance-mm", "2"],
+    );
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    // The bound travels through the record vehicle.
+    let listed = f.run("record-list", &[]).1;
+    let row = list(&listed, "records")
+        .iter()
+        .find(|row| text(row, "kind") == "corner_cut")
+        .unwrap_or_else(|| panic!("no corner_cut record in {listed:?}"));
+    let bound = at(row, &["upper_bound_mm"]).float().unwrap();
+    assert!((bound - 12.0).abs() <= 1e-9, "{bound}");
+}
+
+#[test]
+fn a_ghost_corner_target_stays_unresolved_and_bad_input_refuses() {
+    // The requirement naming an element the model does not carry is the
+    // ghost case: judged, unknown (target_unresolved), the requirement kept;
+    // nothing auto-retargets.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    let ghost = "019a7bf0-0000-7000-8000-00000000dead";
+    let neighbours = format!("{base},{column}");
+    f.record(
+        "corner cut",
+        &[
+            "--kind",
+            "corner_cut",
+            "--target",
+            ghost,
+            "--neighbours",
+            &neighbours,
+            "--required-mm",
+            "10",
+            "--tolerance-mm",
+            "1",
+        ],
+    );
+    let _ = rib;
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "unknown");
+    assert_eq!(reason_of(&reply, "CORNER_NOT_CUT"), "target_unresolved");
+    assert!(text(finding, "message").contains("stays recorded"));
+    // The command refuses a corner-cut requirement without its target.
+    let (code, body) = f.run(
+        "record-create",
+        &[
+            "--name",
+            "corner cut",
+            "--kind",
+            "corner_cut",
+            "--neighbours",
+            &neighbours,
+            "--required-mm",
+            "10",
+            "--tolerance-mm",
+            "1",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000feed",
+        ],
+    );
+    assert_eq!(code, 2);
+    assert_eq!(text(&body, "outcome"), "rejected");
+}
