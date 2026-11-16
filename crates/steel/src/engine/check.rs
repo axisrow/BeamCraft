@@ -876,12 +876,19 @@ impl ContourLine {
 /// the corner verdict plus, when the corner resolved, the measured setback legs.
 struct CornerDerivation {
     corner: Corner,
-    /// `leg_a` — the least distance, in the local contour frame, from the derived
-    /// corner to an evaluated vertex provably touching the first recorded
-    /// neighbour and lying on one of that neighbour's contact lines; `leg_b`
-    /// symmetrically for the second neighbour.
-    leg_a: Option<f64>,
-    leg_b: Option<f64>,
+    /// The per-neighbour setbacks: the least distance, in the local contour
+    /// frame, from the derived corner to an evaluated vertex provably touching
+    /// that neighbour and lying on one of its contact lines. The largest
+    /// setback is the larger of the two.
+    setback_a: Option<f64>,
+    setback_b: Option<f64>,
+    /// The admitted leg: the largest `k` for which the triangle with one vertex
+    /// at the derived corner and the other two at distance `k` along each
+    /// neighbour's contact line contains no rib material — the least, over the
+    /// evaluated mesh vertices inside the corner's forward quadrant, of the
+    /// sum of the projections onto the two contact lines, scaled by the corner
+    /// angle (`#725`'s measure).
+    admitted: Option<f64>,
 }
 
 /// Derives the rib's corner adjacent to both recorded neighbours from the final
@@ -899,7 +906,7 @@ struct CornerDerivation {
 /// `touches` carries, per evaluated rib mesh vertex, its world position and its
 /// contact states against the two neighbours, as gathered by the caller's single
 /// pass over the mesh (one `point_gap` decision per vertex and neighbour, shared
-/// by the derivation and the leg measurement).
+/// by the derivation and the measurement).
 fn derive_corner(
     plate: &PlateRecord,
     touches: &[(Touch, Touch, [f64; 3])],
@@ -927,22 +934,25 @@ fn derive_corner(
         .zip(contour.iter().skip(1).chain(contour.first()))
         .filter_map(|(from, to)| ContourLine::of(*from, *to))
         .collect();
+    let mut all_local: Vec<[f64; 2]> = Vec::with_capacity(touches.len());
     let mut on_a: Vec<[f64; 2]> = Vec::new();
     let mut on_b: Vec<[f64; 2]> = Vec::new();
     for (state_a, state_b, world) in touches {
         let local = to_frame(*world);
+        all_local.push(local);
         // A wall vertex at a contact band edge could or could not be a second
         // candidate corner: the candidate set cannot be established. A vertex on
         // no contour line — a faceted arc vertex between the tangent points —
-        // never holds a line, measures a leg, or forms a corner, so its
+        // never holds a line, measures a setback, or forms a corner, so its
         // near-threshold state poisons nothing.
         let on_a_line = contour_lines.iter().any(|line| line.holds(local));
         match (*state_a, *state_b) {
             (Touch::Straddles, _) | (_, Touch::Straddles) if on_a_line => {
                 return Ok(CornerDerivation {
                     corner: Corner::Ambiguous,
-                    leg_a: None,
-                    leg_b: None,
+                    setback_a: None,
+                    setback_b: None,
+                    admitted: None,
                 });
             }
             // A vertex provably on both neighbours belongs to both contact sets.
@@ -969,8 +979,10 @@ fn derive_corner(
     let lines_b = contact_lines(&on_b);
     // Candidate corners: intersections of one line touching each neighbour,
     // kept where both neighbour surfaces still sandwich the point — the ideal
-    // corner of the joint, not a phantom of extended walls.
-    let mut candidates: Vec<[f64; 2]> = Vec::new();
+    // corner of the joint, not a phantom of extended walls. Each candidate
+    // carries the line pair that produced it: the corner's two contact lines,
+    // the axes of the admitted-leg measure.
+    let mut candidates: Vec<([f64; 2], ContourLine, ContourLine)> = Vec::new();
     for line_a in &lines_a {
         for line_b in &lines_b {
             let Some(point) = line_a.intersection(line_b) else {
@@ -990,43 +1002,70 @@ fn derive_corner(
                     // The same ideal corner can arise from several line pairs
                     // (a vertex dual-touching both neighbours puts its wall
                     // lines on both sides): one candidate, not several.
-                    let fresh = !candidates
-                        .iter()
-                        .any(|c| (c[0] - point[0]).hypot(c[1] - point[1]) <= 1e-6);
+                    let fresh =
+                        !candidates
+                            .iter()
+                            .any(|c: &([f64; 2], ContourLine, ContourLine)| {
+                                (c.0[0] - point[0]).hypot(c.0[1] - point[1]) <= 1e-6
+                            });
                     if fresh {
-                        candidates.push(point);
+                        candidates.push((point, *line_a, *line_b));
                     }
                 }
                 (Touch::Straddles, _) | (_, Touch::Straddles) => {
                     return Ok(CornerDerivation {
                         corner: Corner::Ambiguous,
-                        leg_a: None,
-                        leg_b: None,
+                        setback_a: None,
+                        setback_b: None,
+                        admitted: None,
                     });
                 }
                 _ => {}
             }
         }
     }
-    let [corner] = candidates.as_slice() else {
+    let [(corner, line_a, line_b)] = candidates.as_slice() else {
         return Ok(CornerDerivation {
             corner: if candidates.is_empty() {
                 Corner::Absent
             } else {
                 Corner::Several
             },
-            leg_a: None,
-            leg_b: None,
+            setback_a: None,
+            setback_b: None,
+            admitted: None,
         });
     };
-    // The legs: the least distance from the corner to an evaluated vertex
+    // Orient each contact line from the corner towards the material: the
+    // contour edge that produced it may run either way (the rib's back edge
+    // runs from the far vertex towards the corner), and the projections below
+    // measure distances into the rib.
+    let orient = |line: &ContourLine, on: &[[f64; 2]]| -> ContourLine {
+        for point in on {
+            if line.holds(*point) {
+                let along = (point[0] - corner[0]) * line.direction[0]
+                    + (point[1] - corner[1]) * line.direction[1];
+                if along < 0.0 {
+                    return ContourLine {
+                        point: line.point,
+                        direction: [-line.direction[0], -line.direction[1]],
+                    };
+                }
+                return *line;
+            }
+        }
+        *line
+    };
+    let line_a = orient(line_a, &on_a);
+    let line_b = orient(line_b, &on_b);
+    // The setbacks: the least distance from the corner to an evaluated vertex
     // provably touching the neighbour on one of its contact lines — zero where
     // the rib still reaches the corner itself, the setback (a chamfer leg, a
     // rounding's tangent setback) where a treatment or cut removed it. A
     // rounding's tangent setbacks are exact: the tangent points sit on the
     // authored edge lines, while the arc facets between them lie on no line, so
     // the measure never follows the arc faceting.
-    let leg = |on: &[[f64; 2]], lines: &[ContourLine]| -> Option<f64> {
+    let setback = |on: &[[f64; 2]], lines: &[ContourLine]| -> Option<f64> {
         let mut least: Option<f64> = None;
         for point in on {
             if lines.iter().any(|line| line.holds(*point)) {
@@ -1036,13 +1075,41 @@ fn derive_corner(
         }
         least
     };
+    // The admitted leg (#725): the largest `k` for which the triangle with one
+    // vertex at the corner and the other two at distance `k` along each contact
+    // line contains no rib material. The triangle's hypotenuse is the level set
+    // of the projection sum onto the two lines, so the bound is the least
+    // projection sum over the body's vertices inside the corner's forward
+    // quadrant — over all evaluated vertices, because the binding point of a
+    // rounding is an arc facet vertex that touches neither neighbour — scaled
+    // by the corner angle (1 + cos of the turn between the lines; 1 at a right
+    // angle).
+    let cos = line_a.direction[0] * line_b.direction[0] + line_a.direction[1] * line_b.direction[1];
+    let admitted = if 1.0 + cos <= 1e-9 {
+        None
+    } else {
+        let mut least: Option<f64> = None;
+        for point in &all_local {
+            let along_a = (point[0] - corner[0]) * line_a.direction[0]
+                + (point[1] - corner[1]) * line_a.direction[1];
+            let along_b = (point[0] - corner[0]) * line_b.direction[0]
+                + (point[1] - corner[1]) * line_b.direction[1];
+            if along_a < -1e-9 || along_b < -1e-9 {
+                continue;
+            }
+            let sum = along_a + along_b;
+            least = Some(least.map_or(sum, |current: f64| current.min(sum)));
+        }
+        least.map(|least| (least / (1.0 + cos)).max(0.0))
+    };
     Ok(CornerDerivation {
         corner: Corner::Resolved(crate::engine::transform::placement_to_world(
             &plate.authored.placement,
             [corner[0], corner[1], 0.0],
         )),
-        leg_a: leg(&on_a, &lines_a),
-        leg_b: leg(&on_b, &lines_b),
+        setback_a: setback(&on_a, &lines_a),
+        setback_b: setback(&on_b, &lines_b),
+        admitted,
     })
 }
 
@@ -1059,22 +1126,30 @@ fn derive_corner(
 /// section 4.3); a mesh vertex at a contact band edge keeps the candidate set from
 /// being established (`indeterminate`).
 ///
-/// The cut is measured on the final body as its two legs (#725): `leg_a` is the least
-/// distance, in the rib plate's local contour frame, from the derived corner to an
-/// evaluated vertex provably touching the first recorded neighbour on one of that
-/// neighbour's contact lines, `leg_b` symmetrically — zero where the rib surface
-/// still reaches the corner, the setback (a chamfer leg, a rounding's tangent
-/// setback) where a treatment or cut removed it. A rounding's tangent setbacks are
-/// exact: the tangent points sit on the authored edge lines and the arc facets
-/// between them lie on no line, so the measure never follows the arc faceting. Both
-/// legs go through the acceptance band `[required − tolerance, upper edge]`, where the
-/// upper edge is the recorded size plus the tolerance unless a standalone
-/// `upper_bound` replaces it; a leg determinately below is `CORNER_NOT_CUT`, one
-/// determinately above is `CORNER_OVERCUT`, and an interval straddling a band edge
-/// stays `unknown` (`indeterminate`). The finding reports both legs as named entries
-/// of its `bounds` (contract section 8.1); `measured_mm` stays the least leg. With no
-/// recorded corner-cut requirement the rules are not applicable for any element and
-/// the report says so in coverage.
+/// The cut is measured on the final body by two values taken from the rib's
+/// evaluated mesh over its full thickness (#725's measure):
+///
+/// - the **admitted leg** — the largest `k` for which the triangle with one
+///   vertex at the derived corner and the other two at distance `k` along each
+///   neighbour's contact line contains no rib material: the smaller leg of a
+///   chamfer, `R·(2 − √2)` for a rounding of radius `R` at a right angle;
+/// - the **largest setback** — the larger of the two distances from the corner
+///   to where the rib's final body first meets each neighbour: the larger leg
+///   of a chamfer, `R` for a rounding. A rounding's tangent setbacks are
+///   exact: the tangent points sit on the authored edge lines and the arc
+///   facets between them lie on no line, so no value follows the arc faceting.
+///
+/// The admitted leg goes against the acceptance band `[required − tolerance,
+/// upper edge]`'s lower edge — determinately below is `CORNER_NOT_CUT` with
+/// `measured_mm` the admitted leg — and the largest setback against its upper
+/// edge, where the recorded standalone `upper_bound` replaces the upper edge —
+/// determinately above is `CORNER_OVERCUT` with `measured_mm` the largest
+/// setback; both findings are reported when both hold, and an interval
+/// straddling a band edge stays `unknown` (`indeterminate`). Both values are
+/// reported as the named `admitted_leg` and `largest_setback` entries of the
+/// finding's `bounds` (contract section 8.1). With no recorded corner-cut
+/// requirement the rules are not applicable for any element and the report
+/// says so in coverage.
 pub fn corner_cut_findings(
     inputs: &RecordedInputs,
     bodies: &[ElementBody],
@@ -1266,10 +1341,10 @@ pub fn corner_cut_findings(
                 continue;
             }
         };
-        let leg_a = derivation.leg_a;
-        let leg_b = derivation.leg_b;
-        let basis: String = "recorded corner-cut requirement (contract 4.1); final-body two-leg \
-                     measurement (contract 7.1)"
+        let setback_a = derivation.setback_a;
+        let setback_b = derivation.setback_b;
+        let basis: String = "recorded corner-cut requirement (contract 4.1); final-body \
+                     admitted-leg and largest-setback measurement (contract 7.1)"
             .into();
         let mut bounds = vec![NamedBound {
             name: "required",
@@ -1285,24 +1360,29 @@ pub fn corner_cut_findings(
                 source: "owner",
             });
         }
-        // Both measured legs, named beside the recorded bounds (contract 8.1); a
-        // leg's tolerance entry is its measurement uncertainty, not a recorded
-        // tolerance.
-        if let (Some(leg_a), Some(leg_b)) = (leg_a, leg_b) {
-            bounds.push(NamedBound {
-                name: "leg_a",
-                bound_mm: leg_a,
-                tolerance_mm: delta,
-                source: "measured",
-            });
-            bounds.push(NamedBound {
-                name: "leg_b",
-                bound_mm: leg_b,
-                tolerance_mm: delta,
-                source: "measured",
-            });
-        }
-        let finish = |rule: &'static str,
+        // Both measured values, named beside the recorded bounds (#725, contract
+        // 8.1); an entry's tolerance is its measurement uncertainty, not a
+        // recorded tolerance.
+        let measurable = match (derivation.admitted, setback_a, setback_b) {
+            (Some(admitted), Some(setback_a), Some(setback_b)) => {
+                bounds.push(NamedBound {
+                    name: "admitted_leg",
+                    bound_mm: admitted,
+                    tolerance_mm: delta,
+                    source: "measured",
+                });
+                bounds.push(NamedBound {
+                    name: "largest_setback",
+                    bound_mm: setback_a.max(setback_b),
+                    tolerance_mm: delta,
+                    source: "measured",
+                });
+                Some((admitted, setback_a.max(setback_b)))
+            }
+            _ => None,
+        };
+        let finish = |bounds: Vec<NamedBound>,
+                      rule: &'static str,
                       status: &'static str,
                       measured: Option<f64>,
                       message: String,
@@ -1324,15 +1404,16 @@ pub fn corner_cut_findings(
                 corner_point_mm: Some(corner),
             });
         };
-        let (leg_a, leg_b) = match (leg_a, leg_b) {
-            (Some(leg_a), Some(leg_b)) => (leg_a, leg_b),
-            _ => {
+        let (admitted, largest_setback) = match measurable {
+            Some(values) => values,
+            None => {
                 finish(
+                    bounds,
                     "CORNER_NOT_CUT",
                     "unknown",
                     None,
                     "the rib does not provably touch both recorded neighbours at the \
-                     derived corner, so the cut's legs cannot be measured"
+                     derived corner, so the cut cannot be measured"
                         .into(),
                     vec!["indeterminate"],
                     &mut findings,
@@ -1340,73 +1421,79 @@ pub fn corner_cut_findings(
                 continue;
             }
         };
-        let leg = leg_a.min(leg_b);
         let lower_edge = requirement.required_mm - requirement.tolerance_mm;
-        if leg_a + delta < lower_edge || leg_b + delta < lower_edge {
+        // The admitted leg against the band's lower edge, the largest setback
+        // against its upper edge (#725): each value judged independently, and
+        // both findings reported when both hold.
+        let admitted_fails = admitted + delta < lower_edge;
+        let admitted_straddles = !admitted_fails && admitted - delta <= lower_edge;
+        let setback_exceeds = largest_setback - delta > upper_edge;
+        let setback_straddles = !setback_exceeds && largest_setback + delta >= upper_edge;
+        if admitted_fails {
             finish(
+                bounds.clone(),
                 "CORNER_NOT_CUT",
                 "fail",
-                Some(leg),
+                Some(admitted),
                 format!(
-                    "the cut's legs are {} and {} mm, and one stays below the required \
-                     {} mm acceptance band ({:?} purpose), so the required corner cut \
-                     is absent or undersized",
-                    leg_a,
-                    leg_b,
+                    "the admitted leg {} mm stays below the required {} mm acceptance \
+                     band ({:?} purpose), so the corner provides too little clearance",
+                    admitted,
                     requirement.required_mm,
                     requirement.purpose.token(),
                 ),
                 Vec::new(),
                 &mut findings,
             );
-            continue;
-        }
-        if leg_a - delta > upper_edge || leg_b - delta > upper_edge {
-            let offending = if leg_a - delta > upper_edge {
-                leg_a
-            } else {
-                leg_b
-            };
+        } else if admitted_straddles {
             finish(
+                bounds.clone(),
+                "CORNER_NOT_CUT",
+                "unknown",
+                Some(admitted),
+                format!(
+                    "the admitted leg {} mm sits at the acceptance band's lower edge, \
+                     so the required {} mm cut stays undecidable",
+                    admitted, requirement.required_mm,
+                ),
+                vec!["indeterminate"],
+                &mut findings,
+            );
+        }
+        if setback_exceeds {
+            finish(
+                bounds,
                 "CORNER_OVERCUT",
                 "fail",
-                Some(leg),
+                Some(largest_setback),
                 format!(
-                    "the cut's legs are {} and {} mm, and the {} mm leg exceeds the \
-                     acceptance band's upper edge {} mm (required {} mm, tolerance \
-                     {} mm)",
-                    leg_a,
-                    leg_b,
-                    offending,
-                    upper_edge,
-                    requirement.required_mm,
-                    requirement.tolerance_mm,
+                    "the largest setback {} mm exceeds the acceptance band's upper edge \
+                     {} mm (required {} mm, tolerance {} mm)",
+                    largest_setback, upper_edge, requirement.required_mm, requirement.tolerance_mm,
                 ),
                 Vec::new(),
                 &mut findings,
             );
+        } else if setback_straddles {
+            finish(
+                bounds,
+                "CORNER_NOT_CUT",
+                "unknown",
+                Some(largest_setback),
+                format!(
+                    "the largest setback {} mm sits at the acceptance band edge, so the \
+                     required {} mm cut stays undecidable",
+                    largest_setback, requirement.required_mm,
+                ),
+                vec!["indeterminate"],
+                &mut findings,
+            );
+        }
+        if !admitted_fails && !admitted_straddles && !setback_exceeds && !setback_straddles {
+            // The admitted leg clears the lower edge and the largest setback the
+            // upper edge: the required corner cut is provided.
             continue;
         }
-        if leg_a - delta > lower_edge
-            && leg_a + delta < upper_edge
-            && leg_b - delta > lower_edge
-            && leg_b + delta < upper_edge
-        {
-            // Both legs within the band: the required corner cut is provided.
-            continue;
-        }
-        finish(
-            "CORNER_NOT_CUT",
-            "unknown",
-            Some(leg),
-            format!(
-                "the cut's legs are {} and {} mm, and one sits at the acceptance band \
-                 edge, so the required {} mm cut stays undecidable",
-                leg_a, leg_b, requirement.required_mm,
-            ),
-            vec!["indeterminate"],
-            &mut findings,
-        );
     }
     findings
 }
@@ -2364,18 +2451,19 @@ mod tests {
             assert_eq!(finding.missing_inputs, Vec::<&'static str>::new());
             // The finding names the rib first, then both neighbours, reports
             // the required bound with the recorded tolerance, and names both
-            // measured legs beside it (contract 8.1).
+            // measured values beside it (contract 8.1): the admitted leg and
+            // the largest setback, both 0 for the uncut corner.
             assert_eq!(finding.elements, vec![id(3), id(1), id(2)]);
             assert_eq!(finding.bounds.len(), 3);
             assert_eq!(finding.bounds[0].name, "required");
-            assert_eq!(finding.bounds[1].name, "leg_a");
+            assert_eq!(finding.bounds[1].name, "admitted_leg");
             assert_eq!(finding.bounds[1].source, "measured");
-            assert_eq!(finding.bounds[2].name, "leg_b");
-            let leg_a = finding.bounds[1].bound_mm;
-            let leg_b = finding.bounds[2].bound_mm;
+            assert_eq!(finding.bounds[2].name, "largest_setback");
+            let admitted = finding.bounds[1].bound_mm;
+            let setback = finding.bounds[2].bound_mm;
             assert!(
-                leg_a.abs() <= 1e-9 && leg_b.abs() <= 1e-9,
-                "{leg_a} {leg_b}"
+                admitted.abs() <= 1e-9 && setback.abs() <= 1e-9,
+                "{admitted} {setback}"
             );
             // The derived corner is the kept sharp authored vertex.
             let corner = findings[0].corner_point_mm.unwrap();
@@ -2470,10 +2558,11 @@ mod tests {
         #[test]
         fn an_asymmetric_chamfer_is_judged_on_both_legs() {
             // #725: a chamfer of 10 mm on one leg and 40 mm on the other is
-            // CORNER_OVERCUT even though the least leg sits inside the band;
-            // the finding names both measured legs, and the verdict follows
-            // neither order of the two distances.
-            for (d1, d2, leg_a, leg_b) in [(10.0, 40.0, 40.0, 10.0), (40.0, 10.0, 10.0, 40.0)] {
+            // CORNER_OVERCUT measured 40 — the largest setback — in either
+            // order of the two distances: the admitted leg (the smaller leg)
+            // stays inside the band, the largest setback exceeds its upper
+            // edge, and both measured values are named.
+            for (d1, d2) in [(10.0, 40.0), (40.0, 10.0)] {
                 let rib = rib_with_corners(vec![PlateCorner {
                     vertex: 0,
                     treatment: CornerTreatment::Chamfer {
@@ -2487,20 +2576,46 @@ mod tests {
                 assert_eq!(finding.rule, "CORNER_OVERCUT", "{d1}/{d2}");
                 assert_eq!(finding.status, "fail");
                 let measured = finding.measured_mm.unwrap_or_default();
-                assert!((measured - 10.0).abs() <= 1e-9, "{d1}/{d2}: {measured}");
-                let legs = &finding.bounds[1..3];
-                assert_eq!(legs[0].name, "leg_a");
-                assert_eq!(legs[0].source, "measured");
+                assert!((measured - 40.0).abs() <= 1e-9, "{d1}/{d2}: {measured}");
+                let admitted = finding.bounds[1].bound_mm;
+                let setback = finding.bounds[2].bound_mm;
+                assert_eq!(finding.bounds[1].name, "admitted_leg");
+                assert_eq!(finding.bounds[2].name, "largest_setback");
                 assert!(
-                    (legs[0].bound_mm - leg_a).abs() <= 1e-9,
-                    "{d1}/{d2}: {legs:?}"
-                );
-                assert_eq!(legs[1].name, "leg_b");
-                assert!(
-                    (legs[1].bound_mm - leg_b).abs() <= 1e-9,
-                    "{d1}/{d2}: {legs:?}"
+                    (admitted - 10.0).abs() <= 1e-9 && (setback - 40.0).abs() <= 1e-9,
+                    "{d1}/{d2}: {admitted} {setback}"
                 );
             }
+        }
+
+        #[test]
+        fn an_undersized_and_an_oversized_leg_report_both_findings() {
+            // #725: a chamfer of 5 mm on one leg and 40 mm on the other fails
+            // both edges at once — CORNER_NOT_CUT with the admitted leg 5 mm
+            // and CORNER_OVERCUT with the largest setback 40 mm.
+            let rib = rib_with_corners(vec![PlateCorner {
+                vertex: 0,
+                treatment: CornerTreatment::Chamfer {
+                    d1_mm: 5.0,
+                    d2_mm: 40.0,
+                },
+            }]);
+            let findings = run(requirement(10.0, 1.0), &rib, &[1, 2, 3]);
+            assert_eq!(findings.len(), 2);
+            let not_cut = findings
+                .iter()
+                .find(|f| f.finding.rule == "CORNER_NOT_CUT")
+                .unwrap_or_else(|| panic!("no CORNER_NOT_CUT in {findings:?}"));
+            assert_eq!(not_cut.finding.status, "fail");
+            let admitted = not_cut.finding.measured_mm.unwrap_or_default();
+            assert!((admitted - 5.0).abs() <= 1e-9, "{admitted}");
+            let overcut = findings
+                .iter()
+                .find(|f| f.finding.rule == "CORNER_OVERCUT")
+                .unwrap_or_else(|| panic!("no CORNER_OVERCUT in {findings:?}"));
+            assert_eq!(overcut.finding.status, "fail");
+            let setback = overcut.finding.measured_mm.unwrap_or_default();
+            assert!((setback - 40.0).abs() <= 1e-9, "{setback}");
         }
 
         #[test]
@@ -2544,31 +2659,36 @@ mod tests {
         }
 
         #[test]
-        fn a_rounding_is_judged_by_its_tangent_setbacks() {
-            // #725: a rounding's legs are its tangent setbacks — the tangent
-            // points are arc endpoints and exact mesh vertices, so the measure
-            // never follows the arc faceting. A rounding of the recorded 10 mm
-            // setback passes like the chamfer; smaller and larger radii fail
-            // with the setback measured.
-            for (radius, rule, status) in [
-                (10.0, None, None),
-                (5.0, Some("CORNER_NOT_CUT"), Some("fail")),
-                (20.0, Some("CORNER_OVERCUT"), Some("fail")),
+        fn a_rounding_is_judged_by_its_admitted_leg_and_largest_setback() {
+            // #725: a rounding of radius R at a right angle admits the
+            // R·(2 − √2) chamfer leg and sets back R — both exact, so the
+            // measure never follows the arc faceting. Against the recorded
+            // 10 ± 1 mm band: round:10 is CORNER_NOT_CUT measured 5.858 (the
+            // rounding is not the chamfer its setback suggests), round:5
+            // measured 2.929, round:20 CORNER_OVERCUT measured 20.
+            let admitted_of = |radius: f64| radius * (2.0 - std::f64::consts::SQRT_2);
+            for (radius, rule, measured) in [
+                (10.0, "CORNER_NOT_CUT", admitted_of(10.0)),
+                (5.0, "CORNER_NOT_CUT", admitted_of(5.0)),
+                (20.0, "CORNER_OVERCUT", 20.0),
             ] {
                 let rib = rib_with_corners(vec![PlateCorner {
                     vertex: 0,
                     treatment: CornerTreatment::Round { radius_mm: radius },
                 }]);
                 let findings = run(requirement(10.0, 1.0), &rib, &[1, 2, 3]);
-                assert_eq!(findings.len(), usize::from(rule.is_some()), "{radius}");
-                let Some(rule) = rule else {
-                    continue;
-                };
+                assert_eq!(findings.len(), 1, "{radius}");
                 let finding = &findings[0].finding;
                 assert_eq!(finding.rule, rule, "{radius}");
-                assert_eq!(finding.status, status.unwrap(), "{radius}");
-                let measured = finding.measured_mm.unwrap_or_default();
-                assert!((measured - radius).abs() <= 1e-9, "{radius}: {measured}");
+                assert_eq!(finding.status, "fail", "{radius}");
+                let value = finding.measured_mm.unwrap_or_default();
+                // The admitted leg is sampled on the faceted arc: exact where
+                // the 45° arc point is a facet vertex, otherwise within the
+                // arc's 0.05 mm chord-deviation bound (#725).
+                assert!(
+                    (value - measured).abs() <= crate::engine::corners::ARC_CHORD_DEVIATION_MM,
+                    "{radius}: {value} vs {measured}"
+                );
             }
         }
 

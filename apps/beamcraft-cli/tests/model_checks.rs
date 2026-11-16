@@ -885,7 +885,7 @@ fn the_model_without_the_cut_is_red_and_the_fix_hint_reaches_green() {
     assert_eq!(text(finding, "status"), "fail");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!(measured.abs() <= 1e-9, "{measured}");
-    assert!(text(finding, "message").contains("absent or undersized"));
+    assert!(text(finding, "message").contains("too little clearance"));
     // The fix: set the required chamfer at the authored corner vertex.
     let fix = at(finding, &["fix"]);
     assert_eq!(text(fix, "command"), "set-plate-corner");
@@ -939,13 +939,15 @@ fn a_twenty_millimetre_cut_is_overcut_with_measured_and_required() {
     let bounds = list(finding, "bounds");
     assert_eq!(bounds.len(), 3);
     assert_eq!(text(bounds.first().unwrap(), "name"), "required");
-    let legs: Vec<&Json> = bounds
+    let values: Vec<&Json> = bounds
         .iter()
-        .filter(|b| text(b, "name").starts_with("leg_"))
+        .filter(|b| {
+            text(b, "name").starts_with("admitted_") || text(b, "name").starts_with("largest_")
+        })
         .collect();
-    assert_eq!(legs.len(), 2);
-    for leg in legs {
-        assert_eq!(text(leg, "source"), "measured");
+    assert_eq!(values.len(), 2);
+    for value in values {
+        assert_eq!(text(value, "source"), "measured");
     }
     assert!(matches!(finding.get("fix"), Ok(Json::Null)));
     // An undersized 5 mm cut stays CORNER_NOT_CUT with the leg reported.
@@ -1056,13 +1058,11 @@ fn a_ghost_corner_target_stays_unresolved_and_bad_input_refuses() {
 // rounding judged by its tangent setbacks, never by the arc faceting.
 
 #[test]
-fn an_asymmetric_parameterized_chamfer_is_overcut_with_named_legs() {
-    // `0=chamfer:10,40`: one leg is 40 mm — CORNER_OVERCUT with both legs
+fn an_asymmetric_parameterized_chamfer_is_overcut_with_named_values() {
+    // `0=chamfer:10,40`: one leg is 40 mm — CORNER_OVERCUT measured 40 (the
+    // largest setback), with the admitted leg 10 and the largest setback 40
     // named, in either order of the two distances.
-    for (corners, leg_a, leg_b) in [
-        ("0=chamfer:10,40", 40.0, 10.0),
-        ("0=chamfer:40,10", 10.0, 40.0),
-    ] {
+    for corners in ["0=chamfer:10,40", "0=chamfer:40,10"] {
         let f = Fixture::new();
         let steel = f.material();
         let (base, column, rib) = f.joint(&steel, &[corners]);
@@ -1074,23 +1074,22 @@ fn an_asymmetric_parameterized_chamfer_is_overcut_with_named_legs() {
         assert_eq!(text(finding, "status"), "fail");
         let bounds = list(finding, "bounds");
         assert_eq!(bounds.len(), 3, "{corners}");
-        let leg = |name: &str| -> f64 {
+        let value = |name: &str| -> f64 {
             bounds
                 .iter()
                 .find(|b| text(b, "name") == name)
                 .map(|b| at(b, &["bound_mm"]).float().unwrap())
                 .unwrap_or_else(|| panic!("no {name} in {bounds:?}"))
         };
-        let measured_a = leg("leg_a");
-        let measured_b = leg("leg_b");
+        let admitted = value("admitted_leg");
+        let setback = value("largest_setback");
         assert!(
-            (measured_a - leg_a).abs() <= 1e-9 && (measured_b - leg_b).abs() <= 1e-9,
-            "{corners}: {measured_a} {measured_b}"
+            (admitted - 10.0).abs() <= 1e-9 && (setback - 40.0).abs() <= 1e-9,
+            "{corners}: {admitted} {setback}"
         );
-        // The least leg stays inside the band, so the verdict comes from the
-        // offending leg alone; no fix is offered for an overcut.
+        assert_eq!(text(bounds.get(1).unwrap(), "source"), "measured");
         let measured = at(finding, &["measured_mm"]).float().unwrap();
-        assert!((measured - 10.0).abs() <= 1e-9, "{corners}: {measured}");
+        assert!((measured - 40.0).abs() <= 1e-9, "{corners}: {measured}");
         assert!(matches!(finding.get("fix"), Ok(Json::Null)));
     }
 }
@@ -1171,15 +1170,19 @@ fn plane_cut_and_chamfer_part_corners_are_judged_like_parameterized_ones() {
 }
 
 #[test]
-fn a_rounding_is_judged_by_its_setbacks_and_stays_without_the_chamfer_fix() {
-    // A rounding's legs are its tangent setbacks — the arc facets lie on no
-    // contact line and decide nothing, so `round:10` is green, `round:5` red
-    // undersized with the setback measured, `round:20` red overcut — and a
-    // rounding never receives the chamfer the recorded requirement's repair
-    // would set (contract 9: not an equivalent final shape).
+fn a_rounding_is_judged_by_its_admitted_leg_and_stays_without_the_chamfer_fix() {
+    // A rounding of radius R at a right angle admits the R·(2 − √2) chamfer
+    // leg and sets back R: against the recorded 10 ± 1 mm band `round:10` is
+    // CORNER_NOT_CUT measured 5.858 — a rounding is not the chamfer its
+    // setback suggests — `round:5` measured 2.929, `round:20` CORNER_OVERCUT
+    // measured 20, and a rounding never receives the chamfer the recorded
+    // requirement's repair would set (contract 9: not an equivalent final
+    // shape). The admitted leg is sampled on the faceted arc within its
+    // 0.05 mm chord-deviation bound (#725).
+    let admitted_of = |radius: f64| radius * (2.0 - std::f64::consts::SQRT_2);
     for (corners, rule, measured) in [
-        ("0=round:10", None, 0.0),
-        ("0=round:5", Some("CORNER_NOT_CUT"), 5.0),
+        ("0=round:10", Some("CORNER_NOT_CUT"), admitted_of(10.0)),
+        ("0=round:5", Some("CORNER_NOT_CUT"), admitted_of(5.0)),
         ("0=round:20", Some("CORNER_OVERCUT"), 20.0),
     ] {
         let f = Fixture::new();
@@ -1187,17 +1190,14 @@ fn a_rounding_is_judged_by_its_setbacks_and_stays_without_the_chamfer_fix() {
         let (base, column, rib) = f.joint(&steel, &[corners]);
         f.corner(&rib, &base, &column, &[]);
         let (code, reply) = f.check(&[]);
-        let Some(rule) = rule else {
-            assert_eq!(code, 0, "{corners}: {reply:?}");
-            assert_eq!(text(&reply, "status"), "green");
-            assert_eq!(list(&reply, "findings").len(), 0, "{corners}");
-            continue;
-        };
         assert_eq!(code, 2, "{corners}: {reply:?}");
-        let finding = finding_of(&reply, rule);
+        let finding = finding_of(&reply, rule.unwrap());
         assert_eq!(text(finding, "status"), "fail", "{corners}");
         let value = at(finding, &["measured_mm"]).float().unwrap();
-        assert!((value - measured).abs() <= 1e-9, "{corners}: {value}");
+        assert!(
+            (value - measured).abs() <= 0.05,
+            "{corners}: {value} vs {measured}"
+        );
         // The rounding is not an equivalent repair of the undersized cut.
         assert!(
             matches!(finding.get("fix"), Ok(Json::Null)),

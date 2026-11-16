@@ -335,28 +335,38 @@ as corner parameters, as contour points, or as a plane cut leaves the same conta
 receives the same candidates. Exactly one candidate is judged; zero or several are `unknown`
 (`target_unresolved`), and a wall vertex at a neighbour's contact band edge keeps the
 candidate set from being established (`indeterminate`); a faceted arc vertex between a
-rounding's tangent points lies on no contact line and decides nothing. The cut is measured as
-its **two legs**: `leg_a` is the least distance, in the rib plate's local contour frame, from
-the derived corner to an evaluated vertex provably touching the first recorded neighbour on
-one of that neighbour's contact lines, `leg_b` symmetrically — zero where the rib surface
-still reaches the corner, the setback (a chamfer leg, a rounding's tangent setback) where a
-treatment or cut removed it. The tangent setbacks are exact: the tangent points sit on the
-authored edge lines and the arc facets between them lie on no line, so the measure never
-follows the arc faceting, and a rounding is not equivalent to a chamfer with the same setbacks
-(different freed space at a right-angle corner, section 9). Both legs go through the
-acceptance band `[required − tolerance, upper edge]`, whose upper edge the recorded standalone
-`upper_bound` replaces; a leg determinately below is `CORNER_NOT_CUT`, one determinately above
-is `CORNER_OVERCUT`, and an interval straddling a band edge stays `unknown`
-(`indeterminate`), with the near-threshold rule and `δ = max(mesh bounds, t/2)`. Recorded
-ceilings of that reading: the legs are sampled at evaluated vertices, so a retreat with no
-vertex of its own on a contact line is not measured; the standard two-corner shapes (a rib
-flush with the neighbour face) report several candidates before the measurement runs; and the
-derivation reads the authored plate contour's edge lines, so a rib that is not an authored
-plate reports `target_unresolved`. The one unambiguous repair of `CORNER_NOT_CUT` (section 9)
-sets the required chamfer at the authored vertex the derived corner maps back to, and is
-offered only when the rib carries no plane cut, that vertex exists, its treatment is absent or
-a chamfer, the adjacent vertices carry no treatments, the corner really turns, and the
-required leg fits both adjacent edges.
+rounding's tangent points lies on no contact line and decides nothing.
+
+The cut is measured on the rib's final body over its full thickness by two values (#725's
+measure): the **admitted leg** — the largest `k` for which the triangle with one vertex at
+the derived corner and the other two at distance `k` from it along each neighbour's surface
+contains no rib material; for a chamfer it is the smaller leg, for a rounding of radius `R`
+at a right angle `R·(2 − √2)` — and the **largest setback** — the larger of the two
+distances from the corner to where the rib's final body first meets each neighbour; for a
+chamfer the larger leg, for a rounding `R`. The setbacks are read at the evaluated vertices
+provably touching each neighbour on one of its contact lines: the tangent points sit on the
+authored edge lines and the arc facets between them lie on no line, so the setbacks never
+follow the arc faceting. The admitted leg is the least projection sum onto the corner's two
+contact lines over all evaluated mesh vertices inside the corner's forward quadrant, scaled
+by the corner angle — sampled on the body, so a value sits within the body's reported mesh
+bound. A rounding and a chamfer with the same setbacks differ in the admitted leg: that is
+the non-equivalence #634 describes. The admitted leg goes through the acceptance band
+`[required − tolerance, upper edge]`'s lower edge — determinately below is `CORNER_NOT_CUT`
+with `measured_mm` the admitted leg — and the largest setback through its upper edge, which
+the recorded standalone `upper_bound` replaces — determinately above is `CORNER_OVERCUT`
+with `measured_mm` the largest setback; both findings are reported when both hold, and an
+interval straddling a band edge stays `unknown` (`indeterminate`), with the near-threshold
+rule and `δ = max(mesh bounds, t/2)`. Both values are reported as the named `admitted_leg`
+and `largest_setback` entries of the finding's `bounds` (section 8.1). Recorded ceilings of
+that reading: the values are sampled at evaluated vertices, so a retreat with no vertex of
+its own is not measured; the standard two-corner shapes (a rib flush with the neighbour
+face) report several candidates before the measurement runs; and the derivation reads the
+authored plate contour's edge lines, so a rib that is not an authored plate reports
+`target_unresolved`. The one unambiguous repair of `CORNER_NOT_CUT` (section 9) sets the
+required chamfer at the authored vertex the derived corner maps back to, and is offered only
+when the rib carries no plane cut, that vertex exists, its treatment is absent or a chamfer,
+the adjacent vertices carry no treatments, the corner really turns, and the required leg fits
+both adjacent edges.
 
 ### 7.2 Two tolerance layers, kept separate
 
@@ -419,9 +429,9 @@ A **finding** carries: `rule`, `status` (`fail` or `unknown`), `elements` (IDs a
 `missing_inputs`, and a nullable `fix` (section 9). Where several dimensions and bounds apply
 (one measurement against several recorded bounds), they are a named array of
 `{bound, tolerance, source}` entries, not a single collapsed number; the corner-cut findings
-report their two measured legs the same way, as the named `leg_a` and `leg_b` entries of that
-array beside the recorded bounds, with the measurement uncertainty as the entry's tolerance
-and `"measured"` as its source, while `measured_mm` stays the least leg.
+report their two measured values the same way, as the named `admitted_leg` and
+`largest_setback` entries of that array beside the recorded bounds, with the measurement
+uncertainty as the entry's tolerance and `"measured"` as its source.
 
 Pagination (`--offset`, `--limit`) affects only the `findings` page; status, counts and
 coverage always cover the whole checked scope, so paging never hides a red or unknown overall
