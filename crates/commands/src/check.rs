@@ -565,8 +565,10 @@ pub fn check_model(
     }
 
     // The coverage of every other scope element: established absences of the
-    // supported set (welds, bolts, lofted plates, assemblies, ...) are named,
-    // never silently skipped.
+    // supported set are named, never silently skipped, and a solid part the
+    // checks cannot evaluate stays unknown — non-applicability must be
+    // established, not used to hide missing inputs (contract sections 6 and
+    // 8.1).
     for id in &scope {
         if part_ids.contains(id) || covered.contains(id) {
             continue;
@@ -578,7 +580,23 @@ pub fn check_model(
         let bucket = if meta.get(id).is_some_and(|m| m.deactivated) {
             Bucket::NotApplicable("deactivated")
         } else {
-            Bucket::NotApplicable("not_a_check_subject_yet")
+            match kind.as_str() {
+                // Every plate-form element reaching this loop is a real part
+                // the check has no evaluated body for: a lofted plate, or a
+                // future part form outside the evaluated sets. Its geometry
+                // is unsupported here, so the model is unknown, not green.
+                "plate" => {
+                    unknown_elements += 1;
+                    Bucket::Unknown("geometry_unsupported")
+                }
+                // Welds and bolt groups are connection elements; the report's
+                // limitations paragraph names them as future clash subjects.
+                "connection" => Bucket::NotApplicable("not_a_clash_subject_yet"),
+                // Records, assemblies, annotations, grids, constructions and
+                // references are not model parts and never become check
+                // subjects — an established absence, not a hidden input.
+                _ => Bucket::NotApplicable("not_a_part"),
+            }
         };
         covered.insert(*id);
         coverage.push(Coverage {

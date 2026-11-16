@@ -664,6 +664,75 @@ fn a_weld_present_without_contact_stays_unknown_by_the_recorded_rule() {
 }
 
 #[test]
+fn a_lofted_plate_the_check_cannot_evaluate_is_unknown_not_green() {
+    // The #726 case: a lofted plate driven straight through another plate is
+    // a real part the check cannot evaluate — the model is unknown with the
+    // part covered explicitly, never silently green (contract sections 6 and
+    // 8.1: a solid part the check cannot evaluate is not an established
+    // absence).
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    let created = f.ok(
+        "create-lofted-plate",
+        &[
+            "--start",
+            "100,100,-50;300,100,-50;300,300,-50;100,300,-50",
+            "--end",
+            "100,100,80;300,100,80;300,300,80;100,300,80",
+            "--material-digest",
+            &steel,
+        ],
+    );
+    let loft = at(&created, &["plate", "id"]).string().unwrap();
+    // The write reply's own summary is not green either.
+    assert_eq!(text(at(&created, &["checks"]), "status"), "unknown");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    // The lofted plate's coverage row names the unsupported geometry.
+    let row = list(at(&reply, &["coverage"]), "elements")
+        .iter()
+        .find(|row| text(row, "id") == loft)
+        .unwrap_or_else(|| panic!("no coverage row for {loft} in {reply:?}"));
+    assert_eq!(text(row, "bucket"), "unknown");
+    assert_eq!(text(row, "reason"), "geometry_unsupported");
+    // The evaluated plate stays checked.
+    assert_eq!(at(&reply, &["coverage", "checked"]).unsigned().unwrap(), 1);
+}
+
+#[test]
+fn connection_elements_stay_not_applicable_and_records_are_not_parts() {
+    // The not_applicable bucket stays an established absence with a reason
+    // that fits: a weld or bolt group is a connection element the check does
+    // not judge yet (not_a_clash_subject_yet), and a record is not a model
+    // part at all (not_a_part) — no solid part lands in either (contract
+    // sections 6 and 8.1).
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,10");
+    let intent = f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
+    let weld = f.weld(&base, &column);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    let rows = list(at(&reply, &["coverage"]), "elements");
+    let row_of = |id: &str| {
+        rows.iter()
+            .find(|row| text(row, "id") == id)
+            .unwrap_or_else(|| panic!("no coverage row for {id} in {reply:?}"))
+    };
+    let weld_row = row_of(&weld);
+    assert_eq!(text(weld_row, "bucket"), "not_applicable");
+    assert_eq!(text(weld_row, "reason"), "not_a_clash_subject_yet");
+    let intent_row = row_of(&intent);
+    assert_eq!(text(intent_row, "bucket"), "not_applicable");
+    assert_eq!(text(intent_row, "reason"), "not_a_part");
+    // Both real parts stay checked.
+    assert_eq!(at(&reply, &["coverage", "checked"]).unsigned().unwrap(), 2);
+}
+
+#[test]
 fn an_attached_weld_bridging_an_excessive_gap_turns_the_joint_red() {
     // The full path of the gap rule at the CLI (#724, closes the audit gap):
     // a pathed weld attached at the declared contact, a recorded gap
