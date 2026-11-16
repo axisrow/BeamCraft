@@ -61,9 +61,8 @@ Each planned check is classified by what kind of basis it may consume:
 | `PART_UNCONNECTED` | owner constraint + geometric | a required connection declared in joint intent is absent for an element in the declared scope; no declared scope ⇒ not applicable |
 | `WELD_WITHOUT_CONTACT` | owner constraint or normative | gap at the validated local joint outside the permitted range; v0.1 checks it only against an explicit owner gap requirement — no normative permitted-gap rule is supported yet (section 3.3): a declared weld connection with neither a recorded gap requirement nor a supported rule is `unknown` (`no_supported_rule`), and with no declared connection to judge the check is `not_applicable`; unvalidated local attachment is `unknown` too |
 | `CONTACT_WITHOUT_CONNECTION` | owner constraint + geometric | a contact that declared joint intent requires to be connected has no such connection; contact alone never proves a weld is needed |
-| `CORNER_NOT_CUT` | owner constraint + geometric | a required corner cut is absent, undersized, or does not provide the recorded local clearance; v0.1 checks existence and size only against recorded requirements — no normative existence rule for this joint is supported (section 3.2) |
+| `CORNER_NOT_CUT` | owner constraint + geometric | a required corner cut is absent, undersized, or does not provide the recorded local clearance — including the dependent weld-clearance judgement of section 4.4, which rides this token; v0.1 checks existence and size only against recorded requirements — no normative existence rule for this joint is supported (section 3.2) |
 | `CORNER_OVERCUT` | owner constraint | a cut exceeds the upper edge of the recorded requirement's acceptance band (section 7.3): the explicitly recorded size is itself the upper bound #634 allows, and a recorded standalone maximum tightens it; no normative upper bound exists (section 3.2); with no recorded corner-cut requirement at all the check is `not_applicable` |
-| `CORNER_WELD_CLEARANCE` | owner constraint + geometric | the final body of the required rib must not intrude into the weld fillet that passes its derived corner, judged from the weld record's recorded leg and validated path (section 4.4); located by the recorded corner-cut requirement — with none the check is `not_applicable`; the recorded leg is a model fact, not a normative limit, and no weld adequacy is validated |
 
 A check requested but not in this table is `unknown` with reason `unsupported_rule`; it never
 enters the supported set and never reports pass or fail. Unverified rules stay unknown: that is
@@ -224,24 +223,32 @@ that weld passes the corner. The independent size checks `CORNER_NOT_CUT` and
 `CORNER_OVERCUT` are unaffected in every case.
 
 **The geometric identity.** The weld fillet at the corner is rebuilt from the record: the
-right-triangle fillet prism the recorded A15 weld solid is built from, with both legs equal
-to the recorded size, anchored with its right angle at the derived corner and its legs along
-the rib's contour-edge directions at that corner — the edges that run along the two neighbour
-surfaces — and extruded along the qualifying weld's validated path. The rib's final evaluated
-body must not intrude into that fillet: a proven penetration of the rib mesh into the rebuilt
-fillet beyond the product tolerance (section 7.3) is the finding; face contact or separation
-passes. For a right-angle chamfer of leg `c` and a fillet of leg `K` the identity reduces to
-`c ≥ K`; a rounding with the same setback frees less of the fillet's triangle and can intrude
-where the chamfer clears — the identity reads the final body, never the authored treatment.
-The recorded `side` of the weld is named in the finding's basis; the v0.1 fillet placement
+right-triangle fillet cross-section the recorded A15 weld solid is built from, with both legs
+equal to the recorded size `K`, anchored with its right angle at the derived corner, its legs
+along the rib's contour-edge directions at that corner — the edges that run along the two
+neighbour surfaces — translated along the qualifying weld's validated path without
+re-orientation. That placement is the one placement of this check; the recorded A15 solid
+itself sits at its own path start by the A15 frame rule and is not the judging geometry
+(section 7.1). The verdict is read on the **admitted leg**, the measure the corner-cut rules
+use (#725): the largest `k` for which the fillet triangle of leg `k` at this corner — one
+vertex at the corner, the other two at distance `k` along the two contour-edge directions —
+contains no rib material of the final evaluated body. The recorded leg `K` is compared with
+the admitted leg through the unchanged near-threshold rule of section 7.3: a recorded leg
+determinately above the admitted leg is the finding. For a right-angle chamfer of leg `c` the
+admitted leg is its smaller leg, so the identity reduces to `c ≥ K`; a rounding with the same
+setback admits less (`R·(2 − √2)` at a right angle) and can fail where the chamfer passes —
+the identity reads the final body, never the authored treatment, and no normative number
+enters it. The recorded `side` of the weld is named in the finding's basis; the placement
 does not consume it — the sides are read from the corner's geometry, and that ceiling is
 recorded (section 7.1).
 
-**A distinguishable result.** The finding's rule token is `CORNER_WELD_CLEARANCE` and its
-basis names the derived corner and the weld record, so it cannot be mistaken for the explicit
-size requirement; the requirement's `required_mm` stays the recorded size (section 4.2), and
-the finding reports the measured penetration depth, the contact tolerance and the recorded
-weld leg.
+**A distinguishable result.** The clearance finding rides the existing `CORNER_NOT_CUT`
+token — the contract already folds the local clearance into it (section 2.1 and 12) — and is
+kept distinguishable by its basis, never by a new token: the basis names the derived corner,
+the weld record and the geometric identity of this section, and the requirement's
+`required_mm` stays the recorded size (section 4.2). The finding reports the admitted leg as
+its measurement with the recorded weld leg `K` as the bound it was compared against, named as
+coming from the weld record, so it cannot be mistaken for the explicit size requirement.
 
 ## 5. Joint intent: declared connections
 
@@ -388,16 +395,20 @@ the required chamfer at the authored vertex the derived corner maps back to, and
 only when that vertex exists, its treatment is absent or a chamfer, the adjacent vertices
 carry no treatments, the corner really turns, and the required leg fits both adjacent edges.
 
-**Added by #723 (2026-11-16).** The dependent clearance check (section 4.4) decides the rib's
-intrusion into the rebuilt weld fillet with the kernel's contact facts: the rib's final mesh
-against the rebuilt prism's sealed mesh — the same decision class as `PART_CLASH` — with the
-near-threshold rule on the measured penetration. The fillet's leg directions are the rib's
-authored contour-edge directions at the derived corner: the corner derivation (above) already
-requires the corner to lie within the contact tolerance of both neighbours, so those edges run
-along the neighbour surfaces. Recorded ceilings: the rebuilt prism follows the A15 frame rule
-along the qualifying path and does not re-orient by the weld's recorded `side` (the sides are
-read from the corner's geometry, section 4.4), and a path whose frames place the prism off the
-joint is judged by where the prism actually lies, never by where a weld would ideally sit.
+**Added by #723 (2026-11-16).** The dependent clearance check (section 4.4) reads its
+admitted leg from the final body with the kernel's contact facts: the fillet triangle of leg
+`k` grows from the derived corner along the rib's contour-edge directions — the corner
+derivation (above) already requires the corner to lie within the contact tolerance of both
+neighbours, so those edges run along the neighbour surfaces — and whether a triangle of a
+given `k` contains rib material is decided by the same contact decision class as `PART_CLASH`
+(point containment against the rib's final mesh, with the near-threshold rule at the band
+edge). The verdict compares the recorded weld leg against that admitted leg through section
+7.3, never the raw penetration depth: at a right angle the penetration of an oversized fillet
+scales the leg deficit by `1/√2`, so a depth-based band would silently rescale the tolerance.
+Recorded ceilings: the fillet cross-section is translated along the qualifying path without
+re-orientation and does not re-orient by the weld's recorded `side` (the sides are read from
+the corner's geometry, section 4.4), and the recorded A15 solid stays the weld's own placed
+body — anchored at its path start by the A15 frame rule — not the judging geometry.
 
 ### 7.2 Two tolerance layers, kept separate
 
