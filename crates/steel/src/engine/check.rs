@@ -1033,7 +1033,9 @@ pub fn corner_cut_findings(
         };
         let mut leg: Option<f64> = None;
         let mut straddles = false;
-        let mut return_findings = false;
+        // One requirement's measurement failure is that requirement's unknown:
+        // the remaining recorded requirements are still judged.
+        let mut unmeasured = false;
         for vertex in rib.mesh.vertices() {
             let gap_a = match contact::point_gap(*vertex, &a.mesh) {
                 Ok(gap) => gap,
@@ -1046,7 +1048,7 @@ pub fn corner_cut_findings(
                         Some(corner),
                         &mut findings,
                     );
-                    return_findings = true;
+                    unmeasured = true;
                     break;
                 }
             };
@@ -1061,7 +1063,7 @@ pub fn corner_cut_findings(
                         Some(corner),
                         &mut findings,
                     );
-                    return_findings = true;
+                    unmeasured = true;
                     break;
                 }
             };
@@ -1086,8 +1088,8 @@ pub fn corner_cut_findings(
                 });
             }
         }
-        if return_findings {
-            return findings;
+        if unmeasured {
+            continue;
         }
         let basis: String = "recorded corner-cut requirement (contract 4.1); final-body leg \
                      measurement (contract 7.1)"
