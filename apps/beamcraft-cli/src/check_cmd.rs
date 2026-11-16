@@ -63,8 +63,10 @@ fn inputs_of(store: &RevisionStore) -> Run<steel::engine::check::RecordedInputs>
     }
     for weld in beamcraft_commands::weld::welds(store)? {
         inputs.welds.push(steel::engine::check::WeldFact {
+            element: weld.id,
             main: weld.main,
             secondary: weld.secondary,
+            size_mm: weld.spec.size_mm,
             path_mm: weld.solid.map(|solid| solid.geometry.path_mm.clone()),
         });
     }
