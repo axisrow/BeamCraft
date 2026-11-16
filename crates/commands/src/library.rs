@@ -5935,7 +5935,18 @@ mod tests {
             else {
                 panic!("{designation} is not a parametric section");
             };
-            assert_eq!(p.values(), values, "{designation}");
+            // The dimensions parse exactly; the stored slope is the printed
+            // angle's tan to the last ulp, which differs between libm
+            // platforms, so the slope element compares within the same 1e-12
+            // tolerance as the printed-angle check above.
+            let stored = p.values();
+            assert_eq!(stored[..6], values[..6], "{designation}");
+            assert!(
+                (stored[6] - values[6]).abs() < 1e-12,
+                "{designation}: slope {} != {}",
+                stored[6],
+                values[6]
+            );
             assert_eq!(section.area_mm2, Some(area), "{designation}");
             assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
         };
