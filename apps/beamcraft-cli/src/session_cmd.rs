@@ -367,6 +367,16 @@ impl<'a> Session<'a> {
                     );
                     entries.insert("revision".to_owned(), revision_object(&done.committed.info));
                 }
+                // The draft was consumed above, so the reply checks the resulting revision
+                // (Q03 slice 5, contract sections 10-11), not the pre-batch head; a failure
+                // of the follow-up check reports the checks as unavailable and leaves the
+                // successful commit result and its exit code alone.
+                if !crate::check_cmd::checks_opted_out() {
+                    fields = crate::check_cmd::insert_checks(
+                        fields,
+                        crate::check_cmd::summary_for_store(self.store),
+                    );
+                }
                 fields
             }
             Err(refusal) => {

@@ -15,7 +15,7 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_json::Json;
+use beamcraft_json::{Json, Limits};
 
 struct Fixture {
     shared: support::StoreFixture,
@@ -981,4 +981,386 @@ fn a_ghost_corner_target_stays_unresolved_and_bad_input_refuses() {
     );
     assert_eq!(code, 2);
     assert_eq!(text(&body, "outcome"), "rejected");
+}
+
+// Q03 slice 5: the `checks` summary in write replies (contract section 11). A
+// successful write on a model-store command reports the check of its resulting
+// revision beside its result, with the write's own exit code; a drafted write
+// reports the draft as not evaluated; a follow-up check that cannot run
+// reports unavailable, never silently green; `BEAMCRAFT_CHECKS_SUMMARY=off`
+// omits the summary for that process.
+
+fn summary_of(reply: &Json) -> &Json {
+    at(reply, &["checks"])
+}
+
+fn summary_fail(summary: &Json, rule: &str) -> u64 {
+    at(summary, &["counts", rule, "fail"]).unsigned().unwrap()
+}
+
+fn summary_unknown(summary: &Json, rule: &str) -> u64 {
+    at(summary, &["counts", rule, "unknown"])
+        .unsigned()
+        .unwrap()
+}
+
+/// Runs one command with one extra environment variable set, for the opt-out
+/// cases the ordinary runner cannot express.
+fn run_with_env(f: &Fixture, var: &str, value: &str, command: &str, extra: &[&str]) -> (i32, Json) {
+    let store = f.shared.root.join("store").to_str().unwrap().to_owned();
+    let mut args: Vec<String> = vec![command.to_owned(), "--store".to_owned(), store];
+    args.extend(extra.iter().map(|a| (*a).to_owned()));
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+        .args(&args)
+        .env(var, value)
+        .output()
+        .unwrap();
+    let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+    (output.status.code().unwrap(), body)
+}
+
+/// A minimal session driver: one real `beamcraft session` process over pipes,
+/// one JSON line per command line.
+struct SessionLines {
+    child: std::process::Child,
+    out: std::io::BufReader<std::process::ChildStdout>,
+}
+
+impl SessionLines {
+    fn start(store: &str) -> Self {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .arg("session")
+            .arg("--store")
+            .arg(store)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut session = Self { child, out };
+        let ready = session.answer();
+        assert_eq!(text(&ready, "outcome"), "session_ready");
+        session
+    }
+
+    /// Sends one line and reads the one answer line.
+    fn ask(&mut self, line: &str) -> Json {
+        use std::io::Write;
+        writeln!(self.child.stdin.as_mut().unwrap(), "{line}").unwrap();
+        self.answer()
+    }
+
+    fn answer(&mut self) -> Json {
+        use std::io::BufRead;
+        let mut line = String::new();
+        self.out.read_line(&mut line).unwrap();
+        assert!(!line.is_empty(), "the session closed its output");
+        beamcraft_json::decode(line.trim_end().as_bytes(), &Limits::DEFAULT).unwrap()
+    }
+}
+
+impl Drop for SessionLines {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn store_root_of(f: &Fixture) -> String {
+    f.shared.root.join("store").to_str().unwrap().to_owned()
+}
+
+#[test]
+fn a_write_on_a_red_model_returns_red_checks_with_write_exit_zero() {
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    f.plate(&steel, "10", "100,0,5");
+    // The write succeeded: exit 0, its own created reply — and the summary of
+    // the resulting revision rides beside it as red.
+    let (code, reply) = f.run(
+        "create-plate",
+        &[
+            "--width",
+            "400",
+            "--length",
+            "300",
+            "--thickness",
+            "12",
+            "--material-digest",
+            &steel,
+            "--translation",
+            "8000,0,0",
+        ],
+    );
+    assert_eq!(code, 0, "{reply:?}");
+    let summary = summary_of(&reply);
+    assert_eq!(text(summary, "status"), "red");
+    assert!(at(summary, &["findings_total"]).unsigned().unwrap() >= 1);
+    assert_eq!(summary_fail(summary, "PART_CLASH"), 1);
+    assert_eq!(summary_unknown(summary, "PART_CLASH"), 0);
+    // Revision-specific: the summary names the write's own resulting revision,
+    // not an unpinned head or the pre-write one.
+    assert_eq!(
+        text(summary, "revision_id"),
+        text(at(&reply, &["revision"]), "revision_id")
+    );
+}
+
+#[test]
+fn a_write_on_a_green_model_reports_green_checks() {
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    f.plate(&steel, "10", "0,0,10");
+    let (code, reply) = f.run(
+        "create-plate",
+        &[
+            "--width",
+            "400",
+            "--length",
+            "300",
+            "--thickness",
+            "12",
+            "--material-digest",
+            &steel,
+            "--translation",
+            "8000,0,0",
+        ],
+    );
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(summary_of(&reply), "status"), "green");
+    assert_eq!(
+        at(summary_of(&reply), &["findings_total"])
+            .unsigned()
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn the_opt_out_omits_the_summary_and_any_other_value_keeps_it() {
+    let f = Fixture::new();
+    // Exactly `off`: no `checks` key at all.
+    let (code, reply) = run_with_env(
+        &f,
+        "BEAMCRAFT_CHECKS_SUMMARY",
+        "off",
+        "create-plate",
+        &["--width", "400", "--length", "300", "--thickness", "12"],
+    );
+    assert_eq!(code, 0, "{reply:?}");
+    assert!(reply.get("checks").is_err(), "{reply:?}");
+    // Any other value, here not even a plausible one, keeps summaries on.
+    let (code, reply) = run_with_env(
+        &f,
+        "BEAMCRAFT_CHECKS_SUMMARY",
+        "certainly-not-off",
+        "create-plate",
+        &["--width", "400", "--length", "300", "--thickness", "12"],
+    );
+    assert_eq!(code, 0, "{reply:?}");
+    assert!(reply.get("checks").is_ok(), "{reply:?}");
+}
+
+#[test]
+fn a_session_write_carries_the_same_summary() {
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    f.plate(&steel, "10", "100,0,5");
+    let store = store_root_of(&f);
+    let mut session = SessionLines::start(&store);
+    let reply = session.ask(&format!(
+        "create-plate --store {store} --width 400 --length 300 --thickness 12 \
+         --material-digest {steel} --translation 8000,0,0"
+    ));
+    assert_eq!(text(&reply, "outcome"), "plate_created");
+    let summary = summary_of(&reply);
+    assert_eq!(text(summary, "status"), "red");
+    assert_eq!(summary_fail(summary, "PART_CLASH"), 1);
+    assert_eq!(
+        text(summary, "revision_id"),
+        text(at(&reply, &["revision"]), "revision_id")
+    );
+}
+
+#[test]
+fn a_drafted_write_reports_draft_not_evaluated_and_the_commit_checks_the_result() {
+    // The saved head is green; the drafted plate would clash. The draft reply
+    // must not read the old head and call the draft green: it reports the
+    // draft as not evaluated, with no revision named. The commit then checks
+    // the resulting revision — which carries the drafted plate, so red.
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    f.plate(&steel, "10", "0,0,10");
+    let store = store_root_of(&f);
+    let mut session = SessionLines::start(&store);
+    let opened = session.ask("batch-open");
+    assert_eq!(text(&opened, "outcome"), "batch_opened");
+    let drafted = session.ask(&format!(
+        "create-plate --store {store} --width 400 --length 300 --thickness 12 \
+         --material-digest {steel} --translation 0,0,3"
+    ));
+    assert_eq!(text(&drafted, "outcome"), "plate_created");
+    let summary = summary_of(&drafted);
+    assert_eq!(text(summary, "status"), "unknown");
+    assert_eq!(text(summary, "reason"), "draft_not_evaluated");
+    assert!(
+        summary.get("revision_id").is_err(),
+        "a draft names no checked revision: {summary:?}"
+    );
+    let committed = session.ask("batch-commit");
+    assert_eq!(text(&committed, "outcome"), "batch_committed");
+    let summary = summary_of(&committed);
+    assert_eq!(text(summary, "status"), "red");
+    // The drafted plate penetrates both stacked plates of the saved head.
+    assert_eq!(summary_fail(summary, "PART_CLASH"), 2);
+    assert_eq!(
+        text(summary, "revision_id"),
+        text(at(&committed, &["revision"]), "revision_id")
+    );
+}
+
+#[test]
+fn the_record_write_turns_the_summary_red_and_the_repair_write_green() {
+    // The owner flow end to end: recording the 10 mm requirement against the
+    // uncut rib makes the recording write's own summary red with
+    // CORNER_NOT_CUT; the repair write's summary is green.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &[]);
+    let neighbours = format!("{base},{column}");
+    let (code, reply) = f.run(
+        "record-create",
+        &[
+            "--name",
+            "corner cut",
+            "--kind",
+            "corner_cut",
+            "--target",
+            &rib,
+            "--neighbours",
+            &neighbours,
+            "--required-mm",
+            "10",
+            "--tolerance-mm",
+            "1",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000f00d",
+        ],
+    );
+    assert_eq!(code, 0, "{reply:?}");
+    let summary = summary_of(&reply);
+    assert_eq!(text(summary, "status"), "red");
+    assert_eq!(summary_fail(summary, "CORNER_NOT_CUT"), 1);
+    assert_eq!(
+        text(summary, "revision_id"),
+        text(at(&reply, &["revision"]), "revision_id")
+    );
+    // The unambiguous repair of the finding, applied as an ordinary write.
+    let (code, repaired) = f.run(
+        "set-plate-corner",
+        &["--id", &rib, "--vertex", "0", "--corner", "chamfer:10"],
+    );
+    assert_eq!(code, 0, "{repaired:?}");
+    assert_eq!(text(summary_of(&repaired), "status"), "green");
+    assert_eq!(
+        at(summary_of(&repaired), &["findings_total"])
+            .unsigned()
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn the_summary_counts_equal_the_paged_report_of_the_same_revision() {
+    // Pagination never hides the whole-scope verdict: the summary of the
+    // write equals a findings-page-1 report of the same revision, and the
+    // page shows one finding while the counts stay whole-scope.
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    f.plate(&steel, "10", "100,0,5");
+    f.plate(&steel, "10", "200,0,5");
+    let (code, reply) = f.run(
+        "create-plate",
+        &[
+            "--width",
+            "400",
+            "--length",
+            "300",
+            "--thickness",
+            "12",
+            "--material-digest",
+            &steel,
+            "--translation",
+            "8000,0,0",
+        ],
+    );
+    assert_eq!(code, 0, "{reply:?}");
+    let summary = summary_of(&reply);
+    let (code, report) = f.check(&["--offset", "0", "--limit", "1"]);
+    assert_eq!(code, 2, "{report:?}");
+    assert_eq!(text(&report, "revision_id"), text(summary, "revision_id"));
+    assert_eq!(
+        at(&report, &["findings_total"]).unsigned().unwrap(),
+        at(summary, &["findings_total"]).unsigned().unwrap()
+    );
+    assert_eq!(list(&report, "findings").len(), 1, "one finding per page");
+    for rule in beamcraft_commands::check::RULES {
+        assert_eq!(
+            summary_fail(summary, rule),
+            fail_count(&report, rule),
+            "{rule} fail"
+        );
+        assert_eq!(
+            summary_unknown(summary, rule),
+            unknown_count(&report, rule),
+            "{rule} unknown"
+        );
+    }
+}
+
+#[test]
+fn reads_and_store_level_writes_carry_no_checks_summary() {
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    // A read reply never carries the summary.
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert!(reply.get("checks").is_err());
+    // A store-level write (the blob primitive) is not a model write: no summary.
+    let blob = f.shared.root.join("blob.bin");
+    std::fs::write(&blob, b"payload").unwrap();
+    let (code, reply) = f.run("put-blob", &["--file", blob.to_str().unwrap()]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert!(reply.get("checks").is_err());
+    // A successful project creation provisions a fresh store and changes no
+    // modelled revision: no summary, and the success is the point — the key is
+    // absent because the route is out of the set, not because the write failed.
+    // `create-project` takes `--parent`/`--name` and no `--store`, so this one
+    // line runs without the fixture's injected store option.
+    let parent = f.shared.root.join("models");
+    std::fs::create_dir_all(&parent).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+        .args([
+            "create-project",
+            "--parent",
+            parent.to_str().unwrap(),
+            "--name",
+            "Fresh Model",
+            "--unique-name",
+            "true",
+            "--actor-id",
+            "019a7bf0-0000-7000-8000-0000000000ac",
+        ])
+        .output()
+        .unwrap();
+    let reply = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+    assert_eq!(output.status.code().unwrap(), 0, "{reply:?}");
+    assert!(reply.get("checks").is_err(), "{reply:?}");
 }

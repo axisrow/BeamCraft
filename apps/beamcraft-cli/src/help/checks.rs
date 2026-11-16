@@ -24,4 +24,18 @@ pub(super) const HELP: &str = concat!(
     "ordinary rejected reply with its own exit 2, so branch on the reply shape, not on the ",
     "code alone. The checks detect; they do not block export or publication, and a green ",
     "report is not a structural design approval)",
+    // Q03 slice 5: the write-reply summary.
+    ". A successful write on a model-store command (modelling, definition, construction, ",
+    "recorded-input, reference and numbering commands) carries a short ",
+    "`checks` summary beside its result: the revision the follow-up check opened and named ",
+    "(the write's resulting revision), the whole-scope status, the per-rule counts and the ",
+    "finding total — counts only, never finding pages. The write's exit code is unchanged: ",
+    "a red model rides a successful write. A command admitted into an open batch reports ",
+    "`checks.status` unknown with reason draft_not_evaluated (the draft has published no ",
+    "revision); `batch-commit` checks the revision it published. If the follow-up check ",
+    "cannot run or the summary does not fit the reply budget, the reply reports ",
+    "`checks.status` unavailable with the reason instead — checks are never silently green. ",
+    "Set BEAMCRAFT_CHECKS_SUMMARY=off to omit the summary from this process's write ",
+    "replies (the window's opt-out until it has a checks panel; unset or any other value ",
+    "keeps summaries on)",
 );
