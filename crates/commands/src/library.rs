@@ -3441,7 +3441,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "russia-gost-30245-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("6"));
+        assert_eq!(library.info.version.as_deref(), Some("7"));
         assert!(
             library
                 .info
@@ -3460,7 +3460,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 455);
+        assert_eq!(library.entries.len(), 580);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -3972,6 +3972,131 @@ mod tests {
             "200x160x9",
             "200x160x9.5",
             "200x160x10",
+            "220x100x4",
+            "220x100x4.5",
+            "220x100x5",
+            "220x100x5.5",
+            "220x100x6",
+            "220x100x6.5",
+            "220x100x7",
+            "220x100x7.5",
+            "220x100x8",
+            "220x140x5",
+            "220x140x5.5",
+            "220x140x6",
+            "220x140x6.5",
+            "220x140x7",
+            "220x140x7.5",
+            "220x140x8",
+            "240x120x5",
+            "240x120x5.5",
+            "240x120x6",
+            "240x120x6.5",
+            "240x120x7",
+            "240x120x7.5",
+            "240x120x8",
+            "240x160x6",
+            "240x160x6.5",
+            "240x160x7",
+            "240x160x7.5",
+            "240x160x8",
+            "240x160x8.5",
+            "240x160x9",
+            "240x160x9.5",
+            "240x160x10",
+            "240x160x10.5",
+            "240x160x11",
+            "240x160x11.5",
+            "240x160x12",
+            "250x150x6",
+            "250x150x6.5",
+            "250x150x7",
+            "250x150x7.5",
+            "250x150x8",
+            "260x130x6",
+            "260x130x6.5",
+            "260x130x7",
+            "260x130x7.5",
+            "260x130x8",
+            "260x130x8.5",
+            "260x130x9",
+            "260x130x9.5",
+            "260x130x10",
+            "260x130x10.5",
+            "260x130x11",
+            "260x130x11.5",
+            "260x130x12",
+            "300x100x6",
+            "300x100x6.5",
+            "300x100x7",
+            "300x100x7.5",
+            "300x100x8",
+            "300x100x8.5",
+            "300x100x9",
+            "300x100x9.5",
+            "300x100x10",
+            "300x200x6",
+            "300x200x6.5",
+            "300x200x7",
+            "300x200x7.5",
+            "300x200x8",
+            "300x200x8.5",
+            "300x200x9",
+            "300x200x9.5",
+            "300x200x10",
+            "300x200x10.5",
+            "300x200x11",
+            "300x200x11.5",
+            "300x200x12",
+            "320x180x6",
+            "320x180x6.5",
+            "320x180x7",
+            "320x180x7.5",
+            "320x180x8",
+            "320x180x8.5",
+            "320x180x9",
+            "320x180x9.5",
+            "320x180x10",
+            "320x180x10.5",
+            "320x180x11",
+            "320x180x11.5",
+            "320x180x12",
+            "350x250x6",
+            "350x250x6.5",
+            "350x250x7",
+            "350x250x7.5",
+            "350x250x8",
+            "350x250x8.5",
+            "350x250x9",
+            "350x250x9.5",
+            "350x250x10",
+            "350x250x10.5",
+            "350x250x11",
+            "350x250x11.5",
+            "350x250x12",
+            "350x300x6",
+            "350x300x6.5",
+            "350x300x7",
+            "350x300x7.5",
+            "350x300x8",
+            "350x300x8.5",
+            "350x300x9",
+            "350x300x9.5",
+            "350x300x10",
+            "350x300x10.5",
+            "350x300x11",
+            "350x300x11.5",
+            "350x300x12",
+            "380x220x6",
+            "380x220x6.5",
+            "380x220x7",
+            "380x220x7.5",
+            "380x220x8",
+            "400x200x10",
+            "400x200x10.5",
+            "400x200x11",
+            "400x200x11.5",
+            "400x200x12",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -4043,6 +4168,18 @@ mod tests {
         spot("180x60x4", [180.0, 60.0, 4.0, 8.0], 1815.0, 14.25);
         spot("200x160x5", [200.0, 160.0, 5.0, 10.0], 3436.0, 26.97);
         spot("200x120x8", [200.0, 120.0, 8.0, 20.0], 4644.0, 36.46);
+        // Band 5 spots, including the two rectangular print errata: the scans' typeset
+        // prints 220x100x7 as 46.16 while its own mass 32.31 is 0.785 * 41.16 (the raster
+        // and the closed form carry 41.16), and the scans print 350x300x9 as 110.0 while
+        // its own mass 87.12 and Ix 20347 are those of 111.0 (the raster and the closed
+        // form carry 111.0); the library carries the relation's values, the misprints are
+        // named here. The 400x200x12 spot closes the assortment at its largest row, whose
+        // area prints at one decimal.
+        spot("220x100x7", [220.0, 100.0, 7.0, 17.5], 4116.0, 32.31);
+        spot("350x300x9", [350.0, 300.0, 9.0, 22.5], 11100.0, 87.12);
+        spot("240x160x6", [240.0, 160.0, 6.0, 12.0], 4563.0, 35.82);
+        spot("260x130x12", [260.0, 130.0, 12.0, 36.0], 8166.0, 64.1);
+        spot("400x200x12", [400.0, 200.0, 12.0, 36.0], 13210.0, 103.7);
         // Designations the standard does not publish are NOT_FOUND, never a near match:
         // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
         // published thickness range. The Cyrillic authenticity form is not a lookup key.
@@ -4106,6 +4243,15 @@ mod tests {
             "200x40x7.5",
             "200x160x10.5",
             "190x100x5",
+            // Band 5 facts table 2 does not publish: the 220x100, 240x120, 250x150 and
+            // 380x220 wall ranges end at 8 mm, the 300x100 range ends at 10 mm, and the
+            // 400x200 range opens at 10 mm.
+            "220x100x8.5",
+            "240x120x8.5",
+            "250x150x8.5",
+            "380x220x8.5",
+            "300x100x10.5",
+            "400x200x9.5",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,

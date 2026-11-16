@@ -80,7 +80,7 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "russia");
-    assert_eq!(num(&listed, &["entry_count"]), 571.0);
+    assert_eq!(num(&listed, &["entry_count"]), 696.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     // The environment now lists 571 entries, over the 256-entry page cap, so the later
     // pages complete the listing before the per-entry assertions.
@@ -95,7 +95,7 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         "--limit",
         "256",
     ]);
-    assert_eq!(num(&rest, &["entry_count"]), 571.0);
+    assert_eq!(num(&rest, &["entry_count"]), 696.0);
     entries.extend(at(&rest, &["entries"]).array().unwrap().iter().cloned());
     // The band pushes the listing past two pages: the third page carries the tail.
     let tail = f.ok(&[
@@ -107,9 +107,9 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
         "--limit",
         "256",
     ]);
-    assert_eq!(num(&tail, &["entry_count"]), 571.0);
+    assert_eq!(num(&tail, &["entry_count"]), 696.0);
     entries.extend(at(&tail, &["entries"]).array().unwrap().iter().cloned());
-    assert_eq!(entries.len(), 571);
+    assert_eq!(entries.len(), 696);
     let libraries = at(&listed, &["libraries"]).array().unwrap();
     assert_eq!(libraries.len(), 3);
     let info = at(&libraries[0], &["library"]);
@@ -119,7 +119,7 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let square_info = at(&libraries[1], &["library"]);
     assert_eq!(text(square_info, "id"), "russia-gost-30245-profiles");
-    assert_eq!(text(square_info, "version"), "6");
+    assert_eq!(text(square_info, "version"), "7");
     assert_eq!(text(square_info, "licence"), "MPL-2.0");
     assert!(
         !text(square_info, "source").is_empty(),
@@ -218,6 +218,16 @@ fn the_shipped_russia_environment_lists_its_sections_and_provenance() {
     assert_eq!(num(band4, &["parameters_mm", "b"]), 100.0);
     assert_eq!(num(band4, &["parameters_mm", "t"]), 4.0);
     assert_eq!(num(band4, &["parameters_mm", "r"]), 8.0);
+    // The final band rides the same library; the assortment's largest row closes it.
+    let band5 = entries
+        .iter()
+        .find(|e| text(e, "designation") == "400x200x10")
+        .unwrap();
+    assert_eq!(text(band5, "library_id"), "russia-gost-30245-profiles");
+    assert_eq!(num(band5, &["parameters_mm", "h"]), 400.0);
+    assert_eq!(num(band5, &["parameters_mm", "b"]), 200.0);
+    assert_eq!(num(band5, &["parameters_mm", "t"]), 10.0);
+    assert_eq!(num(band5, &["parameters_mm", "r"]), 25.0);
 }
 
 #[test]
