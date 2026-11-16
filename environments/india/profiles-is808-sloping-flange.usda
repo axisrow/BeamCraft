@@ -1,0 +1,1652 @@
+#usda 1.0
+(
+    doc = "BeamCraft India environment: the legacy sloping-flange hot-rolled series of IS 808:2021 - the medium (MB) and wide (WB) beams of tables 1-2, the junior (JB) and light (LB) beams, the column (SC) and heavy beam (HB) sections and the MC/JC/LC channels - through the tapered_i and tapered_c families. The dimensions, areas and masses are the published values of the public standard, re-entered by hand as our own data; no text or table is copied. T is the mean flange thickness at the middle of the leg (the standard's annex A reading) and the slope column's angle over the flange plane carries as k = tan(angle - 90 degrees). Heavier rows of a shared depth take the depth-x-mass designation the standard requires when ordering them; seventeen printed rows whose toe radius exceeds their annex-A toe thickness are absent, named in the tests. Reference data; not a substitute for the standard itself. Provenance: ATTRIBUTION.md."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "india-is808-sloping-flange-profiles"
+        string "bim:library:title" = "India hot-rolled sections (IS 808:2021: sloping flange beams, columns, heavy beams and channels)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "IS 808:2021 tables 1-2, 5, 6-7 (sloping flange series), re-entered by hand as our own data; cross-checked between the IS 808:2021 text and the IS 808:1989 scan (archive.org gov.in.is.808.2021, gov.in.is.808.1989); no table copied; retrieved 2026-11-16"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "MB100"
+        {
+            string steel:profile:designation = "MB100"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 4.7
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 1140
+            double steel:profile:massPerMeterKg = 8.95
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB125"
+        {
+            string steel:profile:designation = "MB125"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 70
+            double steel:profile:sMm = 5
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 1700
+            double steel:profile:massPerMeterKg = 13.35
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB150"
+        {
+            string steel:profile:designation = "MB150"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 5
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 1900
+            double steel:profile:massPerMeterKg = 14.96
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB175"
+        {
+            string steel:profile:designation = "MB175"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 85
+            double steel:profile:sMm = 5.8
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 2480
+            double steel:profile:massPerMeterKg = 19.5
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB200"
+        {
+            string steel:profile:designation = "MB200"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 5.7
+            double steel:profile:tMm = 10
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 5.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 3080
+            double steel:profile:massPerMeterKg = 24.17
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB225"
+        {
+            string steel:profile:designation = "MB225"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 110
+            double steel:profile:sMm = 6.5
+            double steel:profile:tMm = 11.8
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 3970
+            double steel:profile:massPerMeterKg = 31.15
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB250"
+        {
+            string steel:profile:designation = "MB250"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 125
+            double steel:profile:sMm = 6.9
+            double steel:profile:tMm = 12.5
+            double steel:profile:rMm = 13
+            double steel:profile:r1Mm = 6.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 4750
+            double steel:profile:massPerMeterKg = 37.3
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB300"
+        {
+            string steel:profile:designation = "MB300"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 140
+            double steel:profile:sMm = 7.7
+            double steel:profile:tMm = 13.1
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 7
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 5860
+            double steel:profile:massPerMeterKg = 46.02
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB350"
+        {
+            string steel:profile:designation = "MB350"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 140
+            double steel:profile:sMm = 8.1
+            double steel:profile:tMm = 14.2
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 7
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 6670
+            double steel:profile:massPerMeterKg = 52.33
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB400"
+        {
+            string steel:profile:designation = "MB400"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 140
+            double steel:profile:sMm = 8.9
+            double steel:profile:tMm = 16
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 7
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 7840
+            double steel:profile:massPerMeterKg = 61.55
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB450"
+        {
+            string steel:profile:designation = "MB450"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 450
+            double steel:profile:bMm = 150
+            double steel:profile:sMm = 9.4
+            double steel:profile:tMm = 17.4
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 9220
+            double steel:profile:massPerMeterKg = 72.38
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB500"
+        {
+            string steel:profile:designation = "MB500"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 500
+            double steel:profile:bMm = 180
+            double steel:profile:sMm = 10.2
+            double steel:profile:tMm = 17.2
+            double steel:profile:rMm = 17
+            double steel:profile:r1Mm = 8.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 11000
+            double steel:profile:massPerMeterKg = 86.88
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB550"
+        {
+            string steel:profile:designation = "MB550"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 550
+            double steel:profile:bMm = 190
+            double steel:profile:sMm = 11.2
+            double steel:profile:tMm = 19.3
+            double steel:profile:rMm = 18
+            double steel:profile:r1Mm = 9
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 13200
+            double steel:profile:massPerMeterKg = 103.64
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MB600"
+        {
+            string steel:profile:designation = "MB600"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 600
+            double steel:profile:bMm = 210
+            double steel:profile:sMm = 12
+            double steel:profile:tMm = 20.3
+            double steel:profile:rMm = 20
+            double steel:profile:r1Mm = 10
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 15400
+            double steel:profile:massPerMeterKg = 121
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB150"
+        {
+            string steel:profile:designation = "WB150"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 5.4
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2160
+            double steel:profile:massPerMeterKg = 17
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB175"
+        {
+            string steel:profile:designation = "WB175"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 125
+            double steel:profile:sMm = 5.8
+            double steel:profile:tMm = 7.4
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2810
+            double steel:profile:massPerMeterKg = 22.06
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB200"
+        {
+            string steel:profile:designation = "WB200"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 140
+            double steel:profile:sMm = 6.1
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 3670
+            double steel:profile:massPerMeterKg = 28.8
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB200x52_09"
+        {
+            string steel:profile:designation = "WB200x52.09"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 203
+            double steel:profile:bMm = 152
+            double steel:profile:sMm = 8.9
+            double steel:profile:tMm = 16.5
+            double steel:profile:rMm = 15.5
+            double steel:profile:r1Mm = 7.6
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 6640
+            double steel:profile:massPerMeterKg = 52.09
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB225"
+        {
+            string steel:profile:designation = "WB225"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 150
+            double steel:profile:sMm = 6.4
+            double steel:profile:tMm = 9.9
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 4320
+            double steel:profile:massPerMeterKg = 33.93
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB350"
+        {
+            string steel:profile:designation = "WB350"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 200
+            double steel:profile:sMm = 8
+            double steel:profile:tMm = 11.4
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 7240
+            double steel:profile:massPerMeterKg = 56.89
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB400"
+        {
+            string steel:profile:designation = "WB400"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 200
+            double steel:profile:sMm = 8.6
+            double steel:profile:tMm = 13
+            double steel:profile:rMm = 13
+            double steel:profile:r1Mm = 6.5
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 8500
+            double steel:profile:massPerMeterKg = 66.71
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB450"
+        {
+            string steel:profile:designation = "WB450"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 450
+            double steel:profile:bMm = 200
+            double steel:profile:sMm = 9.2
+            double steel:profile:tMm = 15.4
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 10100
+            double steel:profile:massPerMeterKg = 79.52
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB500"
+        {
+            string steel:profile:designation = "WB500"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 500
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 9.9
+            double steel:profile:tMm = 14.7
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7.5
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 12100
+            double steel:profile:massPerMeterKg = 95.12
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB550"
+        {
+            string steel:profile:designation = "WB550"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 550
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 10.5
+            double steel:profile:tMm = 17.6
+            double steel:profile:rMm = 16
+            double steel:profile:r1Mm = 8
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 14300
+            double steel:profile:massPerMeterKg = 112.48
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB600"
+        {
+            string steel:profile:designation = "WB600"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 600
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 11.2
+            double steel:profile:tMm = 21.3
+            double steel:profile:rMm = 17
+            double steel:profile:r1Mm = 8.5
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 17000
+            double steel:profile:massPerMeterKg = 133.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "WB600x145_06"
+        {
+            string steel:profile:designation = "WB600x145.06"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 600
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 11.8
+            double steel:profile:tMm = 23.6
+            double steel:profile:rMm = 18
+            double steel:profile:r1Mm = 9
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 18400
+            double steel:profile:massPerMeterKg = 145.06
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JB150"
+        {
+            string steel:profile:designation = "JB150"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 3
+            double steel:profile:tMm = 4.6
+            double steel:profile:rMm = 5
+            double steel:profile:r1Mm = 1.5
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 900
+            double steel:profile:massPerMeterKg = 7.07
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JB175"
+        {
+            string steel:profile:designation = "JB175"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 3.2
+            double steel:profile:tMm = 4.8
+            double steel:profile:rMm = 5
+            double steel:profile:r1Mm = 1.5
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1020
+            double steel:profile:massPerMeterKg = 8.07
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JB200"
+        {
+            string steel:profile:designation = "JB200"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 60
+            double steel:profile:sMm = 3.4
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 5
+            double steel:profile:r1Mm = 1.5
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1260
+            double steel:profile:massPerMeterKg = 9.92
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JB225"
+        {
+            string steel:profile:designation = "JB225"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 80
+            double steel:profile:sMm = 3.7
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 6.5
+            double steel:profile:r1Mm = 1.5
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1620
+            double steel:profile:massPerMeterKg = 12.78
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LB75"
+        {
+            string steel:profile:designation = "LB75"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 3.7
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 6.5
+            double steel:profile:r1Mm = 2
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 771
+            double steel:profile:massPerMeterKg = 6.05
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LB100"
+        {
+            string steel:profile:designation = "LB100"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 4
+            double steel:profile:tMm = 6.4
+            double steel:profile:rMm = 7
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1020
+            double steel:profile:massPerMeterKg = 8.01
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LBP100"
+        {
+            string steel:profile:designation = "LBP100"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 4.3
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1110
+            double steel:profile:massPerMeterKg = 8.75
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LB125"
+        {
+            string steel:profile:designation = "LB125"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 4.4
+            double steel:profile:tMm = 6.5
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1510
+            double steel:profile:massPerMeterKg = 11.87
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LB150"
+        {
+            string steel:profile:designation = "LB150"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 80
+            double steel:profile:sMm = 4.8
+            double steel:profile:tMm = 6.8
+            double steel:profile:rMm = 9.5
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1800
+            double steel:profile:massPerMeterKg = 14.19
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LB175"
+        {
+            string steel:profile:designation = "LB175"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 90
+            double steel:profile:sMm = 5
+            double steel:profile:tMm = 6.9
+            double steel:profile:rMm = 9.5
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 2110
+            double steel:profile:massPerMeterKg = 16.59
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LBP175"
+        {
+            string steel:profile:designation = "LBP175"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 80
+            double steel:profile:sMm = 5.2
+            double steel:profile:tMm = 7.7
+            double steel:profile:rMm = 9.5
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2110
+            double steel:profile:massPerMeterKg = 16.6
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LB200"
+        {
+            string steel:profile:designation = "LB200"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 5.4
+            double steel:profile:tMm = 7.3
+            double steel:profile:rMm = 9.5
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 2520
+            double steel:profile:massPerMeterKg = 19.83
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LBP200"
+        {
+            string steel:profile:designation = "LBP200"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 5.6
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 9.5
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2680
+            double steel:profile:massPerMeterKg = 21.06
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "SC100"
+        {
+            string steel:profile:designation = "SC100"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 6
+            double steel:profile:tMm = 10
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 2540
+            double steel:profile:massPerMeterKg = 19.97
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "SC120"
+        {
+            string steel:profile:designation = "SC120"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 120
+            double steel:profile:bMm = 120
+            double steel:profile:sMm = 6.5
+            double steel:profile:tMm = 11
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 3340
+            double steel:profile:massPerMeterKg = 26.22
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "SC140"
+        {
+            string steel:profile:designation = "SC140"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 140
+            double steel:profile:bMm = 140
+            double steel:profile:sMm = 7
+            double steel:profile:tMm = 12
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 4230
+            double steel:profile:massPerMeterKg = 33.25
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "SC150"
+        {
+            string steel:profile:designation = "SC150"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 152
+            double steel:profile:bMm = 152
+            double steel:profile:sMm = 7.9
+            double steel:profile:tMm = 11.9
+            double steel:profile:rMm = 11.7
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 4700
+            double steel:profile:massPerMeterKg = 36.93
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "SC160"
+        {
+            string steel:profile:designation = "SC160"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 160
+            double steel:profile:sMm = 8
+            double steel:profile:tMm = 13
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 5330
+            double steel:profile:massPerMeterKg = 41.85
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "SC180"
+        {
+            string steel:profile:designation = "SC180"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 180
+            double steel:profile:bMm = 180
+            double steel:profile:sMm = 8.5
+            double steel:profile:tMm = 14
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7.5
+            double steel:profile:k = 0.14054083470239143
+            double steel:profile:areaMm2 = 6430
+            double steel:profile:massPerMeterKg = 50.48
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB150"
+        {
+            string steel:profile:designation = "HB150"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:sMm = 5.4
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 4
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 3440
+            double steel:profile:massPerMeterKg = 27.06
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB150x30_15"
+        {
+            string steel:profile:designation = "HB150x30.15"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:sMm = 8.4
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 4
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 3840
+            double steel:profile:massPerMeterKg = 30.15
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB150x33_66"
+        {
+            string steel:profile:designation = "HB150x33.66"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:sMm = 11.8
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 4
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 4290
+            double steel:profile:massPerMeterKg = 33.66
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB200"
+        {
+            string steel:profile:designation = "HB200"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:sMm = 6.1
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 4750
+            double steel:profile:massPerMeterKg = 37.31
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB200x39_73"
+        {
+            string steel:profile:designation = "HB200x39.73"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:sMm = 7.8
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 4.5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 5060
+            double steel:profile:massPerMeterKg = 39.73
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB225"
+        {
+            string steel:profile:designation = "HB225"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 225
+            double steel:profile:sMm = 6.5
+            double steel:profile:tMm = 9.1
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 5490
+            double steel:profile:massPerMeterKg = 43.12
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB225x46_52"
+        {
+            string steel:profile:designation = "HB225x46.52"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 225
+            double steel:profile:sMm = 8.6
+            double steel:profile:tMm = 9.1
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 5920
+            double steel:profile:massPerMeterKg = 46.52
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB250"
+        {
+            string steel:profile:designation = "HB250"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 6.9
+            double steel:profile:tMm = 9.7
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 6490
+            double steel:profile:massPerMeterKg = 50.98
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB250x54_41"
+        {
+            string steel:profile:designation = "HB250x54.41"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 8.8
+            double steel:profile:tMm = 9.7
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 6930
+            double steel:profile:massPerMeterKg = 54.41
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB300"
+        {
+            string steel:profile:designation = "HB300"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 7.6
+            double steel:profile:tMm = 10.6
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 5.5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 7480
+            double steel:profile:massPerMeterKg = 58.74
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB300x62_67"
+        {
+            string steel:profile:designation = "HB300x62.67"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 9.4
+            double steel:profile:tMm = 10.6
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 5.5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 7980
+            double steel:profile:massPerMeterKg = 62.67
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB350"
+        {
+            string steel:profile:designation = "HB350"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 8.3
+            double steel:profile:tMm = 11.6
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 8590
+            double steel:profile:massPerMeterKg = 67.42
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB350x72_03"
+        {
+            string steel:profile:designation = "HB350x72.03"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 10.1
+            double steel:profile:tMm = 11.6
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 6
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 9170
+            double steel:profile:massPerMeterKg = 72.03
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB400"
+        {
+            string steel:profile:designation = "HB400"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 9.1
+            double steel:profile:tMm = 12.7
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 7
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 9860
+            double steel:profile:massPerMeterKg = 77.43
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB400x81_83"
+        {
+            string steel:profile:designation = "HB400x81.83"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 10.6
+            double steel:profile:tMm = 12.7
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 7
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 10400
+            double steel:profile:massPerMeterKg = 81.83
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB450"
+        {
+            string steel:profile:designation = "HB450"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 450
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 9.8
+            double steel:profile:tMm = 13.7
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7.5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 11100
+            double steel:profile:massPerMeterKg = 87.22
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "HB450x92_19"
+        {
+            string steel:profile:designation = "HB450x92.19"
+            token steel:profile:family = "tapered_i"
+            double steel:profile:hMm = 450
+            double steel:profile:bMm = 250
+            double steel:profile:sMm = 11.3
+            double steel:profile:tMm = 13.7
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 7.5
+            double steel:profile:k = 0.06992681194351041
+            double steel:profile:areaMm2 = 11700
+            double steel:profile:massPerMeterKg = 92.19
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC75"
+        {
+            string steel:profile:designation = "MC75"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 40
+            double steel:profile:sMm = 4.8
+            double steel:profile:tMm = 7.5
+            double steel:profile:rMm = 8.5
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 908
+            double steel:profile:massPerMeterKg = 7.14
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC100"
+        {
+            string steel:profile:designation = "MC100"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 5
+            double steel:profile:tMm = 7.7
+            double steel:profile:rMm = 9
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 1210
+            double steel:profile:massPerMeterKg = 9.56
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC125"
+        {
+            string steel:profile:designation = "MC125"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 65
+            double steel:profile:sMm = 5.3
+            double steel:profile:tMm = 8.2
+            double steel:profile:rMm = 9.5
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 1660
+            double steel:profile:massPerMeterKg = 13.1
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC125x13_7"
+        {
+            string steel:profile:designation = "MC125x13.7"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 66
+            double steel:profile:sMm = 6
+            double steel:profile:tMm = 8.1
+            double steel:profile:rMm = 9.5
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 1740
+            double steel:profile:massPerMeterKg = 13.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC150"
+        {
+            string steel:profile:designation = "MC150"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 5.7
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2130
+            double steel:profile:massPerMeterKg = 16.8
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC150x17_7"
+        {
+            string steel:profile:designation = "MC150x17.7"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 76
+            double steel:profile:sMm = 6.5
+            double steel:profile:tMm = 9
+            double steel:profile:rMm = 10
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2250
+            double steel:profile:massPerMeterKg = 17.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC175"
+        {
+            string steel:profile:designation = "MC175"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 6
+            double steel:profile:tMm = 10.2
+            double steel:profile:rMm = 10.5
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2480
+            double steel:profile:massPerMeterKg = 19.6
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC175x22_7"
+        {
+            string steel:profile:designation = "MC175x22.7"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 76
+            double steel:profile:sMm = 7.5
+            double steel:profile:tMm = 10.2
+            double steel:profile:rMm = 10.5
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2730
+            double steel:profile:massPerMeterKg = 22.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC200"
+        {
+            string steel:profile:designation = "MC200"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 6.2
+            double steel:profile:tMm = 11.4
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2840
+            double steel:profile:massPerMeterKg = 22.3
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC200x24_3"
+        {
+            string steel:profile:designation = "MC200x24.3"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 76
+            double steel:profile:sMm = 7.5
+            double steel:profile:tMm = 11.4
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 3090
+            double steel:profile:massPerMeterKg = 24.3
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC225"
+        {
+            string steel:profile:designation = "MC225"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 80
+            double steel:profile:sMm = 6.5
+            double steel:profile:tMm = 12.4
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 3320
+            double steel:profile:massPerMeterKg = 26.1
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC225x30_7"
+        {
+            string steel:profile:designation = "MC225x30.7"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 82
+            double steel:profile:sMm = 9
+            double steel:profile:tMm = 12.4
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 3870
+            double steel:profile:massPerMeterKg = 30.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC250"
+        {
+            string steel:profile:designation = "MC250"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 80
+            double steel:profile:sMm = 7.2
+            double steel:profile:tMm = 14.1
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 3890
+            double steel:profile:massPerMeterKg = 30.6
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC250x34_2"
+        {
+            string steel:profile:designation = "MC250x34.2"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 82
+            double steel:profile:sMm = 9
+            double steel:profile:tMm = 14.1
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 4340
+            double steel:profile:massPerMeterKg = 34.2
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC250x38_1"
+        {
+            string steel:profile:designation = "MC250x38.1"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 83
+            double steel:profile:sMm = 11
+            double steel:profile:tMm = 14.1
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 4810
+            double steel:profile:massPerMeterKg = 38.1
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC300"
+        {
+            string steel:profile:designation = "MC300"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 90
+            double steel:profile:sMm = 7.8
+            double steel:profile:tMm = 13.6
+            double steel:profile:rMm = 13
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 4620
+            double steel:profile:massPerMeterKg = 36.3
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC300x41_5"
+        {
+            string steel:profile:designation = "MC300x41.5"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 92
+            double steel:profile:sMm = 10
+            double steel:profile:tMm = 13.6
+            double steel:profile:rMm = 13
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 5270
+            double steel:profile:massPerMeterKg = 41.5
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC300x46_2"
+        {
+            string steel:profile:designation = "MC300x46.2"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 93
+            double steel:profile:sMm = 12
+            double steel:profile:tMm = 13.6
+            double steel:profile:rMm = 13
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 5840
+            double steel:profile:massPerMeterKg = 46.2
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC350"
+        {
+            string steel:profile:designation = "MC350"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 8.3
+            double steel:profile:tMm = 13.5
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 4.8
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 5430
+            double steel:profile:massPerMeterKg = 42.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "MC400"
+        {
+            string steel:profile:designation = "MC400"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 8.8
+            double steel:profile:tMm = 15.3
+            double steel:profile:rMm = 15
+            double steel:profile:r1Mm = 4.8
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 6370
+            double steel:profile:massPerMeterKg = 50.1
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JC100"
+        {
+            string steel:profile:designation = "JC100"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 45
+            double steel:profile:sMm = 3
+            double steel:profile:tMm = 5.1
+            double steel:profile:rMm = 6
+            double steel:profile:r1Mm = 2
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 741
+            double steel:profile:massPerMeterKg = 5.8
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JC125"
+        {
+            string steel:profile:designation = "JC125"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 3
+            double steel:profile:tMm = 6.6
+            double steel:profile:rMm = 6
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1000
+            double steel:profile:massPerMeterKg = 7.9
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JC150"
+        {
+            string steel:profile:designation = "JC150"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 55
+            double steel:profile:sMm = 3.6
+            double steel:profile:tMm = 6.9
+            double steel:profile:rMm = 7
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1260
+            double steel:profile:massPerMeterKg = 9.9
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JC175"
+        {
+            string steel:profile:designation = "JC175"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 60
+            double steel:profile:sMm = 3.6
+            double steel:profile:tMm = 6.9
+            double steel:profile:rMm = 7
+            double steel:profile:r1Mm = 3
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1420
+            double steel:profile:massPerMeterKg = 11.2
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "JC200"
+        {
+            string steel:profile:designation = "JC200"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 70
+            double steel:profile:sMm = 4.1
+            double steel:profile:tMm = 7.1
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1770
+            double steel:profile:massPerMeterKg = 14
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC75"
+        {
+            string steel:profile:designation = "LC75"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 40
+            double steel:profile:sMm = 3.7
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 6
+            double steel:profile:r1Mm = 2
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 726
+            double steel:profile:massPerMeterKg = 5.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC100"
+        {
+            string steel:profile:designation = "LC100"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 50
+            double steel:profile:sMm = 4
+            double steel:profile:tMm = 6.4
+            double steel:profile:rMm = 6
+            double steel:profile:r1Mm = 2
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1000
+            double steel:profile:massPerMeterKg = 7.9
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC125"
+        {
+            string steel:profile:designation = "LC125"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 65
+            double steel:profile:sMm = 4.4
+            double steel:profile:tMm = 6.6
+            double steel:profile:rMm = 7
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1360
+            double steel:profile:massPerMeterKg = 10.7
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LCP125"
+        {
+            string steel:profile:designation = "LCP125"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 125
+            double steel:profile:bMm = 65
+            double steel:profile:sMm = 4.6
+            double steel:profile:tMm = 7
+            double steel:profile:rMm = 7
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 1430
+            double steel:profile:massPerMeterKg = 11.3
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC150"
+        {
+            string steel:profile:designation = "LC150"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 4.8
+            double steel:profile:tMm = 7.8
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 1830
+            double steel:profile:massPerMeterKg = 14.4
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LCP150"
+        {
+            string steel:profile:designation = "LCP150"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 5
+            double steel:profile:tMm = 8.7
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 2.4
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 1980
+            double steel:profile:massPerMeterKg = 15.6
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC175"
+        {
+            string steel:profile:designation = "LC175"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 175
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 5.1
+            double steel:profile:tMm = 9.5
+            double steel:profile:rMm = 8
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 2240
+            double steel:profile:massPerMeterKg = 17.6
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC200"
+        {
+            string steel:profile:designation = "LC200"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 5.5
+            double steel:profile:tMm = 10.8
+            double steel:profile:rMm = 8.5
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.026185921569186928
+            double steel:profile:areaMm2 = 2620
+            double steel:profile:massPerMeterKg = 20.6
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LCP200"
+        {
+            string steel:profile:designation = "LCP200"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 75
+            double steel:profile:sMm = 5.7
+            double steel:profile:tMm = 11.4
+            double steel:profile:rMm = 8.5
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 2730
+            double steel:profile:massPerMeterKg = 21.5
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC225"
+        {
+            string steel:profile:designation = "LC225"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 225
+            double steel:profile:bMm = 90
+            double steel:profile:sMm = 5.8
+            double steel:profile:tMm = 10.2
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 3050
+            double steel:profile:massPerMeterKg = 24
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC250"
+        {
+            string steel:profile:designation = "LC250"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 6.1
+            double steel:profile:tMm = 10.7
+            double steel:profile:rMm = 11
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 3560
+            double steel:profile:massPerMeterKg = 28
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC300"
+        {
+            string steel:profile:designation = "LC300"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 6.7
+            double steel:profile:tMm = 11.6
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 4210
+            double steel:profile:massPerMeterKg = 33.1
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LCP300"
+        {
+            string steel:profile:designation = "LCP300"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 90
+            double steel:profile:sMm = 7
+            double steel:profile:tMm = 12.5
+            double steel:profile:rMm = 12
+            double steel:profile:r1Mm = 3.2
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 4210
+            double steel:profile:massPerMeterKg = 33.1
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC350"
+        {
+            string steel:profile:designation = "LC350"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 7.4
+            double steel:profile:tMm = 12.5
+            double steel:profile:rMm = 13
+            double steel:profile:r1Mm = 4.8
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 4940
+            double steel:profile:massPerMeterKg = 38.9
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+        def Scope "LC400"
+        {
+            string steel:profile:designation = "LC400"
+            token steel:profile:family = "tapered_c"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 100
+            double steel:profile:sMm = 8
+            double steel:profile:tMm = 14
+            double steel:profile:rMm = 14
+            double steel:profile:r1Mm = 4.8
+            double steel:profile:k = 0.10510423526567647
+            double steel:profile:areaMm2 = 5820
+            double steel:profile:massPerMeterKg = 45.8
+            string steel:profile:standard = "IS 808:2021"
+        }
+
+    }
+}

@@ -5324,6 +5324,285 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_india_sloping_flange_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/profiles-is808-sloping-flange.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "india-is808-sloping-flange-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 102);
+        // The slope column prints the angle the inner flange face makes with the flange plane
+        // (parallel rows print 90 degrees); every row carries k = tan of the angle over 90
+        // degrees, as printed. The shipped rows split as: 8 degrees - MB, SC and the heavy
+        // WB200x52.09 row; 6 degrees - the other WB rows, the provisional LBP175/LBP200, MC,
+        // LC225 and deeper, and LCP125-LCP300; 4 degrees - HB; 1.5 degrees - JB, JC, the other
+        // LB rows (LB75-LB200 with LBP100) and the shallow plain LC rows (LC75-LC200). The deep
+        // LB rows that also print 8 degrees are the excluded toe-fit rows. The legacy
+        // IS 808:1989 edition prints the same column as "flange slope, max", a roll-pass
+        // maximum, so unlike the GB/T 706 tables there is no tighter-than-D3 bound: the
+        // declared areas reproduce at the printed slope within 0.8 percent (the worst rows
+        // MB500, JB175 and JC125 sit 0.54 to 0.76 percent above the closed form).
+        let k98 = 8.0_f64.to_radians().tan();
+        let k96 = 6.0_f64.to_radians().tan();
+        let k94 = 4.0_f64.to_radians().tan();
+        let k915 = 1.5_f64.to_radians().tan();
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            match parametric.family() {
+                SectionFamily::TaperedI | SectionFamily::TaperedC => {}
+                family => panic!("{}: unexpected family {family:?}", entry.designation),
+            }
+            let k = parametric.values()[6];
+            assert!(
+                k == k98 || k == k96 || k == k94 || k == k915,
+                "{}: slope {k} is not one of the printed angles",
+                entry.designation
+            );
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("IS 808:2021"),
+                "{}",
+                entry.designation
+            );
+            // The D3 discipline: the declared catalogue area never warns against the exact
+            // filleted area of the admitted geometry at the printed slope.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            // Every declared mass follows its declared area at 7850 kg/m3 within 1 percent,
+            // except two named print errata: the mass column disagrees with the same row's
+            // printed area in BOTH the 2021 and the 1989 editions, while the areas track the
+            // closed form of the printed dimensions (MC175x22.7 prints 22.7 against an area
+            // worth 21.4 to 21.5 kg/m, a 5.6 percent gap; MC225x30.7 prints 30.7 against 30.3
+            // to 30.6, 1.04 percent). The printed values ship: the engine's quantities compute
+            // from the catalogue area, not from this metadata.
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            let gap = (mass - mass_from_area).abs() / mass;
+            if matches!(entry.designation.as_str(), "MC175x22.7" | "MC225x30.7") {
+                assert!(
+                    gap > 0.01,
+                    "{}: {mass} kg/m vs area-derived {mass_from_area}: the documented print \
+                     erratum no longer reproduces",
+                    entry.designation
+                );
+            } else {
+                assert!(
+                    gap <= 0.01,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        // Both families exactly as tables 1, 2, 5, 6 and 7 of IS 808:2021 publish them: 62
+        // sloping flange beams, columns and heavy beams (tapered_i) and 40 sloping flange
+        // channels (tapered_c). Where one depth carries several rows the heavier ones take the
+        // depth-x-mass form the standard requires when ordering them (WB200x52.09), the star of
+        // the print is a footnote marker and is dropped (SC150 is the printed SC 150*), and the
+        // provisional sections' (P) marker is normalized to P (LB(P) 100 ships as LBP100).
+        designations.sort();
+        let expected = [
+            "HB150",
+            "HB150x30.15",
+            "HB150x33.66",
+            "HB200",
+            "HB200x39.73",
+            "HB225",
+            "HB225x46.52",
+            "HB250",
+            "HB250x54.41",
+            "HB300",
+            "HB300x62.67",
+            "HB350",
+            "HB350x72.03",
+            "HB400",
+            "HB400x81.83",
+            "HB450",
+            "HB450x92.19",
+            "JB150",
+            "JB175",
+            "JB200",
+            "JB225",
+            "JC100",
+            "JC125",
+            "JC150",
+            "JC175",
+            "JC200",
+            "LB100",
+            "LB125",
+            "LB150",
+            "LB175",
+            "LB200",
+            "LB75",
+            "LBP100",
+            "LBP175",
+            "LBP200",
+            "LC100",
+            "LC125",
+            "LC150",
+            "LC175",
+            "LC200",
+            "LC225",
+            "LC250",
+            "LC300",
+            "LC350",
+            "LC400",
+            "LC75",
+            "LCP125",
+            "LCP150",
+            "LCP200",
+            "LCP300",
+            "MB100",
+            "MB125",
+            "MB150",
+            "MB175",
+            "MB200",
+            "MB225",
+            "MB250",
+            "MB300",
+            "MB350",
+            "MB400",
+            "MB450",
+            "MB500",
+            "MB550",
+            "MB600",
+            "MC100",
+            "MC125",
+            "MC125x13.7",
+            "MC150",
+            "MC150x17.7",
+            "MC175",
+            "MC175x22.7",
+            "MC200",
+            "MC200x24.3",
+            "MC225",
+            "MC225x30.7",
+            "MC250",
+            "MC250x34.2",
+            "MC250x38.1",
+            "MC300",
+            "MC300x41.5",
+            "MC300x46.2",
+            "MC350",
+            "MC400",
+            "MC75",
+            "SC100",
+            "SC120",
+            "SC140",
+            "SC150",
+            "SC160",
+            "SC180",
+            "WB150",
+            "WB175",
+            "WB200",
+            "WB200x52.09",
+            "WB225",
+            "WB350",
+            "WB400",
+            "WB450",
+            "WB500",
+            "WB550",
+            "WB600",
+            "WB600x145.06",
+        ];
+        assert_eq!(designations, expected);
+        // Seventeen printed rows are absent: their published toe radius R2 exceeds the toe
+        // thickness the standard's own annex A computes for the same row (T - ((B-t)/4) tan of
+        // the slope), so the exact tapered outline the kernel admits cannot express them
+        // (WB250, WB300, SC200, SC220, SC250, and the deep light beams LB225 to LB600 with
+        // LB(P)300). The depths no series publishes stay absent, as do the parallel flange
+        // channel (MCP/MPC, table 8) and bearing pile (PBP, table 13) series - different
+        // families than the tapered ones this library ships.
+        for absent in [
+            "WB250", "WB300", "SC200", "SC220", "SC250", "LB225", "LB250", "LB275", "LB300",
+            "LBP300", "LB325", "LB350", "LB400", "LB450", "LB500", "LB550", "LB600", "MB275",
+            "MB325", "WB275", "SC190", "JB250", "HB175", "HB500", "JC75", "JC250", "LC450",
+            "MC450", "MPC200", "MCP300", "PBP300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+        // Spot rows against the print: dimensions, catalogue area and mass.
+        let spot = |designation: &str, values: [f64; 7], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "MB200",
+            [200.0, 100.0, 5.7, 10.0, 11.0, 5.5, k98],
+            3080.0,
+            24.17,
+        );
+        spot(
+            "MC200",
+            [200.0, 75.0, 6.2, 11.4, 11.0, 3.2, k96],
+            2840.0,
+            22.3,
+        );
+        spot(
+            "HB450x92.19",
+            [450.0, 250.0, 11.3, 13.7, 15.0, 7.5, k94],
+            11700.0,
+            92.19,
+        );
+        spot(
+            "LBP100",
+            [100.0, 50.0, 4.3, 7.0, 8.0, 3.0, k915],
+            1110.0,
+            8.75,
+        );
+        spot(
+            "LC400",
+            [400.0, 100.0, 8.0, 14.0, 14.0, 4.8, k96],
+            5820.0,
+            45.8,
+        );
+    }
+
+    #[test]
     fn the_shipped_china_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

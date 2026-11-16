@@ -43,7 +43,14 @@ saved setting.
   `environments/india/` holds the IS 808:2021
   narrow (NPB) and wide (WPB) parallel flange beam series and, since 2026-11-15, the IS 3757
   high-strength structural hex-bolt fastener set (M16/20/24, the environment's fastener library,
-  BC-ENV-002), and `environments/china/`
+  BC-ENV-002) and, since 2026-11-16, a fourth profile library with the legacy sloping-flange
+  series of the same edition (tables 1, 2, 5, 6 and 7: the MB/WB medium and wide beams, the
+  JB/LB junior and light beams, the SC column and HB heavy sections and the MC/JC/LC channels,
+  102 rows) through the `tapered_i` and `tapered_c` families — the slope column the tables print
+  as the inner-face angle over the flange plane carries as data per row (its tangent over 90
+  degrees), T enters as the mean flange thickness the standard's annex A formulas use, and the
+  seventeen printed rows whose toe radius exceeds the annex-A toe thickness stay out as explicit
+  `NOT_FOUND` cases (see `ATTRIBUTION.md`), and `environments/china/`
   (2026-11-15) holds the GB/T 706-2016 tapered-flange I-beam and channel series through the
   `tapered_i` and `tapered_c` section families and, since 2026-11-15, the GB/T 5782 hex-bolt
   fastener set (M12/16/20/24, the environment's fastener library, BC-ENV-002) and, since
