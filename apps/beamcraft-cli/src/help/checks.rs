@@ -26,7 +26,7 @@ pub(super) const HELP: &str = concat!(
     "report is not a structural design approval)",
     // Q03 slice 5: the write-reply summary.
     ". A successful write on a model-store command (modelling, definition, construction, ",
-    "recorded-input, reference, numbering and create-project commands) carries a short ",
+    "recorded-input, reference and numbering commands) carries a short ",
     "`checks` summary beside its result: the revision the follow-up check opened and named ",
     "(the write's resulting revision), the whole-scope status, the per-rule counts and the ",
     "finding total — counts only, never finding pages. The write's exit code is unchanged: ",

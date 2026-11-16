@@ -1339,4 +1339,28 @@ fn reads_and_store_level_writes_carry_no_checks_summary() {
     let (code, reply) = f.run("put-blob", &["--file", blob.to_str().unwrap()]);
     assert_eq!(code, 0, "{reply:?}");
     assert!(reply.get("checks").is_err());
+    // A successful project creation provisions a fresh store and changes no
+    // modelled revision: no summary, and the success is the point — the key is
+    // absent because the route is out of the set, not because the write failed.
+    // `create-project` takes `--parent`/`--name` and no `--store`, so this one
+    // line runs without the fixture's injected store option.
+    let parent = f.shared.root.join("models");
+    std::fs::create_dir_all(&parent).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+        .args([
+            "create-project",
+            "--parent",
+            parent.to_str().unwrap(),
+            "--name",
+            "Fresh Model",
+            "--unique-name",
+            "true",
+            "--actor-id",
+            "019a7bf0-0000-7000-8000-0000000000ac",
+        ])
+        .output()
+        .unwrap();
+    let reply = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+    assert_eq!(output.status.code().unwrap(), 0, "{reply:?}");
+    assert!(reply.get("checks").is_err(), "{reply:?}");
 }

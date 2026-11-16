@@ -478,18 +478,20 @@ revision, overall status and counts. Non-negotiables:
   one-shot process and every session command line answer through, plus an explicit attach in
   `batch-commit`. "Operating on a model store" is resolved to the registry routes whose write
   commands publish model revisions: the modelling, definition, construction and recorded-input
-  routes, the reference and numbering routes, and `create-project`. Writes outside that set
-  carry no summary, each for a stated reason: the store-level primitives (`put-blob`,
-  `commit-revision`) manage blobs and revisions of arbitrary content; `export-view`,
-  `screenshot-view`, `export`, `export-bom`, `schedule-export`, the changeset and IFC routes
-  and the drawing documents render output files or their own documents; the named-view route
-  stores display state and `add-library` writes the named library file; history, coordinator
-  and coordination manage compaction, leases and descriptors; and the routes that return
-  before `dispatch` (`session`, the batch words, `commands`) run no model write in their own
-  process. The summary shapes: a checked model reports `revision_id`, `status`
-  (`green | red | unknown`), `counts` per rule and `findings_total`; a drafted write reports
-  `status` `unknown` with `reason` `draft_not_evaluated` and names no revision; an
-  unavailable check reports `status` `unavailable` with the reason — never silently green.
+  routes, and the reference and numbering routes. Writes outside that set carry no summary,
+  each for a stated reason: the store-level primitives (`put-blob`, `commit-revision`) manage
+  blobs and revisions of arbitrary content; `export-view`, `screenshot-view`, `export`,
+  `export-bom`, `schedule-export`, the changeset and IFC routes and the drawing documents
+  render output files or their own documents; the named-view route stores display state and
+  `add-library` writes the named library file; history, coordinator and coordination manage
+  compaction, leases and descriptors; `create-project` provisions a fresh store and changes
+  no modelled revision (it takes `--parent`/`--name`, no `--store`, so the summary seam does
+  not reach it); and the routes that return before `dispatch` (`session`, the batch words,
+  `commands`) run no model write in their own process. The summary shapes: a checked model
+  reports `revision_id`, `status` (`green | red | unknown`), `counts` per rule and
+  `findings_total`; a drafted write reports `status` `unknown` with `reason`
+  `draft_not_evaluated` and names no revision; an unavailable check reports `status`
+  `unavailable` with the reason — never silently green.
 
 ### 11.1 Whole-reply assertion audit and cost honesty
 

@@ -285,18 +285,18 @@ fn number(value: f64) -> Json {
 }
 
 /// The routes whose write commands operate on the model store: the modelling,
-/// definition and construction routes, the recorded-input route, the reference
-/// and numbering routes and the project-creating route. A successful write on
-/// one of them carries the `checks` summary. The other routes deliberately
-/// carry none: `Generic` runs the store-level primitives (`put-blob`,
-/// `commit-revision`, recovery) whose layers need not be model content; the
-/// export routes (`ExportView`, `ScreenshotView`, `Export`) and `Bom`,
-/// `Schedule`, `Changeset`, `Drawing` and `Ifc` render output files or their
-/// own documents; `Views` manages display state and `Library` the named
-/// library file; `History`, `Coordinator` and `Coordination` manage
-/// compaction, leases and coordination descriptors; `Session`, `Batch` and
-/// `Commands` run no model write in their own process. These routes return
-/// before `dispatch`, so the summary seam never sees them.
+/// definition and construction routes, the recorded-input route and the
+/// reference and numbering routes. A successful write on one of them carries
+/// the `checks` summary. The other routes deliberately carry none: `Generic`
+/// runs the store-level primitives (`put-blob`, `commit-revision`, recovery)
+/// whose layers need not be model content; the export routes (`ExportView`,
+/// `ScreenshotView`, `Export`) and `Bom`, `Schedule`, `Changeset`, `Drawing`
+/// and `Ifc` render output files or their own documents; `Views` manages
+/// display state and `Library` the named library file; `History`, `Coordinator`
+/// and `Coordination` manage compaction, leases and coordination descriptors;
+/// `Project` provisions a fresh store and changes no modelled revision; and
+/// `Session`, `Batch` and `Commands` run no model write in their own process —
+/// those return before `dispatch`, so the summary seam never sees them.
 const MODEL_WRITE_ROUTES: &[Route] = &[
     Route::Plate,
     Route::Weld,
@@ -311,7 +311,6 @@ const MODEL_WRITE_ROUTES: &[Route] = &[
     Route::Record,
     Route::Reference,
     Route::Numbering,
-    Route::Project,
 ];
 
 /// The findings page the summary materializes: the status, counts and total
