@@ -1,0 +1,188 @@
+#usda 1.0
+(
+    doc = "BeamCraft India structural steel grades: the complete published grade set of IS 2062:2011 (hot rolled medium and high tensile structural steel — plates, strips, shapes and sections), clause 5 designation by grade and quality: the minimum-yield E grades E 250, E 275, E 300, E 350, E 410 with the four sub-qualities A (impact test not required), BR (impact test optional, room temperature), B0 (impact test mandatory at 0 degrees C) and C (impact test mandatory at minus 20 degrees C), and E 450, E 550, E 600 and E 650 with the two sub-qualities A and BR the standard publishes for the higher levels — twenty-eight designations, written without the spaces the printed table uses. The 2011 edition replaced the 2006 Fe designations (Fe 410W and friends) with the minimum-yield E system; the Fe forms ride no rows. Re-entered by hand as our own data; no text or table is copied from the standard. The density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1). Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "india-is-2062-materials"
+        string "bim:library:title" = "IS 2062:2011 structural steel grades"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standard IS 2062:2011 grade and quality designations, the complete 2011 grade set of tables 1 and 2, re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "IS_E250A"
+        {
+            string steel:material:grade = "E250A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E250B0"
+        {
+            string steel:material:grade = "E250B0"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E250BR"
+        {
+            string steel:material:grade = "E250BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E250C"
+        {
+            string steel:material:grade = "E250C"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E275A"
+        {
+            string steel:material:grade = "E275A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E275B0"
+        {
+            string steel:material:grade = "E275B0"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E275BR"
+        {
+            string steel:material:grade = "E275BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E275C"
+        {
+            string steel:material:grade = "E275C"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E300A"
+        {
+            string steel:material:grade = "E300A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E300B0"
+        {
+            string steel:material:grade = "E300B0"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E300BR"
+        {
+            string steel:material:grade = "E300BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E300C"
+        {
+            string steel:material:grade = "E300C"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E350A"
+        {
+            string steel:material:grade = "E350A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E350B0"
+        {
+            string steel:material:grade = "E350B0"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E350BR"
+        {
+            string steel:material:grade = "E350BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E350C"
+        {
+            string steel:material:grade = "E350C"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E410A"
+        {
+            string steel:material:grade = "E410A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E410B0"
+        {
+            string steel:material:grade = "E410B0"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E410BR"
+        {
+            string steel:material:grade = "E410BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E410C"
+        {
+            string steel:material:grade = "E410C"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E450A"
+        {
+            string steel:material:grade = "E450A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E450BR"
+        {
+            string steel:material:grade = "E450BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E550A"
+        {
+            string steel:material:grade = "E550A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E550BR"
+        {
+            string steel:material:grade = "E550BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E600A"
+        {
+            string steel:material:grade = "E600A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E600BR"
+        {
+            string steel:material:grade = "E600BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E650A"
+        {
+            string steel:material:grade = "E650A"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "IS_E650BR"
+        {
+            string steel:material:grade = "E650BR"
+            string steel:material:standard = "IS 2062-2011"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}
