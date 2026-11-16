@@ -230,12 +230,23 @@ missing. Consequences:
 ### 5.1 Local attachment of welds
 
 Finding a weld record between two element IDs does not locate it at the joint. A weld's local
-attachment is **validated** against the final evaluated bodies: the weld solid must lie at the
-declared contact of the two connected parts within the product tolerance. A weld with no path
-is checked at its placed solid; a weld whose placed solid cannot be located at the declared
-joint is **not** locally attached: the dependent checks (clearance, gap) are `unknown` with
-reason `attachment_unvalidated`, while independent checks (the corner requirement, clash,
-completeness) are unaffected. A path stored on the weld is a hint for the validation, not proof.
+attachment is **validated** against the final evaluated bodies, one authored path point at a
+time (#724): a point lies at the declared contact of the two connected parts when either
+
+- it lies within the product tolerance of **both** surfaces — a tight fit; or
+- it lies **between the two facing surfaces**: it is outside the material of both parts, and
+  the opening it spans — the sum of its distances to the two surfaces — agrees within the
+  product tolerance with the distance between the two nearest surface points, so the point
+  spans the contact rather than air beside it.
+
+The second case is what lets an attached weld bridge an opening of any size: local attachment
+does not cap the measurable opening at the contact tolerance, and the gap rule judges the
+spanned opening against the recorded requirement. A weld with no path is checked at its placed
+solid; a weld whose placed solid cannot be located at the declared joint is **not** locally
+attached: the dependent checks (clearance, gap) are `unknown` with reason
+`attachment_unvalidated`, while independent checks (the corner requirement, clash,
+completeness) are unaffected. A path stored on the weld is a hint for the validation, not
+proof.
 
 ### 5.2 Recorded shape (slice 3, 2026-11-15)
 
@@ -315,14 +326,17 @@ The requirements any implementation must satisfy:
 
 **Validated in slice 3 (2026-11-15).** Local weld attachment and the local gap are measured
 against the two final evaluated meshes with the kernel's exact point-to-triangle distances: a
-weld is locally attached only when every authored path point lies within the product tolerance
-of both surfaces — the near-threshold rule decides the band edges, and a pathless A06 weld has
-no placed solid at the joint, so it is never locally attached. The local gap of an attached
-weld is the smallest summed point-to-surface distance of the path points: the opening the weld
-bridges at the declared contact. Both measurements are sample-based like the depth
-measurement: a surface region no sample reaches can only make the true distance smaller, and
-a permitted range beyond roughly twice the contact tolerance can never be satisfied by an
-attached weld; both ceilings are recorded here.
+weld is locally attached when every authored path point lies at the declared contact — within
+the product tolerance of both surfaces, or between the two facing surfaces (section 5.1, #724)
+— and a pathless A06 weld has no placed solid at the joint, so it is never locally attached.
+The local gap of an attached weld is the smallest summed point-to-surface distance of the path
+points: the opening the weld bridges at the declared contact, of any size. Both measurements
+are sample-based like the depth measurement: a surface region no sample reaches can only make
+the true distance smaller. The slice-3 ceiling "a permitted range beyond roughly twice the
+contact tolerance can never be satisfied by an attached weld" is dropped by #724 (2026-11-16):
+the between-surfaces attachment test spans openings of any size, and the span's agreement
+check (summed distances versus the distance between the nearest surface points) is what the
+near-threshold rule decides.
 
 **Validated in slice 4 (2026-11-16).** The corner-cut rules derive the requirement's corner
 from the final evaluated geometry on every run: the candidate corners are the rib's authored
@@ -374,6 +388,10 @@ mesh approximation and half the contact tolerance together. Then:
 - pass/fail only when the interval lies **strictly inside** the acceptance region or **strictly
   outside** it — that is, `δ` is tested at the band edges of the acceptance region, and the
   recorded `tolerance_mm` therefore widens what is accepted, not just what is reported;
+- a band edge at or below the physical floor of the measured quantity cannot straddle (#724):
+  no physical value lies beyond it. A measured gap is never negative, so a permitted-range
+  lower edge at or below zero is never tested — only the upper edge decides there, and a
+  tight fit against a range `[0, max]` passes with any non-negative recorded tolerance;
 - `unknown` with reason `indeterminate` and the measured value reported, when the interval
   straddles a band edge — a near-threshold result never silently resolves to pass or fail, and
   its resolution must not depend on artificial decomposition boundaries.
