@@ -1382,10 +1382,12 @@ fn equivalent_final_cuts_receive_equivalent_check_results() {
 }
 
 #[test]
-fn an_equal_setback_rounding_never_receives_the_chamfer_fix() {
-    // The same undersized 5 mm setback: the chamfer carries the one
-    // unambiguous set-plate-corner repair, the rounding — the same rule, the
-    // same status, the same measured 5 — carries none. Equal setbacks do not
+fn an_equal_setback_rounding_is_not_the_chamfer_it_mimics() {
+    // The §9 counterexample at the level the report carries: a 5 mm setback
+    // authored as a chamfer and as a rounding share the rule and the status,
+    // but the rounding's admitted leg is 5·(2 − √2) ≈ 2.929 — less freed
+    // space at a right-angle corner, a different measured value — and only
+    // the chamfer receives the set-plate-corner repair. Equal setbacks do not
     // make the rounding the chamfer the requirement's repair would set
     // (contract 9).
     let f = Fixture::new();
@@ -1393,23 +1395,34 @@ fn an_equal_setback_rounding_never_receives_the_chamfer_fix() {
     let (base, column, rib) = f.joint(&steel, &["0=chamfer:5"]);
     f.corner(&rib, &base, &column, &[]);
     let (_, reply) = f.check(&[]);
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
-    assert_eq!(text(finding, "status"), "fail");
-    let measured = at(finding, &["measured_mm"]).float().unwrap();
-    assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
-    assert_eq!(text(at(finding, &["fix"]), "command"), "set-plate-corner");
+    let chamfer = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(chamfer, "status"), "fail");
+    let chamfer_measured = at(chamfer, &["measured_mm"]).float().unwrap();
+    assert!((chamfer_measured - 5.0).abs() <= 1e-9, "{chamfer_measured}");
+    assert_eq!(text(at(chamfer, &["fix"]), "command"), "set-plate-corner");
     let f = Fixture::new();
     let steel = f.material();
     let (base, column, rib) = f.joint(&steel, &["0=round:5"]);
     f.corner(&rib, &base, &column, &[]);
     let (_, reply) = f.check(&[]);
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
-    assert_eq!(text(finding, "status"), "fail");
-    let measured = at(finding, &["measured_mm"]).float().unwrap();
-    assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
+    let rounding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(rounding, "status"), "fail");
+    let rounding_measured = at(rounding, &["measured_mm"]).float().unwrap();
+    let admitted = 5.0 * (2.0 - std::f64::consts::SQRT_2);
+    // Sampled on the faceted arc within its chord-deviation bound (#725).
     assert!(
-        matches!(finding.get("fix"), Ok(Json::Null)),
-        "{finding:?}"
+        (rounding_measured - admitted).abs() <= 0.05,
+        "{rounding_measured} vs {admitted}"
+    );
+    // The non-equivalence, in the report itself: the measured values differ.
+    assert!(
+        (chamfer_measured - rounding_measured).abs() > 1.0,
+        "{chamfer_measured} vs {rounding_measured}"
+    );
+    // And the repair stays the chamfer's alone.
+    assert!(
+        matches!(rounding.get("fix"), Ok(Json::Null)),
+        "{rounding:?}"
     );
 }
 
