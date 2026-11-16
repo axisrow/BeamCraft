@@ -817,9 +817,7 @@ fn weld_connection(
                 continue;
             }
         };
-        let bound = body_a
-            .mesh_bound_mm
-            .max(body_b.mesh_bound_mm);
+        let bound = body_a.mesh_bound_mm.max(body_b.mesh_bound_mm);
         let delta = bound.max(tolerance_mm / 2.0);
         match range_threshold(
             gap,
@@ -1363,10 +1361,7 @@ pub fn corner_cut_findings(
         // One pass over the final evaluated body: per mesh vertex, the contact
         // decisions against the two neighbours feed the corner derivation, which
         // also measures the two legs (contract 7.1).
-        let bound = rib
-            .mesh_bound_mm
-            .max(a.mesh_bound_mm)
-            .max(b.mesh_bound_mm);
+        let bound = rib.mesh_bound_mm.max(a.mesh_bound_mm).max(b.mesh_bound_mm);
         let delta = bound.max(tolerance_mm / 2.0);
         let upper_edge = match &requirement.upper_bound {
             Some(bound) => bound.max_mm + bound.tolerance_mm,
