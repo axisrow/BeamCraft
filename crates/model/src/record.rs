@@ -81,6 +81,74 @@ pub struct JointIntent {
     pub connections: Vec<DeclaredConnection>,
 }
 
+/// What the owner recorded a corner-cut requirement for (contract section 4.1). The kind
+/// names the purpose of the cut; no supported rule distinguishes them in v0.1, so the
+/// kind is provenance carried with the requirement, not a rule selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CutPurpose {
+    /// Space for the joint at the corner (the sample's case).
+    Clearance,
+    /// Room to reach the joint beyond an obstruction.
+    Access,
+}
+
+impl CutPurpose {
+    /// The stored token of the purpose.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Clearance => "clearance",
+            Self::Access => "access",
+        }
+    }
+
+    /// The purpose of a stored token, and nothing else.
+    pub fn of_token(token: &str) -> Option<Self> {
+        match token {
+            "clearance" => Some(Self::Clearance),
+            "access" => Some(Self::Access),
+            _ => None,
+        }
+    }
+}
+
+/// A recorded standalone upper bound on the corner cut (contract section 4.1): the
+/// owner's own "no more than X" limit, which replaces the acceptance band's upper edge
+/// (the recorded size) when present. No normative upper bound exists, so the bound is
+/// never invented — it is only ever this recorded one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UpperBound {
+    /// The standalone maximum cut size in millimetres.
+    pub max_mm: f64,
+    /// The recorded tolerance on that maximum (contract section 7.3).
+    pub tolerance_mm: f64,
+}
+
+/// The recorded corner-cut requirement of one rib corner (contract section 4.1): the rib
+/// element, the two neighbour elements whose surfaces sandwich the corner, the required
+/// cut size with its tolerance, an optional standalone upper bound, and the recorded
+/// purpose. The corner itself is never stored: on every run the check re-derives the
+/// rib's corner adjacent to both neighbours from the final evaluated geometry, and an
+/// edit that leaves it ambiguous reports `target_unresolved` instead of retargeting
+/// (contract section 4.3). The basis is the owner in v0.1 — no normative corner-cut rule
+/// exists — so no basis field is stored, and the record's label carries the owner's note.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CornerCutRequirement {
+    /// The rib element carrying the corner.
+    pub target: ElementId,
+    /// The two neighbours whose surfaces sandwich the corner, in any order.
+    pub neighbours: [ElementId; 2],
+    /// The required cut size in millimetres (the sample: 10.0). The acceptance band's
+    /// upper edge is this size plus the tolerance, so the recorded size is itself the
+    /// upper bound a `CORNER_OVERCUT` verdict uses unless a standalone bound is present.
+    pub required_mm: f64,
+    /// The recorded tolerance on the comparison (contract section 7.3).
+    pub tolerance_mm: f64,
+    /// The recorded standalone maximum, when the owner states one.
+    pub upper_bound: Option<UpperBound>,
+    /// The recorded purpose of the cut.
+    pub purpose: CutPurpose,
+}
+
 /// The recorded gap requirement of one declared weld connection (contract section 4.1):
 /// the permitted local gap range with the tolerance on the comparison. The basis is the
 /// owner in v0.1 — no normative permitted-gap rule is supported — so no basis field is
@@ -108,6 +176,8 @@ pub enum RecordPayload {
     JointIntent(JointIntent),
     /// The gap requirement of one declared weld connection.
     GapRequirement(GapRequirement),
+    /// The corner-cut requirement of one rib corner.
+    CornerCut(CornerCutRequirement),
 }
 
 /// One recorded input: an authored element of kind `record`.
@@ -128,6 +198,81 @@ fn admit_dimension(
 ) -> Result<(), CommandError> {
     if !value.is_finite() || value.abs() > DIMENSION_CAP_MM {
         return Err(CommandError::new(ErrorCode::InvalidArgument, field, what));
+    }
+    Ok(())
+}
+
+fn admit_corner_cut(corner: &CornerCutRequirement) -> Result<(), CommandError> {
+    if corner.target == corner.neighbours[0]
+        || corner.target == corner.neighbours[1]
+        || corner.neighbours[0] == corner.neighbours[1]
+    {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "target",
+            "a corner-cut requirement names three distinct elements: the rib and two \
+             neighbours",
+        ));
+    }
+    admit_dimension(
+        corner.required_mm,
+        "required_mm",
+        "must be a bounded millimetre value",
+    )?;
+    admit_dimension(
+        corner.tolerance_mm,
+        "tolerance_mm",
+        "must be a bounded millimetre value",
+    )?;
+    if corner.required_mm <= 0.0 {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "required_mm",
+            "a required corner cut is a positive size",
+        ));
+    }
+    if corner.tolerance_mm < 0.0 {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "tolerance_mm",
+            "a tolerance is never negative",
+        ));
+    }
+    match &corner.upper_bound {
+        None => {}
+        Some(bound) => {
+            admit_dimension(
+                bound.max_mm,
+                "upper_bound_mm",
+                "must be a bounded millimetre value",
+            )?;
+            admit_dimension(
+                bound.tolerance_mm,
+                "upper_bound_tolerance_mm",
+                "must be a bounded millimetre value",
+            )?;
+            if bound.max_mm <= 0.0 {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "upper_bound_mm",
+                    "a recorded maximum is a positive size",
+                ));
+            }
+            if bound.tolerance_mm < 0.0 {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "upper_bound_tolerance_mm",
+                    "a tolerance is never negative",
+                ));
+            }
+            if corner.required_mm - corner.tolerance_mm >= bound.max_mm + bound.tolerance_mm {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "upper_bound_mm",
+                    "the recorded maximum must leave the acceptance band non-empty",
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -240,6 +385,7 @@ impl Record {
         match &self.payload {
             RecordPayload::JointIntent(intent) => admit_intent(intent),
             RecordPayload::GapRequirement(gap) => admit_gap(gap),
+            RecordPayload::CornerCut(corner) => admit_corner_cut(corner),
         }
     }
 
@@ -248,6 +394,7 @@ impl Record {
         match self.payload {
             RecordPayload::JointIntent(_) => "joint_intent",
             RecordPayload::GapRequirement(_) => "gap_requirement",
+            RecordPayload::CornerCut(_) => "corner_cut",
         }
     }
 }
@@ -298,6 +445,25 @@ impl CreateRecord {
                 bytes.extend_from_slice(&gap.permitted_min_mm.to_le_bytes());
                 bytes.extend_from_slice(&gap.permitted_max_mm.to_le_bytes());
                 bytes.extend_from_slice(&gap.tolerance_mm.to_le_bytes());
+            }
+            RecordPayload::CornerCut(corner) => {
+                bytes.extend_from_slice(b"corner:");
+                bytes.extend_from_slice(&corner.target.to_string().into_bytes());
+                for neighbour in corner.neighbours {
+                    bytes.push(b'|');
+                    bytes.extend_from_slice(&neighbour.to_string().into_bytes());
+                }
+                bytes.extend_from_slice(&corner.required_mm.to_le_bytes());
+                bytes.extend_from_slice(&corner.tolerance_mm.to_le_bytes());
+                match &corner.upper_bound {
+                    None => bytes.push(b'-'),
+                    Some(bound) => {
+                        bytes.push(b'+');
+                        bytes.extend_from_slice(&bound.max_mm.to_le_bytes());
+                        bytes.extend_from_slice(&bound.tolerance_mm.to_le_bytes());
+                    }
+                }
+                bytes.extend_from_slice(corner.purpose.token().as_bytes());
             }
         }
         Sha256::digest(&bytes).map_err(|_| {

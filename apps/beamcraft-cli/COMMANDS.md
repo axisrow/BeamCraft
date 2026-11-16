@@ -1398,10 +1398,12 @@ annotation-list --store ROOT
 write.
 
 ```text
-record-create --store ROOT --name TEXT --kind joint_intent|gap_requirement --new-id UUID
-    [--scope UUID,UUID,...] [--connection UUID:WELD|CONTACT:UUID] [--gap-a UUID] [--gap-b UUID]
-    [--gap-min MM] [--gap-max MM] [--gap-tolerance MM] [--op-id UUID] [--revision-id UUID]
-    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+record-create --store ROOT --name TEXT --kind joint_intent|gap_requirement|corner_cut
+    --new-id UUID [--scope UUID,UUID,...] [--connection UUID:WELD|CONTACT:UUID] [--gap-a UUID]
+    [--gap-b UUID] [--gap-min MM] [--gap-max MM] [--gap-tolerance MM] [--target UUID]
+    [--neighbours UUID,UUID] [--required-mm MM] [--tolerance-mm MM] [--upper-bound-mm MM]
+    [--upper-bound-tolerance-mm MM] [--purpose clearance|access] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### record-list

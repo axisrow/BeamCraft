@@ -49,6 +49,9 @@ fn inputs_of(store: &RevisionStore) -> Run<steel::engine::check::RecordedInputs>
             beamcraft_model::record::RecordPayload::GapRequirement(gap) => {
                 inputs.gaps.push(gap);
             }
+            beamcraft_model::record::RecordPayload::CornerCut(corner) => {
+                inputs.corner_cuts.push(corner);
+            }
         }
     }
     if let Some(joint) = &mut inputs.intent {
@@ -186,9 +189,10 @@ fn row_json(row: &Coverage) -> Json {
     ])
 }
 
-/// One finding of the reply. The `fix` stays null in this slice: a fix is
-/// present only when the intended repair and all its inputs are unambiguous
-/// (contract section 9), and no repair of this slice's rules is.
+/// One finding of the reply. The `fix` is present only when the intended repair
+/// and all its inputs are unambiguous (contract section 9): the corner-cut rule
+/// offers `set-plate-corner` with the required chamfer at the authored corner
+/// vertex, and every other finding stays null.
 fn finding_json(finding: &check::Finding) -> Json {
     Json::object([
         ("rule", Json::text(finding.rule)),
@@ -240,7 +244,25 @@ fn finding_json(finding: &check::Finding) -> Json {
                     .collect(),
             ),
         ),
-        ("fix", Json::Null),
+        (
+            "fix",
+            match &finding.fix {
+                None => Json::Null,
+                Some(fix) => Json::object([
+                    ("command", Json::text(fix.command)),
+                    (
+                        "arguments",
+                        Json::Array(
+                            fix.arguments
+                                .iter()
+                                .map(|argument| Json::text(argument.clone()))
+                                .collect(),
+                        ),
+                    ),
+                    ("effect", Json::text(fix.effect.clone())),
+                ]),
+            },
+        ),
     ])
 }
 

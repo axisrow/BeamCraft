@@ -2349,7 +2349,7 @@ pub const COMMANDS: &[Command] = &[
         &[
             req("--store", "ROOT"),
             req("--name", "TEXT"),
-            req("--kind", "joint_intent|gap_requirement"),
+            req("--kind", "joint_intent|gap_requirement|corner_cut"),
             req("--new-id", "UUID"),
             opt("--scope", "UUID,UUID,..."),
             opt("--connection", "UUID:WELD|CONTACT:UUID"),
@@ -2358,6 +2358,13 @@ pub const COMMANDS: &[Command] = &[
             opt("--gap-min", "MM"),
             opt("--gap-max", "MM"),
             opt("--gap-tolerance", "MM"),
+            opt("--target", "UUID"),
+            opt("--neighbours", "UUID,UUID"),
+            opt("--required-mm", "MM"),
+            opt("--tolerance-mm", "MM"),
+            opt("--upper-bound-mm", "MM"),
+            opt("--upper-bound-tolerance-mm", "MM"),
+            opt("--purpose", "clearance|access"),
         ],
     ),
     entry(

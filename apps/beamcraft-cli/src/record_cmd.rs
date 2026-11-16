@@ -17,7 +17,8 @@ use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::record::{
-    ConnectionKind, DeclaredConnection, GapRequirement, JointIntent, Record, RecordPayload,
+    ConnectionKind, CornerCutRequirement, CutPurpose, DeclaredConnection, GapRequirement,
+    JointIntent, Record, RecordPayload,
 };
 use session::Refusal;
 use std::collections::BTreeMap;
@@ -63,6 +64,13 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--gap-min",
             "--gap-max",
             "--gap-tolerance",
+            "--target",
+            "--neighbours",
+            "--required-mm",
+            "--tolerance-mm",
+            "--upper-bound-mm",
+            "--upper-bound-tolerance-mm",
+            "--purpose",
         ],
         "record-list" => &["--store"],
         _ => return Err(invalid("unknown command")),
@@ -180,7 +188,69 @@ fn run(args: &[OsString]) -> Run<Json> {
                 tolerance_mm: number("--gap-tolerance")?,
             })
         }
-        _ => return Err(invalid("--kind is one of joint_intent or gap_requirement")),
+        "corner_cut" => {
+            let target = given("--target")
+                .ok_or_else(|| invalid("a corner-cut requirement needs --target"))?;
+            let neighbours_text = given("--neighbours")
+                .ok_or_else(|| invalid("a corner-cut requirement needs --neighbours UUID,UUID (the two elements whose surfaces sandwich the corner)"))?;
+            let mut neighbours = neighbours_text
+                .split(',')
+                .map(|text| ElementId::parse(text.trim()).map_err(id_error));
+            let (Some(first), Some(second), None) =
+                (neighbours.next(), neighbours.next(), neighbours.next())
+            else {
+                return Err(invalid(
+                    "--neighbours takes exactly two comma-separated element ids",
+                ));
+            };
+            let number = |key: &'static str, what: &'static str| -> Run<f64> {
+                given(key)
+                    .map(|text| text.parse::<f64>())
+                    .transpose()
+                    .map_err(|_| invalid(what))?
+                    .ok_or_else(|| invalid(what))
+            };
+            let upper_bound = match given("--upper-bound-mm") {
+                None => None,
+                Some(text) => Some(beamcraft_model::record::UpperBound {
+                    max_mm: text
+                        .parse::<f64>()
+                        .map_err(|_| invalid("--upper-bound-mm is a number"))?,
+                    tolerance_mm: match given("--upper-bound-tolerance-mm") {
+                        None => 0.0,
+                        Some(text) => text
+                            .parse::<f64>()
+                            .map_err(|_| invalid("--upper-bound-tolerance-mm is a number"))?,
+                    },
+                }),
+            };
+            let purpose = match given("--purpose") {
+                None | Some("clearance") => CutPurpose::Clearance,
+                Some("access") => CutPurpose::Access,
+                Some(_) => {
+                    return Err(invalid("--purpose is one of clearance or access"));
+                }
+            };
+            RecordPayload::CornerCut(CornerCutRequirement {
+                target: ElementId::parse(target).map_err(id_error)?,
+                neighbours: [first?, second?],
+                required_mm: number(
+                    "--required-mm",
+                    "a corner-cut requirement needs --required-mm",
+                )?,
+                tolerance_mm: number(
+                    "--tolerance-mm",
+                    "a corner-cut requirement needs --tolerance-mm",
+                )?,
+                upper_bound,
+                purpose,
+            })
+        }
+        _ => {
+            return Err(invalid(
+                "--kind is one of joint_intent, gap_requirement or corner_cut",
+            ));
+        }
     };
     let command = beamcraft_model::record::CreateRecord {
         record: Record {
@@ -240,6 +310,37 @@ fn list_json(stored: &[Record]) -> Run<Json> {
                         fields.push(("permitted_min_mm", number(gap.permitted_min_mm)?));
                         fields.push(("permitted_max_mm", number(gap.permitted_max_mm)?));
                         fields.push(("tolerance_mm", number(gap.tolerance_mm)?));
+                    }
+                    RecordPayload::CornerCut(corner) => {
+                        fields.push(("kind", Json::text("corner_cut")));
+                        fields.push(("target", Json::text(corner.target.to_string())));
+                        fields.push((
+                            "neighbours",
+                            Json::Array(
+                                corner
+                                    .neighbours
+                                    .iter()
+                                    .map(|id| Json::text(id.to_string()))
+                                    .collect(),
+                            ),
+                        ));
+                        fields.push(("required_mm", number(corner.required_mm)?));
+                        fields.push(("tolerance_mm", number(corner.tolerance_mm)?));
+                        fields.push((
+                            "upper_bound_mm",
+                            match &corner.upper_bound {
+                                None => Json::Null,
+                                Some(bound) => number(bound.max_mm)?,
+                            },
+                        ));
+                        fields.push((
+                            "upper_bound_tolerance_mm",
+                            match &corner.upper_bound {
+                                None => Json::Null,
+                                Some(bound) => number(bound.tolerance_mm)?,
+                            },
+                        ));
+                        fields.push(("purpose", Json::text(corner.purpose.token())));
                     }
                 }
                 Ok(Json::Object(
