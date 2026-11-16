@@ -357,7 +357,7 @@ pub fn penetration_depth(
         if measured > limits.max_candidate_pairs {
             break;
         }
-        let depth = point_shell_distance(*sample, &shell);
+        let depth = point_shell_closest(*sample, &shell).0;
         deepest = Some(match deepest {
             Some(best) if best >= depth => best,
             _ => depth,
@@ -371,7 +371,15 @@ pub fn penetration_depth(
 /// given triangles, not a predicate: a faceted arc reads its chord deviation,
 /// and the caller's tolerance band absorbs that bound.
 pub fn point_gap(point: [f64; 3], mesh: &TriMesh) -> Result<f64, ContactError> {
-    Ok(point_shell_distance(point, &Shell::of(mesh)?))
+    Ok(point_shell_closest(point, &Shell::of(mesh)?).0)
+}
+
+/// The measured distance from a point to a mesh's triangles and the closest
+/// surface point, in the meshes' coordinate units (millimetres in the
+/// product). Like [`point_gap`], a measurement over the given triangles, not
+/// a predicate: the closest point is where that measurement is attained.
+pub fn point_gap_closest(point: [f64; 3], mesh: &TriMesh) -> Result<(f64, [f64; 3]), ContactError> {
+    Ok(point_shell_closest(point, &Shell::of(mesh)?))
 }
 
 /// The measured minimum distance between the two meshes' surfaces, in their
@@ -392,7 +400,7 @@ pub fn surface_gap(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<f64, Cont
                 return Ok(best);
             }
             measured += 1;
-            let depth = point_shell_distance(*sample, shell);
+            let depth = point_shell_closest(*sample, shell).0;
             if depth < best {
                 best = depth;
             }
@@ -423,21 +431,25 @@ fn samples_of(mesh: &TriMesh) -> Result<Vec<[f64; 3]>, ContactError> {
     Ok(samples)
 }
 
-/// The distance from a point to a shell's triangles in `f64` (a measurement,
-/// not a predicate; the caller's tolerance band absorbs its rounding).
-fn point_shell_distance(point: [f64; 3], shell: &Shell) -> f64 {
+/// The distance from a point to a shell's triangles in `f64` and the closest
+/// surface point (a measurement, not a predicate; the caller's tolerance band
+/// absorbs its rounding).
+fn point_shell_closest(point: [f64; 3], shell: &Shell) -> (f64, [f64; 3]) {
     let mut best = f64::INFINITY;
+    let mut closest = point;
     for tri in &shell.tris {
-        let d = point_triangle_distance2(point, tri);
-        if d < best {
-            best = d;
+        let (d2, at) = point_triangle_closest2(point, tri);
+        if d2 < best {
+            best = d2;
+            closest = at;
         }
     }
-    best.sqrt()
+    (best.sqrt(), closest)
 }
 
-/// Squared distance from a point to a triangle (the standard region walk).
-fn point_triangle_distance2(p: [f64; 3], t: &Tri) -> f64 {
+/// Squared distance from a point to a triangle and the closest point on it
+/// (the standard region walk).
+fn point_triangle_closest2(p: [f64; 3], t: &Tri) -> (f64, [f64; 3]) {
     let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let (a, b, c) = (t[0], t[1], t[2]);
@@ -445,43 +457,41 @@ fn point_triangle_distance2(p: [f64; 3], t: &Tri) -> f64 {
     let d1 = dot(ab, ap);
     let d2 = dot(ac, ap);
     if d1 <= 0.0 && d2 <= 0.0 {
-        return dot(ap, ap);
+        return (dot(ap, ap), a);
     }
     let bp = sub(p, b);
     let d3 = dot(ab, bp);
     let d4 = dot(ac, bp);
     if d3 >= 0.0 && d4 <= d3 {
-        return dot(bp, bp);
+        return (dot(bp, bp), b);
     }
     let vc = d1 * d4 - d3 * d2;
     if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
         let v = d1 / (d1 - d3);
         let foot = [a[0] + v * ab[0], a[1] + v * ab[1], a[2] + v * ab[2]];
-        return dot(sub(p, foot), sub(p, foot));
+        return (dot(sub(p, foot), sub(p, foot)), foot);
     }
     let cp = sub(p, c);
     let d5 = dot(ab, cp);
     let d6 = dot(ac, cp);
     if d6 >= 0.0 && d5 <= d6 {
-        return dot(cp, cp);
+        return (dot(cp, cp), c);
     }
     let vb = d5 * d2 - d1 * d6;
     if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
         let w = d2 / (d2 - d6);
         let foot = [a[0] + w * ac[0], a[1] + w * ac[1], a[2] + w * ac[2]];
-        return dot(sub(p, foot), sub(p, foot));
+        return (dot(sub(p, foot), sub(p, foot)), foot);
     }
     let va = d3 * d6 - d5 * d4;
     if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
         let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        let foot = [
-            b[0] + w * sub(c, b)[0],
-            b[1] + w * sub(c, b)[1],
-            b[2] + w * sub(c, b)[2],
-        ];
-        return dot(sub(p, foot), sub(p, foot));
+        let cb = sub(c, b);
+        let foot = [b[0] + w * cb[0], b[1] + w * cb[1], b[2] + w * cb[2]];
+        return (dot(sub(p, foot), sub(p, foot)), foot);
     }
-    // Inside the triangle region: the distance to its plane.
+    // Inside the triangle region: the distance to its plane, attained at the
+    // perpendicular projection of the point.
     let n = [
         ab[1] * ac[2] - ab[2] * ac[1],
         ab[2] * ac[0] - ab[0] * ac[2],
@@ -489,10 +499,15 @@ fn point_triangle_distance2(p: [f64; 3], t: &Tri) -> f64 {
     ];
     let nn = dot(n, n);
     if nn <= 0.0 {
-        return 0.0;
+        return (0.0, a);
     }
     let along = dot(ap, n);
-    along * along / nn
+    let foot = [
+        p[0] - n[0] * (along / nn),
+        p[1] - n[1] * (along / nn),
+        p[2] - n[2] * (along / nn),
+    ];
+    (along * along / nn, foot)
 }
 
 /// The face probes of one triangle: for each corner, the midpoint between it
@@ -759,5 +774,39 @@ mod tests {
         let shifted = cube([13.0, 0.0, 10.0], 10.0);
         let d = surface_gap(&a, &shifted, limits()).unwrap();
         assert!((d - 3.0).abs() <= 1e-9, "{d}");
+    }
+
+    #[test]
+    fn point_gap_closest_names_the_surface_point_where_the_distance_is_attained() {
+        let shell = cube([0.0; 3], 10.0);
+        // Above the top face: the projection onto the face region.
+        let (d, at) = point_gap_closest([5.0, 5.0, 12.0], &shell).unwrap();
+        assert!((d - 2.0).abs() <= 1e-9, "{d}");
+        assert!(
+            (at[0] - 5.0).abs() <= 1e-9 && (at[1] - 5.0).abs() <= 1e-9,
+            "{at:?}"
+        );
+        assert!((at[2] - 10.0).abs() <= 1e-9, "{at:?}");
+        // Off an edge: the nearest point sits on the edge line.
+        let (d, at) = point_gap_closest([-3.0, 5.0, 10.0], &shell).unwrap();
+        assert!((d - 3.0).abs() <= 1e-9, "{d}");
+        assert!(
+            at[0].abs() <= 1e-9 && (at[1] - 5.0).abs() <= 1e-9 && (at[2] - 10.0).abs() <= 1e-9,
+            "{at:?}"
+        );
+        // Off the corner: the corner itself.
+        let (d, at) = point_gap_closest([-3.0, -4.0, 10.0], &shell).unwrap();
+        assert!((d - 5.0).abs() <= 1e-9, "{d}");
+        assert!(
+            at[0].abs() <= 1e-9 && at[1].abs() <= 1e-9 && (at[2] - 10.0).abs() <= 1e-9,
+            "{at:?}"
+        );
+        // A point on the surface is its own closest point at zero distance.
+        let (d, at) = point_gap_closest([5.0, 5.0, 10.0], &shell).unwrap();
+        assert_eq!(d, 0.0);
+        assert!(
+            (at[0] - 5.0).abs() <= 1e-9 && (at[1] - 5.0).abs() <= 1e-9,
+            "{at:?}"
+        );
     }
 }

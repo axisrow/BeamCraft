@@ -214,6 +214,11 @@ pub fn near_threshold(measured: f64, bound: f64, tolerance: Option<f64>, delta: 
 /// the acceptance region is `[min - tolerance, max + tolerance]`. `Clear`
 /// reads as "within the permitted range", `Penetrated` as outside it.
 ///
+/// A measured gap is never negative: a lower band edge at or below zero
+/// cannot be straddled, because no physical value lies beyond it, so only
+/// the upper edge decides there (contract section 7.3). A tight fit against
+/// a range `[0, max]` therefore passes with any non-negative tolerance.
+///
 /// Precondition: `min <= max`; the recorded-inputs admission refuses ranges
 /// that violate it, so the rules never guess on a malformed band.
 pub fn range_threshold(
@@ -225,7 +230,15 @@ pub fn range_threshold(
 ) -> ClashState {
     let lo = min - tolerance;
     let hi = max + tolerance;
-    if measured - delta > lo && measured + delta < hi {
+    if lo <= 0.0 {
+        if measured + delta < hi {
+            ClashState::Clear
+        } else if measured - delta > hi {
+            ClashState::Penetrated
+        } else {
+            ClashState::Indeterminate
+        }
+    } else if measured - delta > lo && measured + delta < hi {
         ClashState::Clear
     } else if measured - delta > hi || measured + delta < lo {
         ClashState::Penetrated
@@ -341,8 +354,8 @@ pub enum Proximity {
 /// parts (contract section 5.1).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Attachment {
-    /// Every path point lies on the declared contact within the product
-    /// tolerance, measured against both evaluated bodies.
+    /// Every path point lies at the declared contact: within the product
+    /// tolerance of both surfaces, or between the two facing surfaces.
     Attached,
     /// The placed path provably misses the declared contact: a weld with no
     /// path has no placed solid at the joint at all.
@@ -378,9 +391,12 @@ pub fn proximity_verdict(
 
 /// The local attachment verdict of one weld against its two evaluated parts
 /// (contract section 5.1): every path point must lie at the declared contact
-/// — within the product tolerance of both surfaces, the mesh bounds absorbed
-/// by the near-threshold rule. A weld with no (or an empty) path has no
-/// placed solid at the joint and is never locally attached.
+/// — within the product tolerance of both surfaces (a tight fit), or between
+/// the two facing surfaces of the parts. The second case is what lets an
+/// attached weld bridge an opening of any size: the opening it spans is not
+/// capped at the contact tolerance, and the gap rule judges it. A weld with
+/// no (or an empty) path has no placed solid at the joint and is never
+/// locally attached.
 pub fn attachment_verdict(
     weld: &WeldFact,
     a: &ElementBody,
@@ -392,19 +408,89 @@ pub fn attachment_verdict(
     };
     let mut verdict = Attachment::Attached;
     for point in path {
-        for body in [a, b] {
-            let measured = contact::point_gap(*point, &body.mesh)?;
-            let delta = body.mesh_bound_mm.max(tolerance_mm / 2.0);
-            if measured + delta < tolerance_mm {
-                continue;
-            }
-            if measured - delta > tolerance_mm {
-                return Ok(Attachment::NotAttached);
-            }
-            verdict = Attachment::Indeterminate;
+        match path_point_contact(*point, a, b, tolerance_mm)? {
+            PointContact::On => {}
+            PointContact::Off => return Ok(Attachment::NotAttached),
+            PointContact::Straddles => verdict = Attachment::Indeterminate,
         }
     }
     Ok(verdict)
+}
+
+/// Whether one weld path point sits at the declared contact of its two parts
+/// (contract section 5.1): either within the product tolerance of both
+/// surfaces (a tight fit), or between the two facing surfaces — outside the
+/// material of both parts, with the opening it spans (the summed distances to
+/// the two surfaces) agreeing within the product tolerance with the distance
+/// between the nearest surface points. A point inside either part's material,
+/// or beside the joint in the air, satisfies neither and is provably off.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PointContact {
+    On,
+    Off,
+    Straddles,
+}
+
+fn path_point_contact(
+    point: [f64; 3],
+    a: &ElementBody,
+    b: &ElementBody,
+    tolerance_mm: f64,
+) -> Result<PointContact, ContactError> {
+    // The tight fit: within the tolerance band of both surfaces.
+    let mut tight = PointContact::On;
+    for body in [a, b] {
+        let measured = contact::point_gap(point, &body.mesh)?;
+        let delta = body.mesh_bound_mm.max(tolerance_mm / 2.0);
+        match touch_state(measured, tolerance_mm, delta) {
+            Touch::On => {}
+            Touch::Off => tight = PointContact::Off,
+            Touch::Straddles => {
+                if tight == PointContact::On {
+                    tight = PointContact::Straddles;
+                }
+            }
+        }
+    }
+    // The bridged opening: the point spans the two facing surfaces. A point
+    // inside either part's material is never at the contact; on-surface and
+    // unresolved classifications keep the bridged verdict from deciding.
+    let mut bridged = PointContact::On;
+    for body in [a, b] {
+        match contact::contains(&body.mesh, point, CONTACT_LIMITS)? {
+            Some(true) => bridged = PointContact::Off,
+            None => {
+                if bridged == PointContact::On {
+                    bridged = PointContact::Straddles;
+                }
+            }
+            Some(false) => {}
+        }
+    }
+    let (gap_a, closest_a) = contact::point_gap_closest(point, &a.mesh)?;
+    let (gap_b, closest_b) = contact::point_gap_closest(point, &b.mesh)?;
+    let delta = a.mesh_bound_mm.max(b.mesh_bound_mm).max(tolerance_mm / 2.0);
+    let span = (gap_a + gap_b) - distance(closest_a, closest_b);
+    match touch_state(span, tolerance_mm, delta) {
+        Touch::Off => bridged = PointContact::Off,
+        Touch::Straddles => {
+            if bridged == PointContact::On {
+                bridged = PointContact::Straddles;
+            }
+        }
+        Touch::On => {}
+    }
+    Ok(match (tight, bridged) {
+        (PointContact::On, _) | (_, PointContact::On) => PointContact::On,
+        (PointContact::Off, PointContact::Off) => PointContact::Off,
+        _ => PointContact::Straddles,
+    })
+}
+
+/// The Euclidean distance between two points.
+fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
 }
 
 /// The measured local gap of an attached weld, in millimetres: the smallest
@@ -1559,6 +1645,20 @@ mod tests {
             range_threshold(0.9, 1.0, 2.0, 0.1, 0.25),
             ClashState::Indeterminate
         );
+        // A lower edge at or below zero cannot straddle: the physical gap
+        // is never negative, so a tight fit passes the owner's range
+        // [0, 2] with no recorded tolerance at all (contract section 7.3,
+        // #724). A range whose upper edge sits inside the uncertainty band
+        // (max 0.2, delta 0.25) still straddles that upper edge honestly.
+        assert_eq!(range_threshold(0.0, 0.0, 2.0, 0.0, 0.25), ClashState::Clear);
+        assert_eq!(
+            range_threshold(0.0, 0.0, 2.0, 0.05, 0.25),
+            ClashState::Clear
+        );
+        assert_eq!(
+            range_threshold(0.0, 0.0, 0.2, 0.0, 0.25),
+            ClashState::Indeterminate
+        );
     }
 
     /// Two touching 1000x500x10 plates: a at z in [0, 10], b at z in
@@ -1596,6 +1696,19 @@ mod tests {
         let weld = weld_at(Some(vec![[100.0, 100.0, 10.6]]));
         let attached = attachment_verdict(&weld, &a, &b, CONTACT_TOLERANCE_MM).unwrap();
         assert_eq!(attached, Attachment::Indeterminate);
+        // A path point between the two facing surfaces of a 5 mm opening is
+        // attached too: local attachment does not cap the measurable gap at
+        // the contact tolerance (contract section 5.1, #724).
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 15.0).unwrap();
+        let weld = weld_at(Some(vec![[100.0, 100.0, 12.5]]));
+        let attached = attachment_verdict(&weld, &a, &b, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(attached, Attachment::Attached);
+        // The same opening with the path beside the plate edge in the open
+        // air stays provably not attached.
+        let weld = weld_at(Some(vec![[1100.0, 250.0, 12.5]]));
+        let attached = attachment_verdict(&weld, &a, &b, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(attached, Attachment::NotAttached);
     }
 
     #[test]
@@ -1746,7 +1859,10 @@ mod tests {
     fn a_permitted_gap_passes_and_an_excessive_gap_fails_with_named_bounds() {
         // The owner requires contact at the weld: the permitted range is
         // [0, 0] with no tolerance, so any measured opening outside the
-        // uncertainty band fails.
+        // uncertainty band fails. The bridged opening here is 5 mm — ten
+        // times the contact tolerance — and the weld is still locally
+        // attached, because its path point lies between the two facing
+        // surfaces (contract section 5.1, #724).
         let gap_requirement = GapRequirement {
             a: id(1),
             b: id(2),
@@ -1754,12 +1870,10 @@ mod tests {
             permitted_max_mm: 0.0,
             tolerance_mm: 0.0,
         };
-        // A 0.3 mm air slab with the weld path mid-air: attached, and the
-        // measured 0.3 mm lies strictly above the permitted maximum edge.
         let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
-        let b = plate_at(2, 0.0, 0.0, 10.3).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 15.0).unwrap();
         let mut inputs = intent(vec![weld_pair()]);
-        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.15]]))];
+        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 12.5]]))];
         inputs.gaps = vec![gap_requirement.clone()];
         let findings = connectivity_findings(
             &inputs,
@@ -1772,18 +1886,21 @@ mod tests {
         assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
         assert_eq!(findings[0].status, "fail");
         let measured = findings[0].measured_mm.unwrap_or_default();
-        assert!((measured - 0.3).abs() <= 1e-6, "{measured}");
+        assert!((measured - 5.0).abs() <= 1e-6, "{measured}");
         assert_eq!(findings[0].bounds.len(), 2);
         assert_eq!(findings[0].bounds[0].name, "permitted_min");
         assert_eq!(findings[0].bounds[1].name, "permitted_max");
-        // The same geometry inside a wider permitted range passes: no finding.
+        // A 1.5 mm opening inside a permitted range [0, 2] passes too: the
+        // weld is attached at the joint and the range admits it.
         inputs.gaps = vec![GapRequirement {
-            permitted_max_mm: 1.0,
-            tolerance_mm: 0.05,
+            permitted_min_mm: 0.0,
+            permitted_max_mm: 2.0,
+            tolerance_mm: 0.3,
             ..gap_requirement
         }];
+        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.75]]))];
         let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
-        let b = plate_at(2, 0.0, 0.0, 10.3).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 11.5).unwrap();
         let findings = connectivity_findings(
             &inputs,
             &[a, b],
@@ -1792,6 +1909,90 @@ mod tests {
             CONTACT_TOLERANCE_MM,
         );
         assert!(findings.is_empty());
+        // The same geometry inside a wider permitted range passes: no finding.
+        inputs.gaps = vec![GapRequirement {
+            permitted_max_mm: 6.0,
+            tolerance_mm: 0.05,
+            ..gap_requirement
+        }];
+        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 12.5]]))];
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 15.0).unwrap();
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn a_tight_fit_passes_a_zero_minimum_range_with_any_non_negative_tolerance() {
+        // Touching plates, the path on the declared contact: the measured
+        // gap is zero, and a range [0, max] passes with no recorded
+        // tolerance at all — a lower band edge at or below the physical
+        // floor of a gap cannot straddle (contract section 7.3, #724).
+        let (a, b) = stacked_pair();
+        let mut inputs = intent(vec![weld_pair()]);
+        inputs.welds = vec![weld_at(Some(vec![[100.0, 100.0, 10.0]]))];
+        inputs.gaps = vec![GapRequirement {
+            a: id(1),
+            b: id(2),
+            permitted_min_mm: 0.0,
+            permitted_max_mm: 2.0,
+            tolerance_mm: 0.0,
+        }];
+        let findings = connectivity_findings(
+            &inputs,
+            &[a.clone(), b.clone()],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert!(
+            findings.is_empty(),
+            "a tight fit passes [0, max] with tolerance 0: {findings:?}"
+        );
+        inputs.gaps[0].tolerance_mm = 0.05;
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn a_weld_path_beside_the_joint_stays_unvalidated() {
+        // The path runs in the open air beside the plate edge, mid-gap: it
+        // neither touches the surfaces nor spans the contact between them,
+        // so the weld is not locally attached and its gap stays unjudged.
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let b = plate_at(2, 0.0, 0.0, 15.0).unwrap();
+        let mut inputs = intent(vec![weld_pair()]);
+        inputs.welds = vec![weld_at(Some(vec![[1100.0, 250.0, 12.5]]))];
+        inputs.gaps = vec![GapRequirement {
+            a: id(1),
+            b: id(2),
+            permitted_min_mm: 0.0,
+            permitted_max_mm: 2.0,
+            tolerance_mm: 0.3,
+        }];
+        let findings = connectivity_findings(
+            &inputs,
+            &[a, b],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
+        assert_eq!(findings[0].status, "unknown");
+        assert_eq!(findings[0].missing_inputs, vec!["attachment_unvalidated"]);
     }
 
     #[test]
