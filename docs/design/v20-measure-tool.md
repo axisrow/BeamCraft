@@ -1,6 +1,6 @@
 # V20 interactive measure tool (point to point)
 
-Date: 2026-11-14. Status: **proposed; nothing implemented.** A planning note for fork issue #561
+Date: 2026-11-14. Status: **proposed; nothing implemented.** A planning note for fork issue axisrow/BeamCraft#561
 (upstream [Apibim-com#861](https://github.com/Apibim-com/BeamCraft/issues/861)): the ribbon's
 Measure button is a stub (`apps/beamcraft-ui/src/app/workbench.rs`, `tool_button(ui, Icon::Measure,
 "Measure", false, false)`), and no plan row specifies the tool it advertises. This note proposes
@@ -32,7 +32,7 @@ Out of scope, kept as follow-ups (none is started by V20):
   contract (nearest-point semantics on holes and concave bodies) before it can be specified.
 - **Saved measurements** — W03, unchanged: persistence, references, staleness on shape change.
 - **Chained polylines, angles, areas.**
-- **Drawing dimensions.** #623's dimensioning concern stays on the D side; this tool places
+- **Drawing dimensions.** axisrow/BeamCraft#623's dimensioning concern stays on the D side; this tool places
   nothing on a sheet.
 - **Foreign reference surfaces as first-class endpoints.** The tool measures whatever points the
   snap pipeline already resolves (V11 snap kinds include reference snaps); no new
@@ -91,7 +91,7 @@ Named after `measure-reference`, per the F04 verb-first rule. One JSON object, e
   single representative point, and inventing a face-centre convention is not this task's job.
   (An edge length or a point-to-face distance is a follow-up.) Member axis ends are reachable
   as coordinates today — the snap query prints them as points — and vertex roles cover the
-  canonical member corners, including the `cut:v…` cap-corner forms of #623 once that lands.
+  canonical member corners, including the `cut:v…` cap-corner forms of axisrow/BeamCraft#623 once that lands.
 
 Negative cases (F04 `code` + F06 reason, exit 2, nothing written):
 
@@ -125,13 +125,13 @@ Negative cases (F04 `code` + F06 reason, exit 2, nothing written):
 
 ## Relationship to open work (this note edits no contract)
 
-- **#622 (pick-ray height residue in snapped points).** The measure path consumes snap and pick
+- **axisrow/BeamCraft#622 (pick-ray height residue in snapped points).** The measure path consumes snap and pick
   outputs as plain coordinates and proposes no change to `query::pick`, its entry points or its
-  codes. If #622 lands first, its cleaned points are simply what the tool reads; nothing in V20
+  codes. If axisrow/BeamCraft#622 lands first, its cleaned points are simply what the tool reads; nothing in V20
   depends on it.
-- **#623 (cut cap corner FeatureIds).** V20 resolves vertex-role FeatureIds only, through
-  `lookup_feature` exactly as it stands; the `cut:v…` forms #623 adds resolve with no
-  measure-side change and no grammar, parse or naming edit. Conversely, #623's drawing
+- **axisrow/BeamCraft#623 (cut cap corner FeatureIds).** V20 resolves vertex-role FeatureIds only, through
+  `lookup_feature` exactly as it stands; the `cut:v…` forms axisrow/BeamCraft#623 adds resolve with no
+  measure-side change and no grammar, parse or naming edit. Conversely, axisrow/BeamCraft#623's drawing
   dimensioning does not depend on this tool.
 
 Both are separate PRs; their code and frozen contracts are not touched by the V20 work.
