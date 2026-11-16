@@ -3111,6 +3111,110 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_india_is_2062_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/materials-is-2062.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "india-is-2062-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted, twenty-eight designations.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 28);
+        // The complete published grade set of IS 2062:2011 in the loader's designation order
+        // (byte order: the B0 digit sorts before the BR letter): the five lower levels carry
+        // the four sub-qualities A, BR, B0 and C, the higher levels E450 to E650 only A and
+        // BR — the sub-qualities indicate impact-test requirement and de-oxidation mode.
+        // The 2011 edition replaced the 2006 Fe designations with the minimum-yield E system,
+        // and its top levels are E600 and E650, not the E590 some second-hand lists name.
+        let india = "IS 2062-2011";
+        let expected: [&str; 28] = [
+            "E250A", "E250B0", "E250BR", "E250C", "E275A", "E275B0", "E275BR", "E275C", "E300A",
+            "E300B0", "E300BR", "E300C", "E350A", "E350B0", "E350BR", "E350C", "E410A", "E410B0",
+            "E410BR", "E410C", "E450A", "E450BR", "E550A", "E550BR", "E600A", "E600BR", "E650A",
+            "E650BR",
+        ];
+        for (designation, entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(india), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_india_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-is-2062.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 4);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "india-is-2062-materials");
+        assert_eq!(materials.library.entries.len(), 28);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, e350) = lookup.find("E350C").unwrap();
+        assert_eq!(source.library.info.id, "india-is-2062-materials");
+        assert!(matches!(
+            &e350.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("IS 2062-2011")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no 2006-edition
+        // Fe designations, no bare grade without a sub-quality, no lowercase, no level the
+        // edition does not publish, no sub-quality the higher levels omit and no grade of
+        // another standard.
+        for absent in [
+            "Fe410WA", "Fe490A", "Fe590", "E250", "e350c", "E250D", "E590", "E450C", "E550C",
+            "E600C", "E650C", "S355",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
