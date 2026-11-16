@@ -225,14 +225,14 @@ that weld passes the corner. The independent size checks `CORNER_NOT_CUT` and
 **The geometric identity.** The weld fillet at the corner is rebuilt from the record: the
 right-triangle fillet cross-section the recorded A15 weld solid is built from, with both legs
 equal to the recorded size `K`, anchored with its right angle at the derived corner, its legs
-along the rib's contour-edge directions at that corner — the edges that run along the two
-neighbour surfaces — translated along the qualifying weld's validated path without
-re-orientation. That placement is the one placement of this check; the recorded A15 solid
-itself sits at its own path start by the A15 frame rule and is not the judging geometry
-(section 7.1). The verdict is read on the **admitted leg**, the measure the corner-cut rules
-use (#725): the largest `k` for which the fillet triangle of leg `k` at this corner — one
-vertex at the corner, the other two at distance `k` along the two contour-edge directions —
-contains no rib material of the final evaluated body. The recorded leg `K` is compared with
+along the derived corner's two contact lines — the contact lines of section 7.1, which run
+along the two neighbour surfaces — translated along the qualifying weld's validated path
+without re-orientation. That placement is the one placement of this check; the recorded A15
+solid itself sits at its own path start by the A15 frame rule and is not the judging geometry
+(section 7.1). The verdict is read on the **admitted leg**, the measure of section 7.1
+(#725): the largest `k` for which the fillet triangle of leg `k` at this corner — one vertex
+at the corner, the other two at distance `k` along the two contact lines — contains no rib
+material of the final evaluated body. The recorded leg `K` is compared with
 the admitted leg through the unchanged near-threshold rule of section 7.3: a recorded leg
 determinately above the admitted leg is the finding. For a right-angle chamfer of leg `c` the
 admitted leg is its smaller leg, so the identity reduces to `c ≥ K`; a rounding with the same
@@ -433,14 +433,14 @@ both adjacent edges.
 
 **Added by #723 (2026-11-16).** The dependent clearance check (section 4.4) reads its
 admitted leg from the final body with the kernel's contact facts: the fillet triangle of leg
-`k` grows from the derived corner along the rib's contour-edge directions — the corner
-derivation (above) already requires the corner to lie within the contact tolerance of both
-neighbours, so those edges run along the neighbour surfaces — and whether a triangle of a
-given `k` contains rib material is decided by the same contact decision class as `PART_CLASH`
-(point containment against the rib's final mesh, with the near-threshold rule at the band
-edge). The verdict compares the recorded weld leg against that admitted leg through section
-7.3, never the raw penetration depth: at a right angle the penetration of an oversized fillet
-scales the leg deficit by `1/√2`, so a depth-based band would silently rescale the tolerance.
+`k` grows from the derived corner along the corner's two contact lines — the contact lines
+the corner derivation (above) establishes for the two neighbours, which run along the
+neighbour surfaces — and whether a triangle of a given `k` contains rib material is decided
+by the same contact decision class as `PART_CLASH` (point containment against the rib's final
+mesh, with the near-threshold rule at the band edge). The verdict compares the recorded weld
+leg against that admitted leg through section 7.3, never the raw penetration depth: at a
+right angle the penetration of an oversized fillet scales the leg deficit by `1/√2`, so a
+depth-based band would silently rescale the tolerance.
 Recorded ceilings: the fillet cross-section is translated along the qualifying path without
 re-orientation and does not re-orient by the weld's recorded `side` (the sides are read from
 the corner's geometry, section 4.4), and the recorded A15 solid stays the weld's own placed
