@@ -100,6 +100,11 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
     let route = args.first().and_then(|c| registry::route(c));
+    // Routes that return before `dispatch` run no model write in this process, so none of
+    // them carries a `checks` summary (Q03 slice 5): `ExportView`, `ScreenshotView` and
+    // `Export` write output bytes or files, `Session` is the session itself, `Batch` words
+    // take no process of their own (the session's `batch-commit` attaches the summary to its
+    // own reply), and `Commands` is a listing.
     match route {
         Some(Route::Commands) => return list_commands(args.get(1..).unwrap_or_default()),
         Some(Route::Session) => return session_cmd::execute(&args),
@@ -163,9 +168,11 @@ fn main() -> std::process::ExitCode {
 
 /// The one-process dispatch by registry route; the session reuses it per line, so a command
 /// refuses and answers identically in either mode. `None` takes the store-level path, which
-/// refuses an unregistered word.
+/// refuses an unregistered word. The seam is here, not around it: both the one-shot CLI and
+/// the session's ordinary command lines answer through this one tail, so a successful
+/// model-store write carries its `checks` summary in either mode (Q03 slice 5).
 fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
-    match route {
+    let (json, exit) = match route {
         Some(Route::View) => view::execute(args),
         Some(Route::Views) => views_cmd::execute(args),
         Some(Route::Annotation) => annotation_cmd::execute(args),
@@ -209,7 +216,8 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
             | Route::Batch,
         )
         | None => run_store_command(args.to_vec()),
-    }
+    };
+    check_cmd::with_summary(args, json, exit)
 }
 /// Runs a store-level blob or revision command, or refuses an unregistered word.
 fn run_store_command(args: Vec<std::ffi::OsString>) -> (Json, u8) {
