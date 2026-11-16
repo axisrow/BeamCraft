@@ -1313,6 +1313,106 @@ fn a_rounding_is_judged_by_its_admitted_leg_and_stays_without_the_chamfer_fix() 
     }
 }
 
+// Contract section 9 (audit gap G4): parameterized chamfers, contour-authored
+// chamfers and plane cuts that produce equivalent final geometry receive
+// equivalent check results, and a rounding with equal setbacks is not
+// equivalent — it never receives the chamfer fix.
+
+/// Builds the sample joint with the corner cut of `size` mm authored three
+/// ways; returns the three element ids the requirement names.
+fn joint_with_cut(f: &Fixture, size: &str, authoring: &str) -> (String, String, String) {
+    let steel = f.material();
+    match authoring {
+        "corner parameters" => {
+            let corners = format!("0=chamfer:{size}");
+            f.joint(&steel, &[&corners])
+        }
+        "contour points" => {
+            let base = f.plate(&steel, "10", "0,0,0");
+            let column = f.standing(&steel, "100", "200", "40", "50,40,10.000000001", &[]);
+            let contour = format!("{size},0,0;80,0,0;80,100,0;0,100,0;0,{size},0");
+            let rib = f.standing_contour(&steel, &contour, "150.000000001,10,10.000000001");
+            (base, column, rib)
+        }
+        _ => {
+            let (base, column, rib) = f.joint(&steel, &[]);
+            f.cut_rib_corner_by_plane(&rib, size, "019a7bf0-0000-7000-8000-00000000e001");
+            (base, column, rib)
+        }
+    }
+}
+
+#[test]
+fn equivalent_final_cuts_receive_equivalent_check_results() {
+    // The same final shape authored three ways checks the same: a 10×10 cut is
+    // green with no findings through every authoring, a 20×20 cut is
+    // CORNER_OVERCUT with measured 20 and no fix through every authoring —
+    // the equivalence of the results, not only each row's verdict, is the
+    // contract's claim (section 9).
+    for size in ["10", "20"] {
+        let mut verdicts: Vec<(String, f64)> = Vec::new();
+        for authoring in ["corner parameters", "contour points", "plane cut"] {
+            let f = Fixture::new();
+            let (base, column, rib) = joint_with_cut(&f, size, authoring);
+            f.corner(&rib, &base, &column, &[]);
+            let (code, reply) = f.check(&[]);
+            if size == "10" {
+                assert_eq!(code, 0, "{authoring}: {reply:?}");
+                assert_eq!(text(&reply, "status"), "green", "{authoring}");
+                assert_eq!(list(&reply, "findings").len(), 0, "{authoring}");
+                verdicts.push(("green".to_owned(), 0.0));
+            } else {
+                assert_eq!(code, 2, "{authoring}: {reply:?}");
+                let finding = finding_of(&reply, "CORNER_OVERCUT");
+                assert_eq!(text(finding, "status"), "fail", "{authoring}");
+                let measured = at(finding, &["measured_mm"]).float().unwrap();
+                assert!((measured - 20.0).abs() <= 1e-9, "{authoring}: {measured}");
+                assert!(
+                    matches!(finding.get("fix"), Ok(Json::Null)),
+                    "{authoring}: {finding:?}"
+                );
+                verdicts.push((text(finding, "rule").to_owned(), measured));
+            }
+        }
+        let first = &verdicts[0];
+        for verdict in &verdicts[1..] {
+            assert_eq!(verdict, first, "{size}");
+        }
+    }
+}
+
+#[test]
+fn an_equal_setback_rounding_never_receives_the_chamfer_fix() {
+    // The same undersized 5 mm setback: the chamfer carries the one
+    // unambiguous set-plate-corner repair, the rounding — the same rule, the
+    // same status, the same measured 5 — carries none. Equal setbacks do not
+    // make the rounding the chamfer the requirement's repair would set
+    // (contract 9).
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:5"]);
+    f.corner(&rib, &base, &column, &[]);
+    let (_, reply) = f.check(&[]);
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "fail");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
+    assert_eq!(text(at(finding, &["fix"]), "command"), "set-plate-corner");
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=round:5"]);
+    f.corner(&rib, &base, &column, &[]);
+    let (_, reply) = f.check(&[]);
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "fail");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
+    assert!(
+        matches!(finding.get("fix"), Ok(Json::Null)),
+        "{finding:?}"
+    );
+}
+
 // Q03 slice 5: the `checks` summary in write replies (contract section 11). A
 // successful write on a model-store command reports the check of its resulting
 // revision beside its result, with the write's own exit code; a drafted write
