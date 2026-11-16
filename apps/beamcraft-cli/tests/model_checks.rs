@@ -127,6 +127,30 @@ impl Fixture {
         );
         text(&created, "element_id")
     }
+    /// Creates one A06 weld with an authored world path between the two
+    /// parts: the placed weld the local-attachment validation can locate.
+    fn path_weld(&self, main: &str, secondary: &str, path: &str) -> String {
+        let created = self.ok(
+            "create-weld",
+            &[
+                "--name",
+                "weld",
+                "--main",
+                main,
+                "--secondary",
+                secondary,
+                "--size",
+                "6",
+                "--location",
+                "workshop",
+                "--side",
+                "arrow",
+                "--path",
+                path,
+            ],
+        );
+        text(&created, "element_id")
+    }
     /// Commits a head-based revision with changed layer text and no content
     /// verification, the way a layer edited outside BeamCraft would arrive.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
@@ -636,6 +660,89 @@ fn a_weld_present_without_contact_stays_unknown_by_the_recorded_rule() {
     assert_eq!(
         reason_of(&reply, "WELD_WITHOUT_CONTACT"),
         "no_supported_rule"
+    );
+}
+
+#[test]
+fn an_attached_weld_bridging_an_excessive_gap_turns_the_joint_red() {
+    // The full path of the gap rule at the CLI (#724, closes the audit gap):
+    // a pathed weld attached at the declared contact, a recorded gap
+    // requirement, and a bridged opening beyond the permitted maximum —
+    // the joint is red with the measured value and the named bounds. The
+    // 3 mm opening is well beyond the contact tolerance: local attachment
+    // does not cap the measurable gap there (contract section 5.1).
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let top = f.plate(&steel, "10", "0,0,13");
+    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
+    f.path_weld(&base, &top, "100,100,11.5;300,100,11.5");
+    f.gap(&base, &top, "0", "2", "0.3");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    let finding = finding_of(&reply, "WELD_WITHOUT_CONTACT");
+    assert_eq!(text(finding, "status"), "fail");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 3.0).abs() <= 1e-6, "{measured}");
+    let bounds = list(finding, "bounds");
+    assert_eq!(bounds.len(), 2);
+    assert_eq!(text(&bounds[0], "name"), "permitted_min");
+    assert_eq!(text(&bounds[1], "name"), "permitted_max");
+    assert_eq!(at(&bounds[1], &["bound_mm"]).float().unwrap(), 2.0);
+    assert!(text(finding, "message").contains("exceeds the permitted maximum"));
+}
+
+#[test]
+fn a_tight_fit_and_an_in_range_gap_pass_with_a_path_at_the_joint() {
+    // A tight fit (measured gap zero) passes the range [0, 2] with a small
+    // recorded tolerance: the lower band edge at or below zero cannot
+    // straddle (contract section 7.3, #724).
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let top = f.plate(&steel, "10", "0,0,10");
+    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
+    f.path_weld(&base, &top, "100,100,10;300,100,10");
+    f.gap(&base, &top, "0", "2", "0.05");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(list(&reply, "findings").len(), 0);
+    // A 1.5 mm opening inside the permitted range passes too, judged from
+    // the path that spans the contact.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let top = f.plate(&steel, "10", "0,0,11.5");
+    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
+    f.path_weld(&base, &top, "100,100,10.75;300,100,10.75");
+    f.gap(&base, &top, "0", "2", "0.3");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(list(&reply, "findings").len(), 0);
+}
+
+#[test]
+fn a_weld_path_away_from_the_joint_stays_unknown_attachment_unvalidated() {
+    // The path runs in the open air beside the plate edge: it neither
+    // touches the surfaces nor spans the contact, so the weld is not
+    // locally attached and its gap stays unjudged while the rule keeps
+    // reporting the unvalidated attachment.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let top = f.plate(&steel, "10", "0,0,13");
+    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
+    f.path_weld(&base, &top, "1100,250,11.5;1200,250,11.5");
+    f.gap(&base, &top, "0", "2", "0.3");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    assert_eq!(
+        reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+        "attachment_unvalidated"
     );
 }
 
