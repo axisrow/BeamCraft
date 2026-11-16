@@ -338,27 +338,49 @@ the between-surfaces attachment test spans openings of any size, and the span's 
 check (summed distances versus the distance between the nearest surface points) is what the
 near-threshold rule decides.
 
-**Validated in slice 4 (2026-11-16).** The corner-cut rules derive the requirement's corner
-from the final evaluated geometry on every run: the candidate corners are the rib's authored
-contour vertices — a treated contour keeps its sharp corner points, so the ideal corner
-survives any parameterized treatment — whose position lies strictly within the contact
-tolerance of both recorded neighbours. Exactly one candidate is judged; zero or several are
-`unknown` (`target_unresolved`), and a contour vertex at a neighbour's contact band edge keeps
-the candidate set from being established (`indeterminate`). The measured cut is the **least
-leg**: the least, over the rib's evaluated mesh vertices that provably touch one neighbour,
-of the distance to the other neighbour — zero where the rib surface still reaches the corner,
-the setback (chamfer leg, contract section 3) where a treatment or cut removed the corner —
-with the near-threshold rule and `δ = max(mesh bounds, t/2)` deciding the acceptance band
-`[required − tolerance, upper edge]`, whose upper edge the recorded standalone `upper_bound`
-replaces. Recorded ceilings of that reading: the leg is the least retreat of the rib surface
-over the whole body, so a second approach to the neighbour pair elsewhere on the rib, without
-a dual-touch contour vertex of its own, would pull the leg down — the standard two-corner
-shapes (a rib flush with the neighbour face) report several candidates before the measurement
-runs; and the derivation reads authored plate contours, so a rib that is not an authored plate
-reports `target_unresolved`. The one unambiguous repair of `CORNER_NOT_CUT` (section 9) sets
-the required chamfer at the authored vertex the derived corner maps back to, and is offered
-only when that vertex exists, its treatment is absent or a chamfer, the adjacent vertices
-carry no treatments, the corner really turns, and the required leg fits both adjacent edges.
+**Validated in slice 4 (2026-11-16), amended for #725.** The corner-cut rules derive the
+requirement's corner from the final evaluated geometry and the two neighbour bodies on every
+run, never from an authored contour vertex: an authored contour edge is a **contact line** of
+the neighbour its evaluated wall provably touches (at least one evaluated rib mesh vertex that
+provably touches the neighbour lies on the edge's supporting line, in the rib plate's local
+contour frame), and every intersection of one contact line of each neighbour — itself within
+the contact tolerance of both neighbour surfaces — is a candidate corner. A chamfer authored
+as corner parameters, as contour points, or as a plane cut leaves the same contact lines and
+receives the same candidates. Exactly one candidate is judged; zero or several are `unknown`
+(`target_unresolved`), and a wall vertex at a neighbour's contact band edge keeps the
+candidate set from being established (`indeterminate`); a faceted arc vertex between a
+rounding's tangent points lies on no contact line and decides nothing.
+
+The cut is measured on the rib's final body over its full thickness by two values (#725's
+measure): the **admitted leg** — the largest `k` for which the triangle with one vertex at
+the derived corner and the other two at distance `k` from it along each neighbour's surface
+contains no rib material; for a chamfer it is the smaller leg, for a rounding of radius `R`
+at a right angle `R·(2 − √2)` — and the **largest setback** — the larger of the two
+distances from the corner to where the rib's final body first meets each neighbour; for a
+chamfer the larger leg, for a rounding `R`. The setbacks are read at the evaluated vertices
+provably touching each neighbour on one of its contact lines: the tangent points sit on the
+authored edge lines and the arc facets between them lie on no line, so the setbacks never
+follow the arc faceting. The admitted leg is the least projection sum onto the corner's two
+contact lines over all evaluated mesh vertices inside the corner's forward quadrant, scaled
+by the corner angle — sampled on the body, so a value sits within the body's reported mesh
+bound. A rounding and a chamfer with the same setbacks differ in the admitted leg: that is
+the non-equivalence #634 describes. The admitted leg goes through the acceptance band
+`[required − tolerance, upper edge]`'s lower edge — determinately below is `CORNER_NOT_CUT`
+with `measured_mm` the admitted leg — and the largest setback through its upper edge, which
+the recorded standalone `upper_bound` replaces — determinately above is `CORNER_OVERCUT`
+with `measured_mm` the largest setback; both findings are reported when both hold, and an
+interval straddling a band edge stays `unknown` (`indeterminate`), with the near-threshold
+rule and `δ = max(mesh bounds, t/2)`. Both values are reported as the named `admitted_leg`
+and `largest_setback` entries of the finding's `bounds` (section 8.1). Recorded ceilings of
+that reading: the values are sampled at evaluated vertices, so a retreat with no vertex of
+its own is not measured; the standard two-corner shapes (a rib flush with the neighbour
+face) report several candidates before the measurement runs; and the derivation reads the
+authored plate contour's edge lines, so a rib that is not an authored plate reports
+`target_unresolved`. The one unambiguous repair of `CORNER_NOT_CUT` (section 9) sets the
+required chamfer at the authored vertex the derived corner maps back to, and is offered only
+when the rib carries no plane cut, that vertex exists, its treatment is absent or a chamfer,
+the adjacent vertices carry no treatments, the corner really turns, and the required leg fits
+both adjacent edges.
 
 ### 7.2 Two tolerance layers, kept separate
 
@@ -402,6 +424,9 @@ acceptance region is `10 ± tolerance_mm`, and its upper edge is the overcut bas
 strictly above the band and "subject to the recorded tolerance" in the literal sense of the
 rule above. The upper edge here is the owner's recorded size, not a derived or normative
 maximum (section 3.2); a recorded gap requirement's permitted ends are bounded the same way.
+Where a rule measures two values against the two edges of one band (the corner-cut rule's
+admitted leg and largest setback, section 7.1), each edge is tested with the near-threshold
+rule against its own value, and the two findings are independent.
 
 ## 8. Findings and report semantics
 
@@ -424,7 +449,10 @@ A **finding** carries: `rule`, `status` (`fail` or `unknown`), `elements` (IDs a
 `measured_mm` / `required_mm` where meaningful, the applicable tolerances and mesh bounds,
 `missing_inputs`, and a nullable `fix` (section 9). Where several dimensions and bounds apply
 (one measurement against several recorded bounds), they are a named array of
-`{bound, tolerance, source}` entries, not a single collapsed number.
+`{bound, tolerance, source}` entries, not a single collapsed number; the corner-cut findings
+report their two measured values the same way, as the named `admitted_leg` and
+`largest_setback` entries of that array beside the recorded bounds, with the measurement
+uncertainty as the entry's tolerance and `"measured"` as its source.
 
 Pagination (`--offset`, `--limit`) affects only the `findings` page; status, counts and
 coverage always cover the whole checked scope, so paging never hides a red or unknown overall

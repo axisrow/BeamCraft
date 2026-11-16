@@ -662,6 +662,12 @@ fn corner_fix(corner: &check::CornerCutFinding, inspection: &Inspection) -> Opti
     let rib = finding.elements.first()?;
     let corner_point = corner.corner_point_mm?;
     let plate = inspection.plates.iter().find(|p| p.authored.id == *rib)?;
+    // A plane cut (A03) already removes material the authored contour keeps: setting
+    // the chamfer at the vertex would not produce the required final shape, so it is
+    // not a safe complete repair (contract section 9) and the fix stays absent.
+    if !plate.authored.cuts.is_empty() {
+        return None;
+    }
     let local = placement_to_local(&plate.authored.placement, corner_point);
     // The authored vertex at the derived corner: its kept sharp point maps back
     // exactly. Two matches would be an ambiguous mapping.
