@@ -232,9 +232,12 @@ solid itself sits at its own path start by the A15 frame rule and is not the jud
 (section 7.1). The verdict is read on the **admitted leg**, the measure of section 7.1
 (#725): the largest `k` for which the fillet triangle of leg `k` at this corner — one vertex
 at the corner, the other two at distance `k` along the two contact lines — contains no rib
-material of the final evaluated body. The recorded leg `K` is compared with
-the admitted leg through the unchanged near-threshold rule of section 7.3: a recorded leg
-determinately above the admitted leg is the finding. For a right-angle chamfer of leg `c` the
+material of the final evaluated body **over the rib's full thickness**. The recorded leg `K`
+is compared with the admitted leg through the unchanged near-threshold rule of section 7.3,
+with the **product contact tolerance as the comparison's band tolerance** — the clash rule's
+own comparison style, since the clearance comparison records no tolerance of its own: a
+recorded leg determinately above the admitted leg is the finding. For a right-angle chamfer
+of leg `c` the
 admitted leg is its smaller leg, so the identity reduces to `c ≥ K`; a rounding with the same
 setback admits less (`R·(2 − √2)` at a right angle) and can fail where the chamfer passes —
 the identity reads the final body, never the authored treatment, and no normative number
