@@ -76,13 +76,14 @@ impl Fixture {
         let created = self.ok("record-create", &args);
         text(&created, "element_id")
     }
-    /// Declares a weld or contact connection into a joint intent record.
+    /// Declares one or more weld or contact connections into a joint intent
+    /// record: the connections ride one `--connection` value, comma-separated,
+    /// the form the command accepts (the option parser refuses a repeated flag).
     fn intent(&self, scope: &[&str], connections: &[&str]) -> String {
         let scope_text = scope.join(",");
+        let connection_text = connections.join(",");
         let mut extra: Vec<&str> = vec!["--kind", "joint_intent", "--scope", &scope_text];
-        for connection in connections {
-            extra.extend(["--connection", connection]);
-        }
+        extra.extend(["--connection", &connection_text]);
         self.record("joint intent", &extra)
     }
     /// Records the permitted local gap of one declared weld connection.
@@ -509,6 +510,33 @@ fn a_subtree_check_is_quiet_about_declared_members_outside_it() {
     assert_eq!(code, 0, "{reply:?}");
     assert_eq!(text(&reply, "status"), "unknown");
     assert_eq!(reason_of(&reply, "PART_UNCONNECTED"), "target_unresolved");
+}
+
+#[test]
+fn one_connection_option_carries_several_comma_separated_connections() {
+    // Several declared connections ride ONE `--connection` value, comma
+    // separated (`UUID:contact:UUID,UUID:contact:UUID`) — the option parser
+    // refuses a repeated flag, so the comma form is the only multi-connection
+    // form. The record keeps every declared connection, and the check judges
+    // them all: the satisfied pair stays quiet, the separated pair turns the
+    // check red.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let column = f.plate(&steel, "10", "0,0,10");
+    let far = f.plate(&steel, "10", "0,0,200");
+    f.intent(
+        &[&base, &column, &far],
+        &[&format!("{base}:contact:{column},{base}:contact:{far}")],
+    );
+    let listed = f.run("record-list", &[]).1;
+    let rows = list(&listed, "records");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(list(rows.first().unwrap(), "connections").len(), 2);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    assert!(fail_count(&reply, "PART_UNCONNECTED") >= 1, "{reply:?}");
 }
 
 #[test]
