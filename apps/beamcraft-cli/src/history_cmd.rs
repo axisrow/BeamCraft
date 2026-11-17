@@ -22,7 +22,8 @@
 //! revisions whose undo points would be lost.
 
 use beamcraft_commands::history_compact::{
-    backup_store, collect_pins, hold_coordinator_lease, hold_session_lease, is_workspace_store,
+    backup_store, collect_pins, hold_coordinator_lease, hold_script_lease, hold_session_lease,
+    is_workspace_store,
 };
 use beamcraft_host::compaction::{
     Blocker, Compacted, CompactionError, Keep, NoFault, Pin, PinStatus, Plan, Request, Safeguard,
@@ -110,6 +111,12 @@ pub fn coordinator_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json,
 /// [`beamcraft_commands::history_compact::hold_session_lease`].
 pub fn session_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json, u8)> {
     hold_session_lease(args).map_err(lease_refusal)
+}
+
+/// Holds the store lease of a starting `run-script`; see
+/// [`beamcraft_commands::history_compact::hold_script_lease`].
+pub fn script_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json, u8)> {
+    hold_script_lease(args).map_err(lease_refusal)
 }
 
 const VALUE_OPTIONS: [&str; 7] = [

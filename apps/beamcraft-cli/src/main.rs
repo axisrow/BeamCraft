@@ -6,6 +6,7 @@
 mod help;
 mod report;
 mod revision;
+mod script_cmd;
 mod session_cmd;
 
 use beamcraft_commands::registry::{self, Route};
@@ -104,10 +105,11 @@ fn main() -> std::process::ExitCode {
     // them carries a `checks` summary (Q03 slice 5): `ExportView`, `ScreenshotView` and
     // `Export` write output bytes or files, `Session` is the session itself, `Batch` words
     // take no process of their own (the session's `batch-commit` attaches the summary to its
-    // own reply), and `Commands` is a listing.
+    // own reply), `Script` is the script file's own summary, and `Commands` is a listing.
     match route {
         Some(Route::Commands) => return list_commands(args.get(1..).unwrap_or_default()),
         Some(Route::Session) => return session_cmd::execute(&args),
+        Some(Route::Script) => return script_cmd::execute(&args),
         Some(Route::Batch) => {
             // Parse the options exactly as the session would, so an unlisted one is refused
             // as unknown; a batch word then only exists inside a running session.
@@ -213,7 +215,8 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
             | Route::ScreenshotView
             | Route::Export
             | Route::Session
-            | Route::Batch,
+            | Route::Batch
+            | Route::Script,
         )
         | None => run_store_command(args.to_vec()),
     };

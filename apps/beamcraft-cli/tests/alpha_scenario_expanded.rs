@@ -5,13 +5,16 @@
 //! Expanded Q01 (fork issue axisrow/BeamCraft#318, upstream issue #334): one real-binary story that extends the
 //! delivered alpha scenario into the model tools, member holes, views/filters, user attributes
 //! and schedules, grids/levels, invalid-input and cancellation regressions, and exact stored
-//! outputs. Every command starts a fresh process; no mock storage, renderer or geometry is
+//! outputs. Every command runs through the real binary's own dispatch; since `#738` the
+//! authoring segments ride `run-script` invocations (one process per segment, the session's
+//! own batch words compressing independent commands into one revision), while reads that
+//! carry assertions keep their own processes. No mock storage, renderer or geometry is
 //! used. The original scenario stays in `alpha_scenario.rs`;
 //! `docs/design/q01-alpha-matrix.md` records what this covers and what stays open with reasons.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use crate::support::{at, text};
+use crate::support::{Scripted, at, text};
 
 use beamcraft_json::{Json, Limits};
 use std::fs;
@@ -63,8 +66,15 @@ struct Story(PathBuf);
 
 impl Story {
     fn new() -> Self {
-        let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("q01-expanded-{}", crate::support::boot_nonce()));
+        // One unique root per instance: two slices of the former monolith share this
+        // suite's names for the stores they both touch (`published`, `draft`), so a
+        // process-wide counter keeps their directories apart under nextest parallelism.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "q01-expanded-{}-{}",
+            crate::support::boot_nonce(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
         fs::create_dir(root.join("curved-published")).unwrap();
@@ -112,6 +122,13 @@ impl Story {
 
     fn ok(&self, store: &str, command: &str, args: &[&str]) -> Json {
         self.run(store, command, args, 0)
+    }
+
+    /// Runs the lines as one `run-script` invocation over the store `name`, asserting the
+    /// summary's outcome and each line's exit; returns each command's reply in order
+    /// (`#738`: one process for a whole authoring segment instead of one per command).
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        crate::support::script_lines(&self.0, &self.path(store), lines)
     }
 
     fn head(&self, store: &str) -> String {
@@ -168,64 +185,105 @@ fn volume_of(parts: &[(String, f64, String)], id: &str) -> f64 {
         .1
 }
 
-#[test]
-fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
-    let s = Story::new();
-    s.ok(
-        "published",
-        "define-material",
-        &["--grade", "Q01-steel", "--density", "7850"],
-    );
-    s.ok(
-        "published",
-        "define-profile",
-        &[
+/// The pinned assembly identity of the expanded frame (was a fresh id per process; the
+/// value is assertion-neutral, and pinning lets the assembly block ride one batch).
+const ASSEMBLY: &str = "019a7bf0-0000-7000-8000-00000000aa80";
+
+/// The lines every expanded-alpha store starts from: material, profile and the story
+/// draft (`#738`). One script replaces three processes.
+fn setup_lines(store: &str, draft_dir: &str) -> Vec<Scripted> {
+    vec![
+        Scripted::ok(&[
+            "define-material",
+            "--store",
+            store,
+            "--grade",
+            "Q01-steel",
+            "--density",
+            "7850",
+        ]),
+        Scripted::ok(&[
+            "define-profile",
+            "--store",
+            store,
             "--designation",
             "Q01-RECT",
             "--width",
             "100",
             "--height",
             "50",
-        ],
-    );
-    s.ok(
-        "published",
-        "create-workspace",
-        &["--workspace-dir", &s.path("draft"), "--user-id", USER],
-    );
+        ]),
+        Scripted::ok(&[
+            "create-workspace",
+            "--store",
+            store,
+            "--workspace-dir",
+            draft_dir,
+            "--user-id",
+            USER,
+        ]),
+    ]
+}
 
-    // The same synthetic frame as the delivered scenario: two columns and a beam, the beam
-    // trimmed by an owned plane cut, two base plates with holes.
-    for (id, kind, start, end) in [
-        (PARTS[0], "column", "0,0,0", "0,0,1000"),
-        (PARTS[1], "column", "1000,0,0", "1000,0,1000"),
-        (PARTS[2], "beam", "0,0,1000", "1000,0,1000"),
-    ] {
-        s.ok(
-            "draft",
+/// The synthetic frame: two columns and a beam, the beam trimmed by an owned plane cut,
+/// two base plates with holes. A batched command resolves its targets from the committed
+/// head, so the cut cannot share a batch with the members it cuts: the three members
+/// ride one batch, the cut commits alone, the two plates ride one.
+fn frame_lines(draft_dir: &str) -> Vec<Scripted> {
+    let member = |id: &str, kind: &str, start: &str, end: &str| {
+        Scripted::ok(&[
             "create-member",
-            &[
-                "--new-id",
-                id,
-                "--kind",
-                kind,
-                "--start",
-                start,
-                "--end",
-                end,
-                "--profile",
-                "Q01-RECT",
-                "--material",
-                "Q01-steel",
-                "--name",
-                kind,
-            ],
-        );
-    }
-    s.ok(
-        "draft",
-        "cut-by-plane",
-        &[
+            "--store",
+            draft_dir,
+            "--new-id",
+            id,
+            "--kind",
+            kind,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--profile",
+            "Q01-RECT",
+            "--material",
+            "Q01-steel",
+            "--name",
+            kind,
+        ])
+    };
+    let plate = |id: &str, translation: &str| {
+        Scripted::ok(&[
+            "create-plate",
+            "--store",
+            draft_dir,
+            "--new-id",
+            id,
+            "--width",
+            "200",
+            "--length",
+            "200",
+            "--thickness",
+            "10",
+            "--hole-rect",
+            "150,150,20,20",
+            "--translation",
+            translation,
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Base plate",
+        ])
+    };
+    vec![
+        Scripted::ok(&["batch-open"]),
+        member(PARTS[0], "column", "0,0,0", "0,0,1000"),
+        member(PARTS[1], "column", "1000,0,0", "1000,0,1000"),
+        member(PARTS[2], "beam", "0,0,1000", "1000,0,1000"),
+        Scripted::ok(&["batch-commit"]),
+        Scripted::ok(&[
+            "cut-by-plane",
+            "--store",
+            draft_dir,
             "--id",
             PARTS[2],
             "--operation-id",
@@ -236,44 +294,24 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "1,0,0",
             "--keep",
             "negative",
-        ],
-    );
-    for (id, translation) in [(PARTS[3], "-100,-100,0"), (PARTS[4], "900,-100,0")] {
-        s.ok(
-            "draft",
-            "create-plate",
-            &[
-                "--new-id",
-                id,
-                "--width",
-                "200",
-                "--length",
-                "200",
-                "--thickness",
-                "10",
-                "--hole-rect",
-                "150,150,20,20",
-                "--translation",
-                translation,
-                "--material",
-                "Q01-steel",
-                "--name",
-                "Base plate",
-            ],
-        );
-    }
-    let before = parts(&s.ok("draft", "inspect-elements", &[]));
-    assert_eq!(before.len(), 5);
-    for (id, volume) in PARTS.into_iter().zip(STARTING_VOLUMES) {
-        close(volume_of(&before, id), volume);
-    }
+        ]),
+        Scripted::ok(&["batch-open"]),
+        plate(PARTS[3], "-100,-100,0"),
+        plate(PARTS[4], "900,-100,0"),
+        Scripted::ok(&["batch-commit"]),
+    ]
+}
 
-    // Model tools (split, copy, chamfer) change exactly the parts they name. The split cuts
-    // the second column at mid height, so the halves sum to the closed-form column volume.
-    s.ok(
-        "draft",
-        "split-part",
-        &[
+/// The model tools: split, copy and chamfer. Each stays its own revision and undo unit,
+/// so the undo/redo step still crosses exactly one operation; every tool is immediately
+/// followed by the inspection that reads its result (replies 1, 3 and 5).
+fn tool_lines(draft_dir: &str) -> Vec<Scripted> {
+    let inspect = Scripted::ok(&["inspect-elements", "--store", draft_dir]);
+    vec![
+        Scripted::ok(&[
+            "split-part",
+            "--store",
+            draft_dir,
             "--id",
             PARTS[1],
             "--new-id",
@@ -288,37 +326,24 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "0,0,1",
             "--keep",
             "positive",
-        ],
-    );
-    let after_split = parts(&s.ok("draft", "inspect-elements", &[]));
-    assert_eq!(after_split.len(), 6);
-    close(
-        volume_of(&after_split, PARTS[1]) + volume_of(&after_split, SPLIT_HALF),
-        STARTING_VOLUMES[1],
-    );
-    let copied = s.ok(
-        "draft",
-        "copy-element",
-        &[
+        ]),
+        inspect.clone(),
+        Scripted::ok(&[
+            "copy-element",
+            "--store",
+            draft_dir,
             "--id",
             PARTS[4],
             "--offset",
             "0,300,0",
             "--name",
             "Copied plate",
-        ],
-    );
-    let copy_id = text(at(&copied, &["element"]), "element_id");
-    let after_copy = parts(&s.ok("draft", "inspect-elements", &[]));
-    assert_eq!(after_copy.len(), 7);
-    close(
-        volume_of(&after_copy, copy_id.as_str()),
-        volume_of(&after_copy, PARTS[4]),
-    );
-    s.ok(
-        "draft",
-        "chamfer-part",
-        &[
+        ]),
+        inspect.clone(),
+        Scripted::ok(&[
+            "chamfer-part",
+            "--store",
+            draft_dir,
             "--id",
             PARTS[3],
             "--operation-id",
@@ -329,9 +354,247 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "15",
             "--second-distance",
             "15",
-        ],
+        ]),
+        inspect,
+    ]
+}
+
+/// The user attributes: two definitions ride one batch, the four values another (a
+/// batched command resolves its targets from the committed head), and the reads and
+/// the two refusals answer from the committed store. Replies: definitions 1-2, sets
+/// 5-8, listings 10-11, refusals 12-13.
+fn attribute_lines(draft_dir: &str) -> Vec<Scripted> {
+    let define_paint = Scripted::ok(&[
+        "attribute-define",
+        "--store",
+        draft_dir,
+        "--name",
+        "Paint_status",
+        "--type",
+        "choice",
+        "--options",
+        "New,Done",
+    ]);
+    let define_weight = Scripted::ok(&[
+        "attribute-define",
+        "--store",
+        draft_dir,
+        "--name",
+        "Weight",
+        "--type",
+        "number",
+        "--unit",
+        "kg",
+    ]);
+    let set = |id: &str, name: &str, value: &str| {
+        Scripted::ok(&[
+            "attribute-set",
+            "--store",
+            draft_dir,
+            "--element",
+            id,
+            "--name",
+            name,
+            "--value",
+            value,
+        ])
+    };
+    let refused = |name: &str, value: &str| {
+        Scripted::refused(&[
+            "attribute-set",
+            "--store",
+            draft_dir,
+            "--element",
+            PARTS[0],
+            "--name",
+            name,
+            "--value",
+            value,
+        ])
+    };
+    // The definitions commit before the sets: a batched command resolves its targets
+    // from the committed head, so a set cannot share a batch with its own definition.
+    vec![
+        Scripted::ok(&["batch-open"]),
+        define_paint,
+        define_weight,
+        Scripted::ok(&["batch-commit"]),
+        Scripted::ok(&["batch-open"]),
+        set(PARTS[0], "Paint_status", "New"),
+        set(PARTS[0], "Weight", "12.5"),
+        set(PARTS[3], "Paint_status", "Done"),
+        set(PARTS[3], "Weight", "8.25"),
+        Scripted::ok(&["batch-commit"]),
+        Scripted::ok(&["attributes", "--store", draft_dir]),
+        Scripted::ok(&["attribute-get", "--store", draft_dir, "--element", PARTS[0]]),
+        refused("Nope", "x"),
+        refused("Paint_status", "painted"),
+    ]
+}
+
+/// Grids and levels: the two storey-model objects ride one batch, then the listings.
+fn grid_lines(draft_dir: &str) -> Vec<Scripted> {
+    vec![
+        Scripted::ok(&["batch-open"]),
+        Scripted::ok(&[
+            "create-grid",
+            "--store",
+            draft_dir,
+            "--name",
+            "Q01 grid",
+            "--new-id",
+            GRID,
+            "--u-expression",
+            "0 1000",
+            "--v-expression",
+            "0",
+        ]),
+        Scripted::ok(&[
+            "create-level",
+            "--store",
+            draft_dir,
+            "--name",
+            "Q01 level",
+            "--new-id",
+            LEVEL,
+            "--elevation",
+            "1000",
+        ]),
+        Scripted::ok(&["batch-commit"]),
+        Scripted::ok(&["list-grids", "--store", draft_dir]),
+        Scripted::ok(&["levels", "--store", draft_dir]),
+    ]
+}
+
+/// The four named views of the story (display state beside the store, never revisions).
+fn save_view_lines(draft_dir: &str, views_file: &str) -> Vec<Scripted> {
+    let save = |name: &str, tail: &[&str]| {
+        let mut args = vec![
+            "save-view",
+            "--store",
+            draft_dir,
+            "--file",
+            views_file,
+            "--name",
+            name,
+        ];
+        args.extend_from_slice(tail);
+        Scripted::ok(&args)
+    };
+    vec![
+        save(
+            "Q01 plan",
+            &[
+                "--parallel",
+                "xy",
+                "--offset",
+                "1000",
+                "--author",
+                "Q01 story",
+                "--comment",
+                "the storey plan",
+            ],
+        ),
+        save(
+            "Q01 axis 2",
+            &["--grid", "Q01 grid", "--axis", "2", "--author", "Q01 story"],
+        ),
+        save("Q01 level plan", &["--level", "Q01 level"]),
+        save("Q01 3d", &["--yaw", "0.7", "--pitch", "0.85"]),
+    ]
+}
+
+/// Assembly, attachments and the weld: the assembly commits alone (a batched command
+/// resolves its targets from the committed head), then the seven attachments and the
+/// weld ride one batch under the pinned assembly identity.
+fn assembly_lines(draft_dir: &str, copy_id: &str) -> Vec<Scripted> {
+    let attach = |id: &str| {
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            draft_dir,
+            "--id",
+            id,
+            "--assembly-id",
+            ASSEMBLY,
+        ])
+    };
+    let mut lines = vec![Scripted::ok(&[
+        "create-assembly",
+        "--store",
+        draft_dir,
+        "--name",
+        "Q01 expanded frame",
+        "--new-id",
+        ASSEMBLY,
+    ])];
+    for id in [
+        PARTS[0], PARTS[1], PARTS[2], PARTS[3], PARTS[4], SPLIT_HALF, copy_id,
+    ] {
+        lines.push(attach(id));
+    }
+    lines.push(Scripted::ok(&[
+        "create-weld",
+        "--store",
+        draft_dir,
+        "--name",
+        "Q01 weld",
+        "--main",
+        PARTS[4],
+        "--secondary",
+        PARTS[1],
+        "--size",
+        "6",
+        "--location",
+        "workshop",
+        "--side",
+        "both",
+    ]));
+    lines.push(Scripted::ok(&["batch-commit"]));
+    lines
+}
+
+/// The area of the d = 20 member hole: the regular 32-gon of F06 section 2.
+fn hole_area() -> f64 {
+    1600.0 * (std::f64::consts::PI / 16.0).sin()
+}
+
+#[test]
+fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
+    let s = Story::new();
+    // The setup and the frame ride two script invocations (`#738`); the replies are read
+    // by the inspection below, exactly as the one-process commands answered before.
+    s.script(
+        "published",
+        &setup_lines(&s.path("published"), &s.path("draft")),
     );
-    let after_chamfer = parts(&s.ok("draft", "inspect-elements", &[]));
+    s.script("draft", &frame_lines(&s.path("draft")));
+    let before = parts(&s.ok("draft", "inspect-elements", &[]));
+    assert_eq!(before.len(), 5);
+    for (id, volume) in PARTS.into_iter().zip(STARTING_VOLUMES) {
+        close(volume_of(&before, id), volume);
+    }
+
+    // Model tools (split, copy, chamfer) change exactly the parts they name. The split cuts
+    // the second column at mid height, so the halves sum to the closed-form column volume.
+    // One script carries the three tools and their inspections (`#738`); the replies
+    // answer in order (tool, inspection) three times.
+    let tools = s.script("draft", &tool_lines(&s.path("draft")));
+    let after_split = parts(&tools[1]);
+    assert_eq!(after_split.len(), 6);
+    close(
+        volume_of(&after_split, PARTS[1]) + volume_of(&after_split, SPLIT_HALF),
+        STARTING_VOLUMES[1],
+    );
+    let copied = &tools[2];
+    let copy_id = text(at(copied, &["element"]), "element_id");
+    let after_copy = parts(&tools[3]);
+    assert_eq!(after_copy.len(), 7);
+    close(
+        volume_of(&after_copy, copy_id.as_str()),
+        volume_of(&after_copy, PARTS[4]),
+    );
+    let after_chamfer = parts(&tools[5]);
     assert_eq!(after_chamfer.len(), 7);
     assert!(
         volume_of(&after_chamfer, PARTS[3]) < volume_of(&after_split, PARTS[3]),
@@ -346,20 +609,31 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     );
 
     // Undo returns the workspace across one operation; redo restores it. Workspace commands
-    // address the workspace folder directly, without a store argument.
-    let undo_json = s.execute(&["undo-workspace", "--workspace-dir", &s.path("draft")]);
-    assert_eq!(undo_json.0, 0);
-    assert_eq!(text(&undo_json.1, "outcome"), "workspace_undone");
-    let after_undo = parts(&s.ok("draft", "inspect-elements", &[]));
+    // address the workspace folder directly, without a store argument. Each ride is one
+    // script with the inspection that reads the result (`#738`).
+    let undo_round = s.script(
+        "draft",
+        &[
+            Scripted::ok(&["undo-workspace", "--workspace-dir", &s.path("draft")]),
+            Scripted::ok(&["inspect-elements", "--store", &s.path("draft")]),
+        ],
+    );
+    assert_eq!(text(&undo_round[0], "outcome"), "workspace_undone");
+    let after_undo = parts(&undo_round[1]);
     assert_eq!(after_undo.len(), 7);
     close(
         volume_of(&after_undo, PARTS[3]),
         volume_of(&after_split, PARTS[3]),
     );
-    let redo_json = s.execute(&["redo-workspace", "--workspace-dir", &s.path("draft")]);
-    assert_eq!(redo_json.0, 0);
-    assert_eq!(text(&redo_json.1, "outcome"), "workspace_redone");
-    let after_redo = parts(&s.ok("draft", "inspect-elements", &[]));
+    let redo_round = s.script(
+        "draft",
+        &[
+            Scripted::ok(&["redo-workspace", "--workspace-dir", &s.path("draft")]),
+            Scripted::ok(&["inspect-elements", "--store", &s.path("draft")]),
+        ],
+    );
+    assert_eq!(text(&redo_round[0], "outcome"), "workspace_redone");
+    let after_redo = parts(&redo_round[1]);
     assert_eq!(after_redo.len(), 7);
     close(
         volume_of(&after_redo, PARTS[3]),
@@ -369,103 +643,85 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     // Member holes (A04.2, the G14.2 transverse slice). The no-fit refusal runs on the
     // plain member first: a transverse coordinate outside the section leaves no fit and
     // writes nothing (the axis point stays mid-member — at the member's end the end-cap
-    // clearance would refuse first), and the successful hole after it proves that.
-    let head_before_hole = s.head("draft");
-    let refused_hole = s.run(
+    // clearance would refuse first), and the successful hole after it proves that. The
+    // two heads and both holes ride one script (`#738`).
+    let hole_round = s.script(
         "draft",
-        "add-hole",
         &[
-            "--id",
-            PARTS[0],
-            "--operation-id",
-            "019a7bf0-0000-7000-8000-00000000aa25",
-            "--axis-point",
-            "0,500,250",
-            "--axis-direction",
-            "1,0,0",
-            "--diameter",
-            "20",
+            Scripted::ok(&["open-revision", "--store", &s.path("draft")]),
+            Scripted::refused(&[
+                "add-hole",
+                "--store",
+                &s.path("draft"),
+                "--id",
+                PARTS[0],
+                "--operation-id",
+                "019a7bf0-0000-7000-8000-00000000aa25",
+                "--axis-point",
+                "0,500,250",
+                "--axis-direction",
+                "1,0,0",
+                "--diameter",
+                "20",
+            ]),
+            Scripted::ok(&["open-revision", "--store", &s.path("draft")]),
+            Scripted::ok(&[
+                "add-hole",
+                "--store",
+                &s.path("draft"),
+                "--id",
+                PARTS[0],
+                "--operation-id",
+                MEMBER_HOLE_OP,
+                "--axis-point",
+                "0,0,500",
+                "--axis-direction",
+                "1,0,0",
+                "--diameter",
+                "20",
+            ]),
         ],
-        2,
     );
-    assert_eq!(text(&refused_hole, "code"), "INVALID_ARGUMENT");
-    assert_eq!(s.head("draft"), head_before_hole);
+    assert_eq!(text(&hole_round[1], "code"), "INVALID_ARGUMENT");
+    // The refusal wrote nothing: the head it left equals the head it found.
+    assert_eq!(
+        text(&hole_round[0], "revision_id"),
+        text(&hole_round[2], "revision_id")
+    );
     // The through round hole along the section width (u) direction at the section centre,
     // half way up the first column. The stored polygon is the geometry: d = 20 takes the
     // regular 32-gon of F06 section 2, so the hole removes its area times the 100 mm width
     // from the gross column volume.
-    let holed = s.ok(
-        "draft",
-        "add-hole",
-        &[
-            "--id",
-            PARTS[0],
-            "--operation-id",
-            MEMBER_HOLE_OP,
-            "--axis-point",
-            "0,0,500",
-            "--axis-direction",
-            "1,0,0",
-            "--diameter",
-            "20",
-        ],
-    );
-    assert_eq!(text(&holed, "outcome"), "hole_added");
-    let holed_member = at(&holed, &["element"]);
+    let holed = &hole_round[3];
+    assert_eq!(text(holed, "outcome"), "hole_added");
+    let holed_member = at(holed, &["element"]);
     let hole_records = at(holed_member, &["hole_records"]).array().unwrap();
     assert_eq!(hole_records.len(), 1);
     assert_eq!(text(&hole_records[0], "extent"), "through");
-    let hole_area = 1600.0 * (std::f64::consts::PI / 16.0).sin();
     close(
         at(holed_member, &["quantities", "volume", "mm3"])
             .float()
             .unwrap(),
-        5_000_000.0 - hole_area * 100.0,
+        5_000_000.0 - hole_area() * 100.0,
     );
 
     // User attributes (I04): definitions are project data, values ride on any element, and
-    // an undefined name or an off-choice value is refused, never stored silently.
-    s.ok(
-        "draft",
-        "attribute-define",
-        &[
-            "--name",
-            "Paint_status",
-            "--type",
-            "choice",
-            "--options",
-            "New,Done",
-        ],
-    );
-    s.ok(
-        "draft",
-        "attribute-define",
-        &["--name", "Weight", "--type", "number", "--unit", "kg"],
-    );
+    // an undefined name or an off-choice value is refused, never stored silently. The
+    // defines and the four values ride two batches, the reads and both refusals follow in
+    // the same script (`#738`; reply indices in `attribute_lines`).
+    let attribute_round = s.script("draft", &attribute_lines(&s.path("draft")));
     assert_eq!(
-        s.ok("draft", "attributes", &[])
-            .get("attributes")
-            .unwrap()
+        at(&attribute_round[10], &["attributes"])
             .array()
             .unwrap()
             .len(),
         2
     );
-    for (id, paint, weight) in [(PARTS[0], "New", "12.5"), (PARTS[3], "Done", "8.25")] {
-        let set = s.ok(
-            "draft",
-            "attribute-set",
-            &["--element", id, "--name", "Paint_status", "--value", paint],
-        );
-        assert_eq!(text(&set, "outcome"), "attribute_set");
-        s.ok(
-            "draft",
-            "attribute-set",
-            &["--element", id, "--name", "Weight", "--value", weight],
-        );
+    for set in &attribute_round[5..9] {
+        assert_eq!(text(set, "outcome"), "attribute_set");
     }
-    let readback = s.ok("draft", "attribute-get", &["--element", PARTS[0]]);
-    let entries = at(&readback, &["attributes"]).array().unwrap();
+    let readback = &attribute_round[11];
+    let entries = at(readback, &["attributes"]).array().unwrap();
     assert_eq!(entries.len(), 2);
     for entry in entries.iter() {
         let name = text(entry, "name");
@@ -478,45 +734,76 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             close(entry.get("value").unwrap().float().unwrap(), 12.5);
         }
     }
-    let refused_attribute = s.run(
-        "draft",
-        "attribute-set",
-        &["--element", PARTS[0], "--name", "Nope", "--value", "x"],
-        2,
-    );
-    assert_eq!(text(&refused_attribute, "code"), "NOT_FOUND");
-    let refused_choice = s.run(
-        "draft",
-        "attribute-set",
-        &[
-            "--element",
-            PARTS[0],
-            "--name",
-            "Paint_status",
-            "--value",
-            "painted",
-        ],
-        2,
-    );
-    assert_eq!(text(&refused_choice, "code"), "INVALID_ARGUMENT");
+    assert_eq!(text(&attribute_round[12], "code"), "NOT_FOUND");
+    assert_eq!(text(&attribute_round[13], "code"), "INVALID_ARGUMENT");
 
     // Filters (V14): typed rules over the real frame through the engine evaluator. A query
     // never writes, a missing value never satisfies ne, and an unknown attribute refuses
-    // instead of matching silently.
+    // instead of matching silently. The two heads and all four queries ride one script
+    // (`#738`; replies: head 0, queries 1-3, refusal 4, head 5).
     let pinned_head = s.head("draft");
     fs::write(
         s.path("rule-plates.json"),
         r#"{"field":"type","op":"eq","value":"plate"}"#,
     )
     .unwrap();
-    let plates = s.ok(
+    fs::write(
+        s.path("rule-paint.json"),
+        r#"{"field":"attribute","attribute":"Paint_status","op":"ne","value":"Done"}"#,
+    )
+    .unwrap();
+    fs::write(
+        s.path("rule-combined.json"),
+        r#"{"all":[{"field":"type","op":"eq","value":"column"},{"any":[{"field":"attribute","attribute":"Paint_status","op":"eq","value":"New"},{"field":"name","op":"contains","value":"no-such-name"}]}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        s.path("rule-unknown.json"),
+        r#"{"field":"attribute","attribute":"Missing","op":"eq","value":1}"#,
+    )
+    .unwrap();
+    let query_round = s.script(
         "draft",
-        "query-elements",
-        &["--rule", &s.path("rule-plates.json")],
+        &[
+            Scripted::ok(&["open-revision", "--store", &s.path("draft")]),
+            Scripted::ok(&[
+                "query-elements",
+                "--store",
+                &s.path("draft"),
+                "--rule",
+                &s.path("rule-plates.json"),
+            ]),
+            Scripted::ok(&[
+                "query-elements",
+                "--store",
+                &s.path("draft"),
+                "--rule",
+                &s.path("rule-paint.json"),
+            ]),
+            Scripted::ok(&[
+                "query-elements",
+                "--store",
+                &s.path("draft"),
+                "--rule",
+                &s.path("rule-combined.json"),
+            ]),
+            Scripted::refused(&[
+                "query-elements",
+                "--store",
+                &s.path("draft"),
+                "--rule",
+                &s.path("rule-unknown.json"),
+            ]),
+            Scripted::ok(&["open-revision", "--store", &s.path("draft")]),
+        ],
     );
-    let plate_ids: Vec<String> = plates
-        .get("elements")
-        .unwrap()
+    // A query never writes: the head it left equals the head it found.
+    assert_eq!(
+        text(&query_round[0], "revision_id"),
+        text(&query_round[5], "revision_id")
+    );
+    assert_eq!(pinned_head, text(&query_round[0], "revision_id"));
+    let plate_ids: Vec<String> = at(&query_round[1], &["elements"])
         .array()
         .unwrap()
         .iter()
@@ -527,133 +814,56 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         assert!(plate_ids.iter().any(|found| found == id), "{id}");
     }
     assert!(plate_ids.iter().any(|found| found == copy_id.as_str()));
-    fs::write(
-        s.path("rule-paint.json"),
-        r#"{"field":"attribute","attribute":"Paint_status","op":"ne","value":"Done"}"#,
-    )
-    .unwrap();
-    let painted = s.ok(
-        "draft",
-        "query-elements",
-        &["--rule", &s.path("rule-paint.json")],
-    );
-    let painted_ids: Vec<String> = painted
-        .get("elements")
-        .unwrap()
+    let painted_ids: Vec<String> = at(&query_round[2], &["elements"])
         .array()
         .unwrap()
         .iter()
         .map(|e| e.string().unwrap().to_owned())
         .collect();
     assert_eq!(painted_ids, vec![PARTS[0].to_owned()]);
-    fs::write(
-        s.path("rule-combined.json"),
-        r#"{"all":[{"field":"type","op":"eq","value":"column"},{"any":[{"field":"attribute","attribute":"Paint_status","op":"eq","value":"New"},{"field":"name","op":"contains","value":"no-such-name"}]}]}"#,
-    )
-    .unwrap();
-    let combined = s.ok(
-        "draft",
-        "query-elements",
-        &["--rule", &s.path("rule-combined.json")],
-    );
-    let combined_ids: Vec<String> = combined
-        .get("elements")
-        .unwrap()
+    let combined_ids: Vec<String> = at(&query_round[3], &["elements"])
         .array()
         .unwrap()
         .iter()
         .map(|e| e.string().unwrap().to_owned())
         .collect();
     assert_eq!(combined_ids, vec![PARTS[0].to_owned()]);
-    fs::write(
-        s.path("rule-unknown.json"),
-        r#"{"field":"attribute","attribute":"Missing","op":"eq","value":1}"#,
-    )
-    .unwrap();
-    s.run(
-        "draft",
-        "query-elements",
-        &["--rule", &s.path("rule-unknown.json")],
-        2,
-    );
-    assert_eq!(s.head("draft"), pinned_head);
 
     // The draft reference for the publication round trip: the frame as it stands now,
     // including the member hole; attribute edits below never touch a mesh.
     let final_parts = parts(&s.ok("draft", "inspect-elements", &[]));
 
-    // Grids and levels are storey model data the real store carries (T01/D2).
-    s.ok(
-        "draft",
-        "create-grid",
-        &[
-            "--name",
-            "Q01 grid",
-            "--new-id",
-            GRID,
-            "--u-expression",
-            "0 1000",
-            "--v-expression",
-            "0",
-        ],
-    );
-    assert_eq!(
-        s.ok("draft", "list-grids", &[])
-            .get("grids")
-            .unwrap()
-            .array()
-            .unwrap()
-            .len(),
-        1
-    );
-    s.ok(
-        "draft",
-        "create-level",
-        &[
-            "--name",
-            "Q01 level",
-            "--new-id",
-            LEVEL,
-            "--elevation",
-            "1000",
-        ],
-    );
-    assert_eq!(
-        s.ok("draft", "levels", &[])
-            .get("levels")
-            .unwrap()
-            .array()
-            .unwrap()
-            .len(),
-        1
-    );
+    // Grids and levels are storey model data the real store carries (T01/D2). The two
+    // objects ride one batch and the listings follow in the same script (`#738`).
+    let grid_round = s.script("draft", &grid_lines(&s.path("draft")));
+    assert_eq!(at(&grid_round[4], &["grids"]).array().unwrap().len(), 1);
+    assert_eq!(at(&grid_round[5], &["levels"]).array().unwrap().len(), 1);
 
     // Named views (V12): the storey plan, a grid-axis elevation and a free orbit become
     // named views in the W01 camera prim layer beside the store. A view is display state:
     // the draft head and the layer bytes stay identical across every read and every
     // refusal, and each provenance-bearing save captures the draft revision it was taken
-    // against.
+    // against. The saves and the listing ride one script (`#738`; replies: head 0, saves
+    // 1-4, listing 5).
     let views_file = s.path("story-views.usda");
-    let draft_head = s.head("draft");
-    let save_named = |args: &[&str]| -> Json {
-        let mut all = vec!["--file", views_file.as_str()];
-        all.extend_from_slice(args);
-        s.ok("draft", "save-view", &all)
-    };
-    let plan = save_named(&[
-        "--name",
-        "Q01 plan",
-        "--parallel",
-        "xy",
-        "--offset",
-        "1000",
-        "--author",
-        "Q01 story",
-        "--comment",
-        "the storey plan",
-    ]);
-    assert_eq!(text(&plan, "outcome"), "view_saved");
-    let plan_view = &at(&plan, &["views"]).array().unwrap()[0];
+    let mut view_round_lines = vec![Scripted::ok(&[
+        "open-revision",
+        "--store",
+        &s.path("draft"),
+    ])];
+    view_round_lines.extend(save_view_lines(&s.path("draft"), &views_file));
+    view_round_lines.push(Scripted::ok(&[
+        "list-views",
+        "--store",
+        &s.path("draft"),
+        "--file",
+        &views_file,
+    ]));
+    let view_round = s.script("draft", &view_round_lines);
+    let draft_head = text(&view_round[0], "revision_id");
+    let plan = &view_round[1];
+    assert_eq!(text(plan, "outcome"), "view_saved");
+    let plan_view = &at(plan, &["views"]).array().unwrap()[0];
     assert_eq!(text(plan_view, "name"), "Q01 plan");
     assert_eq!(
         numbers(at(plan_view, &["plane", "origin_mm"])),
@@ -664,25 +874,14 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     assert_eq!(text(stamp, "comment"), "the storey plan");
     assert_eq!(text(stamp, "model_revision"), draft_head);
     assert!(at(stamp, &["created_at_ms"]).unsigned().unwrap() > 1_700_000_000_000);
-    let axis = save_named(&[
-        "--name",
-        "Q01 axis 2",
-        "--grid",
-        "Q01 grid",
-        "--axis",
-        "2",
-        "--author",
-        "Q01 story",
-    ]);
-    let axis_view = &at(&axis, &["views"]).array().unwrap()[0];
+    let axis_view = &at(&view_round[2], &["views"]).array().unwrap()[0];
     assert_eq!(text(axis_view, "name"), "Q01 axis 2");
     assert_eq!(
         numbers(at(axis_view, &["plane", "origin_mm"])),
         [1000.0, -2000.0, 0.0],
         "the elevation stands on the second U axis: its plane origin sits on the x = 1000 line"
     );
-    let level_plan = save_named(&["--name", "Q01 level plan", "--level", "Q01 level"]);
-    let level_view = &at(&level_plan, &["views"]).array().unwrap()[0];
+    let level_view = &at(&view_round[3], &["views"]).array().unwrap()[0];
     assert_eq!(text(level_view, "name"), "Q01 level plan");
     assert_eq!(
         numbers(at(level_view, &["plane", "origin_mm"])),
@@ -690,13 +889,12 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         "the level plan is the model XY plane at the level elevation"
     );
     assert!(matches!(at(level_view, &["provenance"]), Json::Null));
-    let orbit = save_named(&["--name", "Q01 3d", "--yaw", "0.7", "--pitch", "0.85"]);
-    let orbit_view = &at(&orbit, &["views"]).array().unwrap()[0];
+    let orbit_view = &at(&view_round[4], &["views"]).array().unwrap()[0];
     assert_eq!(text(orbit_view, "name"), "Q01 3d");
     assert_eq!(text(orbit_view, "projection"), "perspective");
-    let listed = s.ok("draft", "list-views", &["--file", &views_file]);
-    assert_eq!(at(&listed, &["view_count"]).unsigned().unwrap(), 4);
-    let mut names: Vec<String> = at(&listed, &["views"])
+    let listed = &view_round[5];
+    assert_eq!(at(listed, &["view_count"]).unsigned().unwrap(), 4);
+    let mut names: Vec<String> = at(listed, &["views"])
         .array()
         .unwrap()
         .iter()
@@ -707,93 +905,72 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         names,
         ["Q01 3d", "Q01 axis 2", "Q01 level plan", "Q01 plan"]
     );
-    assert_eq!(at(&listed, &["folders"]).array().unwrap().len(), 0);
+    assert_eq!(at(listed, &["folders"]).array().unwrap().len(), 0);
     let layer_bytes = fs::read(&views_file).unwrap();
-    let applied = s.ok(
+    // The apply, the duplicate-save refusal, the missing-view refusal and the head check
+    // ride one script (`#738`): the layer bytes and the model head stay identical.
+    let apply_round = s.script(
         "draft",
-        "apply-view",
-        &["--file", &views_file, "--view", "q01 axis 2"],
+        &[
+            Scripted::ok(&[
+                "apply-view",
+                "--store",
+                &s.path("draft"),
+                "--file",
+                &views_file,
+                "--view",
+                "q01 axis 2",
+            ]),
+            Scripted::refused(&[
+                "save-view",
+                "--store",
+                &s.path("draft"),
+                "--file",
+                &views_file,
+                "--name",
+                "Q01 PLAN",
+                "--parallel",
+                "xy",
+            ]),
+            Scripted::refused(&[
+                "apply-view",
+                "--store",
+                &s.path("draft"),
+                "--file",
+                &views_file,
+                "--view",
+                "no such view",
+            ]),
+            Scripted::ok(&["open-revision", "--store", &s.path("draft")]),
+        ],
     );
-    assert_eq!(text(&applied, "outcome"), "view_applied");
+    let applied = &apply_round[0];
+    assert_eq!(text(applied, "outcome"), "view_applied");
     assert_eq!(
-        numbers(at(&applied, &["camera_plane", "origin_mm"])),
+        numbers(at(applied, &["camera_plane", "origin_mm"])),
         [1000.0, -2000.0, 0.0]
     );
-    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Q01 story");
+    assert_eq!(text(at(applied, &["provenance"]), "author"), "Q01 story");
     assert_eq!(
-        text(at(&applied, &["provenance"]), "model_revision"),
+        text(at(applied, &["provenance"]), "model_revision"),
         draft_head
     );
-    let duplicate = s.run(
-        "draft",
-        "save-view",
-        &[
-            "--file",
-            &views_file,
-            "--name",
-            "Q01 PLAN",
-            "--parallel",
-            "xy",
-        ],
-        2,
-    );
-    assert_eq!(text(&duplicate, "outcome"), "rejected");
-    let missing = s.run(
-        "draft",
-        "apply-view",
-        &["--file", &views_file, "--view", "no such view"],
-        2,
-    );
-    assert_eq!(text(&missing, "outcome"), "rejected");
+    assert_eq!(text(&apply_round[1], "outcome"), "rejected");
+    assert_eq!(text(&apply_round[2], "outcome"), "rejected");
     assert_eq!(
         fs::read(&views_file).unwrap(),
         layer_bytes,
         "reads and refusals never rewrite the layer"
     );
-    assert_eq!(s.head("draft"), draft_head, "views never write the model");
+    assert_eq!(
+        text(&apply_round[3], "revision_id"),
+        draft_head,
+        "views never write the model"
+    );
 
-    // Assembly, bolts and welds complete the frame (the original scenario keeps the details).
-    let assembly = text(
-        &s.ok(
-            "draft",
-            "create-assembly",
-            &["--name", "Q01 expanded frame"],
-        ),
-        "element_id",
-    );
-    for id in [
-        PARTS[0],
-        PARTS[1],
-        PARTS[2],
-        PARTS[3],
-        PARTS[4],
-        SPLIT_HALF,
-        copy_id.as_str(),
-    ] {
-        s.ok(
-            "draft",
-            "attach-to-assembly",
-            &["--id", id, "--assembly-id", &assembly],
-        );
-    }
-    s.ok(
-        "draft",
-        "create-weld",
-        &[
-            "--name",
-            "Q01 weld",
-            "--main",
-            PARTS[4],
-            "--secondary",
-            PARTS[1],
-            "--size",
-            "6",
-            "--location",
-            "workshop",
-            "--side",
-            "both",
-        ],
-    );
+    // Assembly, bolts and welds complete the frame under the pinned assembly identity
+    // (the original scenario keeps the details). One batch, one script (`#738`).
+    s.script("draft", &assembly_lines(&s.path("draft"), copy_id.as_str()));
 
     // Numbering and publication; the view bundle and BOM are then checked against the
     // published head.
@@ -806,7 +983,6 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         &["--workspace-dir", &s.path("draft")],
     );
     assert_eq!(text(&published, "outcome"), "workspace_published");
-    let accepted_head = s.head("published");
 
     // Reopen: every part keeps its exact volume and mesh across the publication round trip.
     let reopened = parts(&s.ok("published", "inspect-elements", &[]));
@@ -816,6 +992,47 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         close(found.1, *volume);
         assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
     }
+}
+
+/// The published surface of the expanded story (the second slice of the former single
+/// test, split at the publication checkpoint, `#738`): the view bundle round trip,
+/// snapshot/export, invalid-file and cancellation regressions, exact stored outputs
+/// (BOM, schedules), the full drawing document and the slice-D hole surface, all over
+/// the same numbered frame. The frame is re-authored compactly here — the draft-story
+/// assertions stay in the first slice — so nextest runs the two slices in parallel and
+/// each keeps its own per-test budget.
+#[test]
+fn expanded_alpha_published_surface_regressions_and_exact_outputs() {
+    let s = Story::new();
+    let store = s.path("published");
+    let draft = s.path("draft");
+    // The compact re-authoring: the same commands as the first slice's story, without
+    // its mid-story assertions (each segment rides one `run-script` invocation).
+    s.script("published", &setup_lines(&store, &draft));
+    s.script("draft", &frame_lines(&draft));
+    let tools = s.script("draft", &tool_lines(&draft));
+    let copy_id = text(at(&tools[2], &["element"]), "element_id");
+    s.script("draft", &attribute_lines(&draft));
+    s.script("draft", &grid_lines(&draft));
+    let views_file = s.path("story-views.usda");
+    let mut view_lines = vec![Scripted::ok(&["open-revision", "--store", &draft])];
+    view_lines.extend(save_view_lines(&draft, &views_file));
+    let views = s.script("draft", &view_lines);
+    let draft_head = text(&views[0], "revision_id");
+    let layer_bytes = fs::read(&views_file).unwrap();
+    s.script("draft", &assembly_lines(&draft, copy_id.as_str()));
+    // Numbering and publication; the view bundle and BOM are then checked against the
+    // published head.
+    let token = text(&s.ok("draft", "preview-numbering", &[]), "preview_token");
+    let approved = s.ok("draft", "approve-numbering", &["--preview-token", &token]);
+    assert_eq!(approved.get("marks").unwrap().unsigned().unwrap(), 8);
+    let published = s.ok(
+        "published",
+        "publish-workspace",
+        &["--workspace-dir", &draft],
+    );
+    assert_eq!(text(&published, "outcome"), "workspace_published");
+    let accepted_head = s.head("published");
 
     // The named views survive the publication round trip: the camera prim layer is
     // store-independent display state, so the published head lists the same four views,
@@ -1931,7 +2148,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         .unwrap();
     let oblique_removed = volume_of(&before_d, OBLIQUE_MEMBER) - oblique_volume;
     assert!(
-        (oblique_removed - hole_area * 100.0 * 13.0 / 12.0).abs() <= 1.0,
+        (oblique_removed - hole_area() * 100.0 * 13.0 / 12.0).abs() <= 1.0,
         "oblique removed {oblique_removed}"
     );
     let oblique_digest = text(oblique_element, "mesh_digest");
@@ -1964,7 +2181,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         .unwrap();
     let sloped_removed = volume_of(&before_d, SLOPED_MEMBER) - sloped_volume;
     assert!(
-        (sloped_removed - hole_area * 100.0 / cos20).abs() <= 1.0,
+        (sloped_removed - hole_area() * 100.0 / cos20).abs() <= 1.0,
         "sloped removed {sloped_removed}"
     );
     let sloped_digest = text(sloped_element, "mesh_digest");

@@ -94,6 +94,7 @@ fn early_route_commands_answer_help_before_dispatch() {
     for word in [
         "commands",
         "session",
+        "run-script",
         "batch-open",
         "batch-commit",
         "batch-abort",

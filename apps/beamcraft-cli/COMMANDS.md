@@ -1756,3 +1756,11 @@ read.
 ```text
 batch-abort
 ```
+
+### run-script
+
+write.
+
+```text
+run-script --store ROOT --file FILE
+```
