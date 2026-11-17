@@ -17,7 +17,12 @@
 //!   reported unresolved, never guessed;
 //! - [`penetration_depth`] samples the inside shell's vertices, so it is a
 //!   deterministic lower bound of the true penetration depth, invariant under
-//!   re-triangulations that keep the vertex set.
+//!   re-triangulations that keep the vertex set;
+//! - [`crossing_depth`] reads the intersection itself for the case no sample
+//!   reaches: the largest inside run of a strictly crossing surface edge,
+//!   decided exactly and invariant under a different valid triangulation.
+
+use std::collections::BTreeMap;
 
 use crate::bigint::Big;
 use crate::exact::{PredError, Predicates, min_exponent, scaled};
@@ -364,6 +369,217 @@ pub fn penetration_depth(
         });
     }
     Ok(deepest)
+}
+
+/// The penetration depth of a strict surface crossing, measured from the
+/// intersection itself: the largest inside run of a strictly crossing
+/// surface edge through the other shell, in the meshes' coordinate units
+/// (millimetres in the product), or `None` when no surface edge strictly
+/// crosses the other shell or any run cannot be decided.
+///
+/// A surface edge is a mesh edge whose two adjacent triangles are not
+/// coplanar, decided with the exact predicates; the edge set is a property
+/// of the surface, so it survives a re-triangulation that keeps the
+/// vertices, and the measured run never depends on where vertices or face
+/// probes happen to lie. One edge's run is the total length of the intervals
+/// between its consecutive strict crossings of the other shell whose
+/// midpoint the exact predicates place strictly inside: between consecutive
+/// transversal crossings the edge stays on one side of the surface, so the
+/// midpoint decides the interval. A midpoint that lies on the surface or
+/// stays unresolved refuses the whole measurement, and so does a crossing
+/// whose pierce parameter is not representable over binary64: a flush wall
+/// or a graze reports `None`, never a guessed value. At most
+/// [`Limits::max_candidate_pairs`] crossing edges are measured, in mesh
+/// order, so a larger shell keeps the work bounded.
+pub fn crossing_depth(
+    a: &TriMesh,
+    b: &TriMesh,
+    limits: Limits,
+) -> Result<Option<f64>, ContactError> {
+    let mut best: Option<f64> = None;
+    let mut measured = 0u64;
+    for (mesh, other) in [(a, b), (b, a)] {
+        if measured >= limits.max_candidate_pairs {
+            break;
+        }
+        let shell = Shell::of(other)?;
+        let index = BoxIndex::build(&shell.boxes, limits.max_index_nodes, || false)
+            .map_err(ContactError::Index)?;
+        let mut preds = Predicates::new(limits.max_exact_predicates);
+        for (s0, s1) in surface_edges(&mut preds, mesh)? {
+            if measured >= limits.max_candidate_pairs {
+                break;
+            }
+            match edge_inside_run(&mut preds, &shell, &index, s0, s1, limits, &mut measured)? {
+                RunDecision::NoCrossing => {}
+                RunDecision::Refused => return Ok(None),
+                RunDecision::Run(run) => {
+                    best = Some(match best {
+                        Some(x) if x >= run => x,
+                        _ => run,
+                    });
+                }
+            }
+        }
+    }
+    Ok(best)
+}
+
+/// One measurement decision per surface edge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RunDecision {
+    /// The edge has no strict crossing of the other shell.
+    NoCrossing,
+    /// A crossing's run cannot be decided: an interval midpoint lies on the
+    /// surface or stays unresolved, or a pierce parameter is not
+    /// representable.
+    Refused,
+    /// The measured inside length of the edge's crossing run.
+    Run(f64),
+}
+
+/// Decides one surface edge against the other shell. Its strict crossings,
+/// in order along the edge, bound the intervals the midpoints classify; a
+/// proven crossing whose pierce parameter cannot be represented refuses.
+fn edge_inside_run(
+    preds: &mut Predicates,
+    shell: &Shell,
+    index: &BoxIndex,
+    s0: [f64; 3],
+    s1: [f64; 3],
+    limits: Limits,
+    measured: &mut u64,
+) -> Result<RunDecision, ContactError> {
+    let Some(edge_box) = Aabb::from_points([s0, s1]) else {
+        return Ok(RunDecision::NoCrossing);
+    };
+    let cap = usize::try_from(limits.max_candidate_pairs).unwrap_or(0);
+    let candidates = index
+        .overlapping(&edge_box, cap)
+        .map_err(ContactError::Index)?;
+    let mut crossings: Vec<f64> = Vec::new();
+    for ai in candidates {
+        let Some(tri) = shell.tris.get(usize::try_from(ai).unwrap_or(usize::MAX)) else {
+            return Err(ContactError::Range);
+        };
+        if !segment_crosses_triangle(preds, s0, s1, tri)? {
+            continue;
+        }
+        let Some(t) = crossing_parameter(s0, s1, tri) else {
+            return Ok(RunDecision::Refused);
+        };
+        crossings.push(t);
+    }
+    if crossings.is_empty() {
+        return Ok(RunDecision::NoCrossing);
+    }
+    *measured += 1;
+    crossings.sort_by(f64::total_cmp);
+    let step = [s1[0] - s0[0], s1[1] - s0[1], s1[2] - s0[2]];
+    let length = (step[0] * step[0] + step[1] * step[1] + step[2] * step[2]).sqrt();
+    let mut inside = 0.0f64;
+    let mut lo = 0.0f64;
+    for hi in crossings.iter().copied().chain(std::iter::once(1.0)) {
+        if hi > lo {
+            let mid = lo + (hi - lo) * 0.5;
+            let point = [
+                s0[0] + step[0] * mid,
+                s0[1] + step[1] * mid,
+                s0[2] + step[2] * mid,
+            ];
+            match shell_contains(preds, shell, point)? {
+                Some(true) => inside += hi - lo,
+                Some(false) => {}
+                // The interval meets a surface the crossings did not bound:
+                // a flush run along a face or a graze. Refuse, never guess.
+                None => return Ok(RunDecision::Refused),
+            }
+        }
+        lo = hi;
+    }
+    Ok(RunDecision::Run(inside * length))
+}
+
+/// The pierce parameter of a proven strict crossing: the plane-side values
+/// over binary64, with the exact side decision already taken by the
+/// predicates. `None` when the ratio is not representable (the values
+/// underflow or overflow against each other); the caller refuses the
+/// measurement instead of guessing with a broken parameter.
+fn crossing_parameter(s0: [f64; 3], s1: [f64; 3], tri: &Tri) -> Option<f64> {
+    let [a, b, c] = *tri;
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let n = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    let side = |p: [f64; 3]| {
+        let d = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+        d[0] * n[0] + d[1] * n[1] + d[2] * n[2]
+    };
+    let (d0, d1) = (side(s0), side(s1));
+    let denom = d0 - d1;
+    if !denom.is_finite() || denom == 0.0 {
+        return None;
+    }
+    let t = d0 / denom;
+    if !t.is_finite() || t <= 0.0 || t >= 1.0 {
+        return None;
+    }
+    Some(t)
+}
+
+/// One surface edge as its two endpoint positions.
+type SurfaceEdge = ([f64; 3], [f64; 3]);
+
+/// The surface edges of a mesh: each edge whose adjacent triangles are not
+/// coplanar, decided with the exact predicates, as its two endpoint
+/// positions. An edge with fewer or more than two adjacent triangles is
+/// skipped: the contact facts assume closed, consistently oriented shells,
+/// and a boundary or non-manifold edge star has no single surface side to
+/// cross. The vertex-index key order keeps the scan deterministic.
+fn surface_edges(preds: &mut Predicates, mesh: &TriMesh) -> Result<Vec<SurfaceEdge>, ContactError> {
+    let vertices = mesh.vertices();
+    let at = |i: u32| -> Result<[f64; 3], ContactError> {
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| vertices.get(i))
+            .copied()
+            .ok_or(ContactError::Range)
+    };
+    // One slot per adjacent triangle's opposite vertex; a third marks a
+    // non-manifold fan, which no measurement reads.
+    let mut sides: BTreeMap<[u32; 2], Vec<[f64; 3]>> = BTreeMap::new();
+    for tri in mesh.triangles() {
+        let t = [at(tri[0])?, at(tri[1])?, at(tri[2])?];
+        for (p, q, r) in [
+            (tri[0], tri[1], t[2]),
+            (tri[1], tri[2], t[0]),
+            (tri[2], tri[0], t[1]),
+        ] {
+            let key = if p < q { [p, q] } else { [q, p] };
+            let slot = sides.entry(key).or_default();
+            if slot.len() < 3 {
+                slot.push(r);
+            }
+        }
+    }
+    let mut edges = Vec::new();
+    for (key, opposite) in &sides {
+        let (Some(first), Some(second)) = (opposite.first(), opposite.get(1)) else {
+            continue;
+        };
+        if opposite.len() != 2 {
+            continue;
+        }
+        let a = at(key[0])?;
+        let b = at(key[1])?;
+        if preds.orient3d(a, b, *first, *second)? != 0 {
+            edges.push((a, b));
+        }
+    }
+    Ok(edges)
 }
 
 /// The measured distance from a point to a mesh's triangles, in the meshes'
@@ -801,6 +1017,113 @@ mod tests {
                 surface_crossing: true
             }
         ));
+    }
+
+    /// The `shell_box` over `lo` and `hi` with every quad's diagonal flipped
+    /// the other way: a different, equally valid triangulation of the same
+    /// surface (the shared diagonal-flip vocabulary).
+    fn flipped_shell(lo: [f64; 3], hi: [f64; 3]) -> TriMesh {
+        let v = |i: usize| {
+            [
+                if i & 1 == 1 { hi[0] } else { lo[0] },
+                if i & 2 == 2 { hi[1] } else { lo[1] },
+                if i & 4 == 4 { hi[2] } else { lo[2] },
+            ]
+        };
+        let tris: Vec<[u32; 3]> = [
+            [1, 5, 4],
+            [1, 4, 0], // face y=0
+            [6, 7, 3],
+            [6, 3, 2], // face y=1
+            [2, 3, 1],
+            [2, 1, 0], // face z=0
+            [5, 7, 6],
+            [5, 6, 4], // face z=1
+            [4, 6, 2],
+            [4, 2, 0], // face x=0
+            [3, 7, 5],
+            [3, 5, 1], // face x=1
+        ]
+        .into_iter()
+        .collect();
+        TriMesh::from_buffers(&(0..8).map(v).collect::<Vec<_>>(), &tris).unwrap()
+    }
+
+    #[test]
+    fn a_through_box_with_no_contained_vertex_measures_the_crossing_run() {
+        // #722's adversarial case: a column straight through a plate, with
+        // every vertex of each body strictly outside the other and no face
+        // probe in the overlap. The crossing run is the plate thickness,
+        // for the centred column and every off-centre placement of the
+        // issue's matrix, below the plate and flush with its bottom face.
+        let plate = shell_box([0.0, 0.0, 0.0], [1000.0, 500.0, 20.0]);
+        for (lo, hi, start) in [
+            ([400.0, 150.0, -50.0], [600.0, 350.0, 1000.0], "centred"),
+            (
+                [150.0, 350.0, -50.0],
+                [250.0, 450.0, 1000.0],
+                "100 at 200,400",
+            ),
+            (
+                [650.0, 250.0, -50.0],
+                [750.0, 350.0, 1000.0],
+                "100 at 700,300",
+            ),
+            (
+                [270.0, 270.0, -50.0],
+                [330.0, 330.0, 1000.0],
+                "60 at 300,300",
+            ),
+            (
+                [337.0, 81.0, -50.0],
+                [537.0, 281.0, 1000.0],
+                "200 at 437,181",
+            ),
+            ([400.0, 150.0, 0.0], [600.0, 350.0, 1000.0], "flush bottom"),
+        ] {
+            let column = shell_box(lo, hi);
+            let run = crossing_depth(&plate, &column, limits())
+                .unwrap()
+                .unwrap_or_default();
+            assert!((run - 20.0).abs() <= 1e-9, "{start}: {run}");
+        }
+        // A different valid triangulation of the same plate measures the
+        // same run: the depth never follows the triangulation.
+        let flipped_plate = flipped_shell([0.0, 0.0, 0.0], [1000.0, 500.0, 20.0]);
+        let column = shell_box([400.0, 150.0, -50.0], [600.0, 350.0, 1000.0]);
+        let plain = crossing_depth(&plate, &column, limits()).unwrap();
+        let flipped = crossing_depth(&flipped_plate, &column, limits()).unwrap();
+        assert_eq!(flipped, plain);
+    }
+
+    #[test]
+    fn a_flush_overlapping_pair_refuses_the_crossing_run() {
+        // Half-overlapping boxes with shared wall planes: the crossing
+        // edges run along the other body's walls, so an interval midpoint
+        // lies on a surface and the measurement refuses instead of
+        // guessing. The caller falls back to the sampled depth (#722).
+        let a = shell_box([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        let b = shell_box([5.0, 0.0, 5.0], [15.0, 10.0, 15.0]);
+        let report = contact(&a, &b, limits()).unwrap();
+        assert!(matches!(
+            report.relation,
+            Relation::Overlapping {
+                surface_crossing: true
+            }
+        ));
+        assert_eq!(crossing_depth(&a, &b, limits()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_crossing_run_needs_a_strict_surface_edge() {
+        // Without a crossing surface edge there is nothing to measure: two
+        // separated cubes and a fully contained cube both report `None`,
+        // and the sampled measure stays the caller's only depth there.
+        let a = shell_box([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        let far = shell_box([20.0, 20.0, 20.0], [25.0, 25.0, 25.0]);
+        assert_eq!(crossing_depth(&a, &far, limits()).unwrap(), None);
+        let contained = shell_box([3.0, 3.0, 3.0], [6.0, 6.0, 6.0]);
+        assert_eq!(crossing_depth(&a, &contained, limits()).unwrap(), None);
     }
 
     #[test]
