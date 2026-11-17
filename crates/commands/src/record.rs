@@ -63,8 +63,15 @@ pub fn records(store: &RevisionStore) -> Result<Vec<Record>, Refusal> {
         Err(RevisionError::NoRevision) => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
+    records_revision(&revision)
+}
+
+/// The records of one already verified revision, without reopening the head.
+pub fn records_revision(
+    revision: &beamcraft_host::revision::Revision,
+) -> Result<Vec<Record>, Refusal> {
     Ok(beamcraft_layer_engine::authored::record::read_records(
-        &snapshot(open_base(&base_of(&revision)?)?, &control())?,
+        &snapshot(open_base(&base_of(revision)?)?, &control())?,
     )?)
 }
 

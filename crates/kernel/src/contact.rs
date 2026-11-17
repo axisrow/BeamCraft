@@ -31,7 +31,7 @@ use crate::bigint::Big;
 use crate::exact::{PredError, Predicates, min_exponent, scaled};
 use crate::intersect::{
     Pierce, Side, Tri, classify_point, coplanar_area_overlap, segment_pierces_triangle,
-    triangles_meet,
+    triangle_contains_point, triangles_meet,
 };
 use crate::spatial::{Aabb, BoxIndex, IndexError};
 use crate::topology::Limits;
@@ -1037,6 +1037,99 @@ pub fn point_gap(point: [f64; 3], mesh: &TriMesh) -> Result<f64, ContactError> {
     Ok(point_shell_closest(point, &Shell::of(mesh)?).0)
 }
 
+/// An upper bound on distance to the surface over a whole segment. Distance
+/// to a closed triangle is convex: the larger endpoint distance bounds the
+/// segment. Any triangle supplies an upper bound on distance to the mesh;
+/// the smallest of those bounds is still conservative. Subdivision tightens it.
+pub fn segment_gap_upper(
+    from: [f64; 3],
+    to: [f64; 3],
+    mesh: &TriMesh,
+) -> Result<f64, ContactError> {
+    let shell = Shell::of(mesh)?;
+    Ok(shell.tris.iter().fold(f64::INFINITY, |best, tri| {
+        best.min(
+            point_triangle_closest2(from, tri)
+                .0
+                .max(point_triangle_closest2(to, tri).0)
+                .sqrt(),
+        )
+    }))
+}
+
+/// A representable interior subdivision point proven collinear with the
+/// original segment. Rounding must not replace a segment with a kinked path;
+/// an unrepresentable subdivision stays unresolved.
+pub fn segment_midpoint(
+    a: [f64; 3],
+    b: [f64; 3],
+    limits: Limits,
+) -> Result<Option<[f64; 3]>, ContactError> {
+    let mid = [
+        a[0] * 0.5 + b[0] * 0.5,
+        a[1] * 0.5 + b[1] * 0.5,
+        a[2] * 0.5 + b[2] * 0.5,
+    ];
+    if mid == a || mid == b {
+        return Ok(None);
+    }
+    let mut preds = Predicates::new(limits.max_exact_predicates);
+    for (u, v) in [(0, 1), (0, 2), (1, 2)] {
+        let component = |p: [f64; 3], i| p.get(i).copied().ok_or(ContactError::Range);
+        if preds.orient2d(
+            [component(a, u)?, component(a, v)?],
+            [component(b, u)?, component(b, v)?],
+            [component(mid, u)?, component(mid, v)?],
+        )? != 0
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(mid))
+}
+
+/// Proves that a whole segment lies on the mesh surface, using exact closed
+/// triangle membership and convexity. Subdivision can cover several triangles;
+/// a hole, unresolved predicates or exhausted work never proves contact.
+pub fn segment_on_surface(
+    from: [f64; 3],
+    to: [f64; 3],
+    mesh: &TriMesh,
+    limits: Limits,
+) -> Result<bool, ContactError> {
+    let shell = Shell::of(mesh)?;
+    let mut preds = Predicates::new(limits.max_exact_predicates);
+    let mut pending = vec![(from, to, 0u8)];
+    let mut spent = 0u64;
+    while let Some((a, b, depth)) = pending.pop() {
+        let mut covered = false;
+        for tri in &shell.tris {
+            spent += 1;
+            if spent > limits.max_candidate_pairs.min(4096) {
+                return Ok(false);
+            }
+            if triangle_contains_point(&mut preds, tri, a)?
+                && triangle_contains_point(&mut preds, tri, b)?
+            {
+                covered = true;
+                break;
+            }
+        }
+        if covered {
+            continue;
+        }
+        if depth >= 32 {
+            return Ok(false);
+        }
+        let Some(mid) = segment_midpoint(a, b, limits)? else {
+            return Ok(false);
+        };
+        pending.push((mid, b, depth + 1));
+        pending.push((a, mid, depth + 1));
+    }
+    Ok(true)
+}
+
 /// The measured distance from a point to a mesh's triangles and the closest
 /// surface point, in the meshes' coordinate units (millimetres in the
 /// product). Like [`point_gap`], a measurement over the given triangles, not
@@ -1705,6 +1798,21 @@ mod tests {
         );
         // On the surface is not strictly inside.
         assert_eq!(contains(&shell, [0.0, 5.0, 5.0], limits()).unwrap(), None);
+    }
+
+    #[test]
+    fn segment_proofs_cover_triangles_but_never_bridge_a_hole() {
+        let mesh = cube([0.0, 0.0, 0.0], 10.0);
+        let (a, b) = ([1.0, 2.0, 10.0], [9.0, 2.0, 10.0]);
+        assert!(segment_on_surface(a, b, &mesh, limits()).unwrap());
+        let upper = segment_gap_upper([1.0, 1.0, 12.0], [9.0, 1.0, 12.0], &mesh).unwrap();
+        assert!((upper - 2.0).abs() < 1e-9);
+        let mesh = holed_plate();
+        let (a, b) = ([-80.0, 0.0, 20.0], [80.0, 0.0, 20.0]);
+        assert_eq!(point_gap(a, &mesh).unwrap(), 0.0);
+        assert_eq!(point_gap(b, &mesh).unwrap(), 0.0);
+        assert!(!segment_on_surface(a, b, &mesh, limits()).unwrap());
+        assert!(point_gap([0.0, 0.0, 20.0], &mesh).unwrap() > 20.0);
     }
 
     #[test]

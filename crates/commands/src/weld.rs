@@ -313,18 +313,19 @@ fn weld_record(solid: &steel::engine::weld::WeldSolid) -> Result<QuantityRecord,
 
 /// The welds of the verified head (empty for a store without a revision).
 pub fn welds(store: &RevisionStore) -> Result<Vec<WeldView>, Refusal> {
-    let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
         Err(RevisionError::NoRevision) => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     };
-    let content = revision.manifest().content();
-    let damaged = |_| integrity("head manifest identity is not a UUIDv7");
-    let project = ProjectId::parse(content.project().as_str()).map_err(damaged)?;
-    let workspace = WorkspaceId::parse(content.workspace().as_str()).map_err(damaged)?;
-    let (_, base) = load_base(store, &project, &workspace)?;
-    Ok(model_of(&open_base(&base)?, &control)?.welds)
+    welds_revision(&revision)
+}
+
+/// The welds of one already verified revision, without reopening the head.
+pub fn welds_revision(
+    revision: &beamcraft_host::revision::Revision,
+) -> Result<Vec<WeldView>, Refusal> {
+    Ok(model_of(&open_base(&base_of(revision)?)?, &control())?.welds)
 }
 
 /// Creates one weld between two existing parts and publishes the next revision, or replays the
