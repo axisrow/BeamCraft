@@ -183,7 +183,9 @@ pub struct ClashOutcome {
     /// The clash conclusion.
     pub state: ClashState,
     /// The contact fact behind it: `separated`, `face_contact`,
-    /// `edge_or_point_touch`, or `penetrating`.
+    /// `edge_or_point_touch`, `penetrating`, or `contained` (an interior
+    /// overlap without a strict surface crossing: full containment, a flush
+    /// burial, or a coincident face such as a duplicate part, #741).
     pub contact: &'static str,
     /// The measured penetration depth in millimetres, when one was measured.
     pub measured_mm: Option<f64>,
@@ -220,8 +222,11 @@ pub fn near_threshold(measured: f64, bound: f64, tolerance: Option<f64>, delta: 
 ///
 /// A measured gap is never negative: a lower band edge at or below zero
 /// cannot be straddled, because no physical value lies beyond it, so only
-/// the upper edge decides there (contract section 7.3). A tight fit against
-/// a range `[0, max]` therefore passes with any non-negative tolerance.
+/// the upper edge decides there (contract section 7.3). A measured zero still
+/// carries the uncertainty `delta`, so it passes `[0, max]` only when
+/// `max + tolerance` exceeds `delta`; an exact contact at the weld, decided
+/// by the predicates rather than measured, is judged before this rule and
+/// passes `[0, max]` with any non-negative tolerance (#724).
 ///
 /// Precondition: `min <= max`; the recorded-inputs admission refuses ranges
 /// that violate it, so the rules never guess on a malformed band.
@@ -442,8 +447,11 @@ pub fn attachment_verdict(
 /// surfaces (a tight fit), or between the two facing surfaces — outside the
 /// material of both parts, with the opening it spans (the summed distances to
 /// the two surfaces) agreeing within the product tolerance with the distance
-/// between the nearest surface points. A point inside either part's material,
-/// or beside the joint in the air, satisfies neither and is provably off.
+/// between the nearest surface points, and those two surface points facing
+/// each other — each the other's nearest point on its own part, within the
+/// product tolerance. A point inside either part's material, beside the joint
+/// in the air, or on one part's surface away from the joint (#724) satisfies
+/// neither and is provably off.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PointContact {
     On,
@@ -486,14 +494,25 @@ fn path_point_contact(
     let (gap_b, closest_b) = contact::point_gap_closest(point, &b.mesh)?;
     let delta = a.mesh_bound_mm.max(b.mesh_bound_mm).max(tolerance_mm / 2.0);
     let span = (gap_a + gap_b) - distance(closest_a, closest_b);
-    match touch_state(span, tolerance_mm, delta) {
-        Touch::Off => bridged = PointContact::Off,
-        Touch::Straddles => {
-            if bridged == PointContact::On {
-                bridged = PointContact::Straddles;
+    // The two ends of the opening face each other (#724): each end is the
+    // other end's nearest point on its own part. A point lying on one part's
+    // surface away from the joint spans nothing — its own surface point is
+    // the point itself, and the other part's nearest point lies elsewhere on
+    // that surface, not across an opening — and a point on the far face of a
+    // part reaches the other part through that part's own material.
+    let (_, back_a) = contact::point_gap_closest(closest_b, &a.mesh)?;
+    let (_, back_b) = contact::point_gap_closest(closest_a, &b.mesh)?;
+    let facing = distance(back_a, closest_a).max(distance(back_b, closest_b));
+    for measured in [span, facing] {
+        match touch_state(measured, tolerance_mm, delta) {
+            Touch::Off => bridged = PointContact::Off,
+            Touch::Straddles => {
+                if bridged == PointContact::On {
+                    bridged = PointContact::Straddles;
+                }
             }
+            Touch::On => {}
         }
-        Touch::On => {}
     }
     Ok(match (tight, bridged) {
         (PointContact::On, _) | (_, PointContact::On) => PointContact::On,
@@ -539,6 +558,29 @@ fn polyline_distance(point: [f64; 3], path: &[[f64; 3]]) -> f64 {
         }
     }
     best
+}
+
+/// Whether every path point of a weld lies on or inside the closed material
+/// of both parts, decided by the exact predicates (#724): the parts meet
+/// exactly along the path, so the opening there is zero. `false` for a weld
+/// without a usable path or a point outside either part; an unresolved
+/// classification is never a contact.
+fn exact_contact_at(
+    weld: &WeldFact,
+    a: &ElementBody,
+    b: &ElementBody,
+) -> Result<bool, ContactError> {
+    let Some(path) = weld.path_mm.as_ref().filter(|p| !p.is_empty()) else {
+        return Ok(false);
+    };
+    for point in path {
+        for body in [a, b] {
+            if contact::on_or_inside(&body.mesh, *point, CONTACT_LIMITS)? != Some(true) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// The measured local gap of an attached weld, in millimetres: the smallest
@@ -828,6 +870,52 @@ fn weld_connection(
             });
             continue;
         }
+        // An exact contact at the weld (#724): every path point lies on or
+        // inside the closed material of both parts, decided by the exact
+        // predicates. The opening there is exactly zero — a fact the
+        // predicates decided, so no physical tolerance band applies to it —
+        // and the recorded range passes whenever its lower edge
+        // `min - tolerance` is at or below zero, whatever its maximum and
+        // tolerance. A recorded minimum above that fails: the opening the
+        // owner requires is absent. Anything short of the exact fact (a path
+        // in a thin opening, a stepped joint) keeps the measured rule below.
+        if matches!(exact_contact_at(weld, body_a, body_b), Ok(true)) {
+            let lower_edge = requirement.permitted_min_mm - requirement.tolerance_mm;
+            if lower_edge > 0.0 {
+                findings.push(ConnectivityFinding {
+                    rule: "WELD_WITHOUT_CONTACT",
+                    status: "fail",
+                    elements: vec![connection.a, connection.b],
+                    message: "the parts meet exactly along the weld path, so the local gap \
+                              is 0 mm and stays below the permitted minimum"
+                        .into(),
+                    basis: "recorded gap requirement (contract 4.1); exact contact at the \
+                            weld (contract 7.3)"
+                        .into(),
+                    measured_mm: Some(0.0),
+                    required_mm: None,
+                    tolerance_mm: Some(requirement.tolerance_mm),
+                    bounds: vec![
+                        NamedBound {
+                            name: "permitted_min",
+                            bound_mm: requirement.permitted_min_mm,
+                            tolerance_mm: requirement.tolerance_mm,
+                            source: "owner",
+                        },
+                        NamedBound {
+                            name: "permitted_max",
+                            bound_mm: requirement.permitted_max_mm,
+                            tolerance_mm: requirement.tolerance_mm,
+                            source: "owner",
+                        },
+                    ],
+                    mesh_bound_mm: Some(body_a.mesh_bound_mm.max(body_b.mesh_bound_mm)),
+                    delta_mm: Some(0.0),
+                    missing_inputs: Vec::new(),
+                });
+            }
+            continue;
+        }
         let gap = match weld_gap_mm(weld, body_a, body_b) {
             Ok(Some(gap)) => gap,
             // A weld without a usable path was reported not attached above.
@@ -941,6 +1029,11 @@ pub struct CornerCutFinding {
     /// The derived corner point in world coordinates, when the derivation resolved
     /// exactly one candidate corner (contract sections 4.1 and 4.3).
     pub corner_point_mm: Option<[f64; 3]>,
+    /// True for the dependent weld-clearance finding of contract section 4.4 (#723),
+    /// false for the size findings of the recorded requirement. A clearance finding
+    /// never carries a fix: a larger cut and a smaller weld both repair it, and
+    /// geometry does not choose between them (contract section 9).
+    pub clearance: bool,
 }
 
 /// Whether a measured distance puts its point strictly inside the touching band (the
@@ -1343,6 +1436,7 @@ pub fn corner_cut_findings(
                     missing_inputs: vec![status_reason],
                 },
                 corner_point_mm: corner,
+                clearance: false,
             });
         };
         // The judgement set: the named elements inside the checked scope, plus the
@@ -1559,6 +1653,7 @@ pub fn corner_cut_findings(
                     missing_inputs: missing,
                 },
                 corner_point_mm: Some(corner),
+                clearance: false,
             });
         };
         let (admitted, largest_setback) = match measurable {
@@ -1681,10 +1776,19 @@ pub fn corner_cut_findings(
                 Touch::Straddles => straddling.push(weld),
             }
         }
-        let clearance_basis: String = "recorded corner-cut requirement (contract 4.1); \
-             derived corner (contract 4.3); rebuilt weld fillet of the weld record \
-             (contract 4.4)"
-            .into();
+        // The basis names the judged weld records (#723), so a clearance finding
+        // can never be mistaken for the recorded size requirement.
+        let clearance_basis = |welds: &[&WeldFact]| -> String {
+            let ids = welds
+                .iter()
+                .map(|weld| weld.element.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "recorded corner-cut requirement (contract 4.1); derived corner \
+                 (contract 4.3); rebuilt weld fillet of weld {ids} (contract 4.4)"
+            )
+        };
         let clearance_bounds = |weld: &WeldFact| -> Vec<NamedBound> {
             vec![
                 NamedBound {
@@ -1723,17 +1827,37 @@ pub fn corner_cut_findings(
                     ),
                     vec!["indeterminate"],
                 ),
-                ClashState::Penetrated => (
-                    "fail",
-                    format!(
-                        "the weld of leg {} mm exceeds the clearance the cut admits at the \
-                         derived corner: the admitted leg is {} mm, so the fillet of the \
-                         recorded leg does not fit the freed space; the recorded \
-                         requirement stays {} mm",
-                        weld.size_mm, admitted, requirement.required_mm,
-                    ),
-                    Vec::new(),
-                ),
+                ClashState::Penetrated => {
+                    // A cut c clears this weld when K + δ − t < c, and passes the size
+                    // check when c + δ < upper edge; no cut does both once
+                    // K ≥ upper edge + t − 2δ. Then the recorded requirement and the
+                    // weld leg conflict, and the model does not pick the repair (#723).
+                    let conflict = weld.size_mm >= upper_edge + tolerance_mm - 2.0 * delta;
+                    let repair = if conflict {
+                        format!(
+                            "; no cut the recorded requirement accepts (upper edge {} mm) \
+                             frees room for this leg, so the requirement and the weld leg \
+                             conflict: a smaller weld or a changed requirement repairs it, \
+                             and the model does not choose between them",
+                            upper_edge,
+                        )
+                    } else {
+                        "; a larger cut inside the recorded acceptance band or a smaller \
+                         weld repairs it, and the model does not choose between them"
+                            .to_owned()
+                    };
+                    (
+                        "fail",
+                        format!(
+                            "the weld of leg {} mm exceeds the clearance the cut admits at \
+                             the derived corner: the admitted leg is {} mm, so the fillet of \
+                             the recorded leg does not fit the freed space{}; the recorded \
+                             requirement stays {} mm",
+                            weld.size_mm, admitted, repair, requirement.required_mm,
+                        ),
+                        Vec::new(),
+                    )
+                }
             };
             findings.push(CornerCutFinding {
                 finding: ConnectivityFinding {
@@ -1741,7 +1865,7 @@ pub fn corner_cut_findings(
                     status,
                     elements,
                     message,
-                    basis: clearance_basis.clone(),
+                    basis: clearance_basis(&[weld]),
                     measured_mm: Some(admitted),
                     required_mm: Some(weld.size_mm),
                     tolerance_mm: Some(tolerance_mm),
@@ -1751,6 +1875,7 @@ pub fn corner_cut_findings(
                     missing_inputs: missing,
                 },
                 corner_point_mm: Some(corner),
+                clearance: true,
             });
         }
         if qualified.is_empty() && !unvalidated.is_empty() {
@@ -1766,7 +1891,7 @@ pub fn corner_cut_findings(
                               path passes the derived corner and the weld clearance stays \
                               unjudged"
                         .into(),
-                    basis: clearance_basis.clone(),
+                    basis: clearance_basis(&unvalidated),
                     measured_mm: None,
                     required_mm: None,
                     tolerance_mm: None,
@@ -1776,6 +1901,7 @@ pub fn corner_cut_findings(
                     missing_inputs: vec!["attachment_unvalidated"],
                 },
                 corner_point_mm: Some(corner),
+                clearance: true,
             });
         } else if qualified.is_empty() && !straddling.is_empty() {
             let mut elements = named.to_vec();
@@ -1790,7 +1916,7 @@ pub fn corner_cut_findings(
                               corner stays undecidable and the weld clearance stays \
                               unjudged"
                         .into(),
-                    basis: clearance_basis.clone(),
+                    basis: clearance_basis(&straddling),
                     measured_mm: None,
                     required_mm: None,
                     tolerance_mm: Some(tolerance_mm),
@@ -1800,6 +1926,7 @@ pub fn corner_cut_findings(
                     missing_inputs: vec!["indeterminate"],
                 },
                 corner_point_mm: Some(corner),
+                clearance: true,
             });
         }
         if !admitted_fails && !admitted_straddles && !setback_exceeds && !setback_straddles {
@@ -1851,6 +1978,20 @@ pub fn clash_verdict(
                     contact::crossing_depth(&a.mesh, &b.mesh, CONTACT_LIMITS)?
                 }
                 None => None,
+            };
+            // A coincident face (#741) — a duplicate, or a copy shifted by
+            // less than the tolerance — keeps every vertex and face probe on
+            // the other surface, so the samples above read nothing or only
+            // the slivers. Its own measure starts on the shared face; the
+            // deeper value wins, and a refused coincident measure keeps the
+            // other one.
+            let measured = if report.coincident {
+                match contact::coincident_depth(&a.mesh, &b.mesh, CONTACT_LIMITS) {
+                    Ok(Some(depth)) => Some(measured.map_or(depth, |m: f64| m.max(depth))),
+                    Ok(None) | Err(_) => measured,
+                }
+            } else {
+                measured
             };
             let kind = if surface_crossing {
                 "penetrating"
@@ -2089,6 +2230,38 @@ mod tests {
         assert_eq!(out.state, ClashState::Indeterminate);
         let measured = out.measured_mm.unwrap_or_default();
         assert!((measured - 0.5).abs() <= 1e-9, "{measured}");
+    }
+
+    #[test]
+    fn a_duplicate_plate_and_a_sub_tolerance_copy_are_clashes() {
+        // #741: a duplicate shares every face with the same orientation, so
+        // no edge crosses and every sample sits on the other surface. The
+        // coincident faces prove the overlap and measure it from the shared
+        // caps: the 10 mm plate reads its mid-thickness, 5 mm.
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let duplicate = plate_at(2, 0.0, 0.0, 0.0).unwrap();
+        let out = clash_verdict(&a, &duplicate, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(out.state, ClashState::Penetrated);
+        assert_eq!(out.contact, "contained");
+        let measured = out.measured_mm.unwrap_or_default();
+        assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
+        // A copy 0.2 mm off: the samples alone read the 0.2 mm slivers and
+        // stayed clear; the coincident caps read the real overlap.
+        let shifted = plate_at(2, 0.2, 0.0, 0.0).unwrap();
+        let out = clash_verdict(&a, &shifted, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(out.state, ClashState::Penetrated);
+        let measured = out.measured_mm.unwrap_or_default();
+        assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
+        // The exact stack and a plate beside the first share faces with
+        // opposite orientations only: face contact, still clear.
+        let stacked = plate_at(2, 0.0, 0.0, 10.0).unwrap();
+        let out = clash_verdict(&a, &stacked, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(out.state, ClashState::Clear);
+        assert_eq!(out.contact, "face_contact");
+        let beside = plate_at(2, 1000.0, 0.0, 0.0).unwrap();
+        let out = clash_verdict(&a, &beside, CONTACT_TOLERANCE_MM).unwrap();
+        assert_eq!(out.state, ClashState::Clear);
+        assert_eq!(out.contact, "face_contact");
     }
 
     #[test]
@@ -2500,6 +2673,153 @@ mod tests {
             CONTACT_TOLERANCE_MM,
         );
         assert!(findings.is_empty());
+    }
+
+    /// A 200x100x10 block with its origin corner at `origin`: the part
+    /// standing on the 1000x500 plate of `plate_at` in the attachment cases.
+    fn block_at(n: u8, origin: [f64; 3]) -> ElementBody {
+        plate_body(AuthoredPlate {
+            id: id(n),
+            name: format!("Block {n}"),
+            class: 0,
+            contour_points_mm: vec![
+                [0.0, 0.0, 0.0],
+                [200.0, 0.0, 0.0],
+                [200.0, 100.0, 0.0],
+                [0.0, 100.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            placement: Placement {
+                translation_mm: origin,
+                ..Placement::IDENTITY
+            },
+            material: None,
+            holes_mm: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+            bends: Vec::new(),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_path_on_one_surface_away_from_the_joint_is_not_attached() {
+        // #724: the block stands on the plate over x 100..300, y 100..200.
+        // A path point lying on the plate's own surface spans no opening:
+        // the block's nearest point lies elsewhere on that same surface, not
+        // across from it. Far on the plate top, on the plate's bottom face
+        // under the block, or one point at the joint and one far away — none
+        // is attached; the path along the joint is.
+        let plate = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let block = block_at(2, [100.0, 100.0, 10.0]);
+        let attached = |path: Vec<[f64; 3]>| {
+            attachment_verdict(&weld_at(Some(path)), &plate, &block, CONTACT_TOLERANCE_MM).unwrap()
+        };
+        assert_eq!(
+            attached(vec![[600.0, 400.0, 10.0], [700.0, 400.0, 10.0]]),
+            Attachment::NotAttached
+        );
+        assert_eq!(
+            attached(vec![[150.0, 150.0, 0.0], [250.0, 150.0, 0.0]]),
+            Attachment::NotAttached
+        );
+        assert_eq!(
+            attached(vec![[150.0, 150.0, 10.0], [700.0, 400.0, 10.0]]),
+            Attachment::NotAttached
+        );
+        assert_eq!(
+            attached(vec![[150.0, 100.0, 10.0], [250.0, 100.0, 10.0]]),
+            Attachment::Attached
+        );
+    }
+
+    #[test]
+    fn a_gapped_joint_keeps_its_bridging_paths_attached() {
+        // The block lifted 2 mm off the plate: a path on the block's bottom
+        // edge and a path mid-gap both span the opening between facing
+        // surfaces, so both stay attached and measure the 2 mm gap.
+        let plate = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let block = block_at(2, [100.0, 100.0, 12.0]);
+        for path in [
+            vec![[100.0, 150.0, 12.0], [100.0, 180.0, 12.0]],
+            vec![[150.0, 150.0, 11.0], [250.0, 150.0, 11.0]],
+        ] {
+            let weld = weld_at(Some(path));
+            assert_eq!(
+                attachment_verdict(&weld, &plate, &block, CONTACT_TOLERANCE_MM).unwrap(),
+                Attachment::Attached
+            );
+            let gap = weld_gap_mm(&weld, &plate, &block)
+                .unwrap()
+                .unwrap_or_default();
+            assert!((gap - 2.0).abs() <= 1e-9, "{gap}");
+        }
+    }
+
+    fn gap_findings(
+        a: &ElementBody,
+        b: &ElementBody,
+        path: Vec<[f64; 3]>,
+        min: f64,
+        max: f64,
+        tolerance: f64,
+    ) -> Vec<ConnectivityFinding> {
+        let mut inputs = intent(vec![weld_pair()]);
+        inputs.welds = vec![weld_at(Some(path))];
+        inputs.gaps = vec![GapRequirement {
+            a: id(1),
+            b: id(2),
+            permitted_min_mm: min,
+            permitted_max_mm: max,
+            tolerance_mm: tolerance,
+        }];
+        connectivity_findings(
+            &inputs,
+            &[a.clone(), b.clone()],
+            &[id(1), id(2)],
+            &[id(1), id(2)],
+            CONTACT_TOLERANCE_MM,
+        )
+    }
+
+    #[test]
+    fn an_exact_contact_at_the_weld_passes_any_zero_minimum_range() {
+        // #724: the plates meet exactly along the path, decided by the exact
+        // predicates, so the opening is 0 with no tolerance band around it:
+        // "contact required" ([0, 0], no tolerance) and [0, 0.2] with 0.05
+        // pass; a recorded minimum opening fails with the measured 0.
+        let (a, b) = stacked_pair();
+        let path = vec![[100.0, 100.0, 10.0], [300.0, 100.0, 10.0]];
+        assert!(gap_findings(&a, &b, path.clone(), 0.0, 0.0, 0.0).is_empty());
+        assert!(gap_findings(&a, &b, path.clone(), 0.0, 0.2, 0.05).is_empty());
+        let findings = gap_findings(&a, &b, path, 0.5, 2.0, 0.0);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].rule, "WELD_WITHOUT_CONTACT");
+        assert_eq!(findings[0].status, "fail");
+        assert_eq!(findings[0].measured_mm, Some(0.0));
+        assert!(findings[0].message.contains("below the permitted minimum"));
+    }
+
+    #[test]
+    fn a_thin_opening_is_measured_not_an_exact_contact() {
+        // A 0.2 mm opening with the path mid-gap: every point lies within
+        // the contact band of both surfaces, but outside both materials, so
+        // it is no exact contact. The measured 0.2 mm against [0, 0] stays
+        // at the band edge; a 0.3 mm opening fails it.
+        let a = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+        let thin = plate_at(2, 0.0, 0.0, 10.2).unwrap();
+        let findings = gap_findings(&a, &thin, vec![[100.0, 100.0, 10.1]], 0.0, 0.0, 0.0);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].status, "unknown");
+        assert_eq!(findings[0].missing_inputs, vec!["indeterminate"]);
+        let wider = plate_at(2, 0.0, 0.0, 10.3).unwrap();
+        let findings = gap_findings(&a, &wider, vec![[100.0, 100.0, 10.15]], 0.0, 0.0, 0.0);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].status, "fail");
+        let measured = findings[0].measured_mm.unwrap_or_default();
+        assert!((measured - 0.3).abs() <= 1e-6, "{measured}");
     }
 
     #[test]
@@ -3311,12 +3631,74 @@ mod tests {
         }
 
         #[test]
-        fn a_weld_elsewhere_between_the_neighbours_produces_no_clearance_finding() {
-            // The weld is validated at the joint region away from the corner:
-            // its path provably misses the derived corner, so it does not
-            // count and the clearance stays quiet (contract 4.4).
+        fn a_duplicate_quarter_turn_part_is_a_clash() {
+            // #741 on rotated geometry: the evaluated quarter turn is the same
+            // mesh twice, so every face is coincident.
+            let out = clash_verdict(&column(), &column(), CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Penetrated);
+            assert!(out.measured_mm.unwrap_or_default() > 1.0, "{out:?}");
+        }
+
+        #[test]
+        fn the_clearance_finding_never_carries_the_size_fix_and_names_the_conflict() {
+            // #723: the clearance finding is marked as such (no fix: a larger
+            // cut and a smaller weld both repair it), names the weld in its
+            // basis, and says when no accepted cut fits the weld leg at all.
             let rib = rib_record(10.0);
-            let away = vec![[160.0, 20.0, PLATE_TOP_Z], [200.0, 20.0, PLATE_TOP_Z]];
+            let along_the_joint = vec![
+                [COLUMN_FACE_X, 10.0, PLATE_TOP_Z],
+                [COLUMN_FACE_X, 40.0, PLATE_TOP_Z],
+            ];
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(14.0, Some(along_the_joint.clone()))],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            assert!(findings[0].clearance);
+            let finding = &findings[0].finding;
+            assert!(
+                finding.basis.contains(&id(4).to_string()),
+                "{}",
+                finding.basis
+            );
+            assert!(finding.message.contains("conflict"), "{}", finding.message);
+            assert!(finding.message.contains("requirement stays 10 mm"));
+            // A 10.8 mm leg fits a cut the band still accepts: no conflict.
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(10.8, Some(along_the_joint))],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            assert!(findings[0].clearance);
+            let message = &findings[0].finding.message;
+            assert!(!message.contains("conflict"), "{message}");
+            assert!(message.contains("a larger cut inside the recorded acceptance band"));
+            // The size finding of the uncut corner is not a clearance finding.
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib_record(0.0),
+                Vec::new(),
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            assert!(!findings[0].clearance);
+        }
+
+        #[test]
+        fn a_weld_elsewhere_between_the_neighbours_produces_no_clearance_finding() {
+            // The weld is validated on the column-to-base joint away from the
+            // corner: its path runs along the joint 10 mm past the rib and
+            // provably misses the derived corner, so it does not count and
+            // the clearance stays quiet (contract 4.4).
+            let rib = rib_record(10.0);
+            let away = vec![
+                [COLUMN_FACE_X, 20.0, PLATE_TOP_Z],
+                [COLUMN_FACE_X, 40.0, PLATE_TOP_Z],
+            ];
             let findings = run_with_welds(
                 requirement(10.0, 1.0),
                 &rib,
