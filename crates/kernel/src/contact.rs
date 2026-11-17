@@ -27,12 +27,14 @@ use std::collections::BTreeMap;
 use crate::bigint::Big;
 use crate::exact::{PredError, Predicates, min_exponent, scaled};
 use crate::intersect::{
-    Side, Tri, classify_point, coplanar_area_overlap, segment_crosses_triangle, triangles_meet,
+    Pierce, Side, Tri, classify_point, coplanar_area_overlap, segment_pierces_triangle,
+    triangles_meet,
 };
 use crate::spatial::{Aabb, BoxIndex, IndexError};
 use crate::topology::Limits;
 use crate::trimesh::TriMesh;
 use crate::verdict::MeshError;
+use std::collections::HashMap;
 
 /// Why a contact question was not decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,10 +100,26 @@ fn separated() -> PairReport {
 }
 
 /// The triangles of a mesh and their boxes, prepared once per shell.
+///
+/// Alongside the coordinates the shell keeps its vertex-index triples and
+/// the edge adjacency: which triangles share each edge by index identity.
+/// A boundary pierce counts as a crossing only through this continuation —
+/// the shell's own surface continuing through the shared edge — so a touch
+/// or a graze along a face plane stays a touch (#721).
 struct Shell {
     tris: Vec<Tri>,
     boxes: Vec<Aabb>,
     bounds: Aabb,
+    /// The mesh's triangle vertex indices, in mesh order: the identity the
+    /// adjacency is keyed on.
+    verts: Vec<[u32; 3]>,
+    /// Every mesh vertex mapped to the triangles that contain it: the star
+    /// of triangles around the vertex, the local surface a boundary pierce
+    /// at that vertex has to pass through.
+    vstar: HashMap<u32, Vec<usize>>,
+    /// Every edge (sorted vertex-index pair) mapped to the triangles that
+    /// contain it: the continuation of the surface across the edge.
+    adj: HashMap<(u32, u32), Vec<usize>>,
 }
 
 impl Shell {
@@ -129,35 +147,70 @@ impl Shell {
             .ok_or(ContactError::Range)?;
         let bounds =
             Aabb::from_points(mesh.vertices().iter().copied()).ok_or(ContactError::Range)?;
+        let mut adj: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+        let mut vstar: HashMap<u32, Vec<usize>> = HashMap::new();
+        for (ti, t) in mesh.triangles().iter().enumerate() {
+            for (u, v) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                let key = (u.min(v), u.max(v));
+                match adj.get_mut(&key) {
+                    Some(faces) => faces.push(ti),
+                    None => {
+                        adj.insert(key, vec![ti]);
+                    }
+                }
+                for vertex in [u, v] {
+                    match vstar.get_mut(&vertex) {
+                        Some(faces) => faces.push(ti),
+                        None => {
+                            vstar.insert(vertex, vec![ti]);
+                        }
+                    }
+                }
+            }
+        }
         Ok(Self {
             tris,
             boxes,
             bounds,
+            verts: mesh.triangles().to_vec(),
+            vstar,
+            adj,
         })
     }
 }
 
+/// What the containment samples read for one shell against the other.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SampleScan {
+    /// Every strict answer agreed: all outside, all inside, or none decided.
+    Consistent(Option<bool>),
+    /// Some samples read strictly inside and others strictly outside. For
+    /// surfaces proven to meet, that is the flush-buried interpenetration:
+    /// part of the body in, part out (#721). For surfaces proven disjoint it
+    /// stays the defensive error it always was — a crossing the scan missed.
+    Mixed,
+}
+
 /// One strict point answer per shell, sampled over the other shell's
-/// containment samples (vertices and face probes). Disjoint closed surfaces
-/// are all-in or all-out, so mixed strict answers would mean a crossing this
-/// scan missed. Corners and flush walls lie on the other shell's edge lines
-/// more often than not, so the face probes are what decide the buried
-/// cases; 4096 samples keep the work bounded.
+/// containment samples (vertices and face probes). Corners and flush walls
+/// lie on the other shell's edge lines more often than not, so the face
+/// probes are what decide the buried cases; 4096 samples keep the work
+/// bounded.
 fn sampled_contains(
     preds: &mut Predicates,
     shell: &Shell,
     other: &TriMesh,
-) -> Result<Option<bool>, ContactError> {
+) -> Result<SampleScan, ContactError> {
     let mut seen: Option<bool> = None;
     for vertex in samples_of(other)?.into_iter().take(4096) {
         if let Some(inside) = shell_contains(preds, shell, vertex)? {
             if seen.is_some() && seen != Some(inside) {
-                return Err(ContactError::Range);
+                return Ok(SampleScan::Mixed);
             }
             seen = Some(inside);
         }
     }
-    Ok(seen)
+    Ok(SampleScan::Consistent(seen))
 }
 
 /// The contact facts of two closed, consistently oriented meshes in one frame.
@@ -179,9 +232,9 @@ pub fn contact(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<PairReport, C
     let mut report = separated();
     let mut examined = 0u64;
     for (bi, query) in shell_b.boxes.iter().enumerate() {
-        let Some(tb) = shell_b.tris.get(bi) else {
+        if shell_b.tris.get(bi).is_none() {
             return Err(ContactError::Range);
-        };
+        }
         let candidates = index
             .overlapping(
                 query,
@@ -189,14 +242,15 @@ pub fn contact(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<PairReport, C
             )
             .map_err(ContactError::Index)?;
         for ai in candidates {
-            let Some(ta) = shell_a.tris.get(usize::try_from(ai).unwrap_or(usize::MAX)) else {
+            let ta_i = usize::try_from(ai).unwrap_or(usize::MAX);
+            if shell_a.tris.get(ta_i).is_none() {
                 return Err(ContactError::Range);
-            };
+            }
             examined += 1;
             if examined > limits.max_candidate_pairs {
                 return Err(ContactError::Index(IndexError::PairCap));
             }
-            if pair_facts(&mut preds, ta, tb, &mut report)? {
+            if pair_facts(&mut preds, &shell_a, ta_i, &shell_b, bi, &mut report)? {
                 // A strict crossing decided the pair relation; the remaining
                 // candidates cannot change it. A face-contact flag recorded on
                 // the way is kept in the report.
@@ -207,19 +261,26 @@ pub fn contact(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<PairReport, C
     if matches!(report.relation, Relation::Separated | Relation::Touching) {
         // A strict interior point decides what the surface meeting pattern
         // cannot: a flush-buried part meets the host only along coplanar
-        // walls, its surface fact is Touching, and its interior still
-        // overlaps. Exact face contact samples on-surface or outside and
-        // keeps Touching; mixed strict answers under Separated stay the
-        // defensive error they always were.
+        // walls and rim lines, its surface fact is Touching, and its
+        // interior still overlaps — the samples then read mixed, some in
+        // and some out, and that mixed scan is the proof (#721). Exact face
+        // contact samples on-surface or outside and keeps Touching; mixed
+        // strict answers under Separated stay the defensive error they
+        // always were, because disjoint closed surfaces are all-in or
+        // all-out.
         let a_inside_b = sampled_contains(&mut preds, &shell_b, a)?;
         let b_inside_a = sampled_contains(&mut preds, &shell_a, b)?;
-        if a_inside_b == Some(true) || b_inside_a == Some(true) {
+        let inside = matches!(a_inside_b, SampleScan::Mixed)
+            || a_inside_b == SampleScan::Consistent(Some(true))
+            || matches!(b_inside_a, SampleScan::Mixed)
+            || b_inside_a == SampleScan::Consistent(Some(true));
+        if inside {
             report.relation = Relation::Overlapping {
                 surface_crossing: false,
             };
         } else if report.relation == Relation::Separated {
             match (a_inside_b, b_inside_a) {
-                (Some(false), Some(false)) => {}
+                (SampleScan::Consistent(Some(false)), SampleScan::Consistent(Some(false))) => {}
                 _ => return Err(ContactError::Range),
             }
         }
@@ -230,14 +291,23 @@ pub fn contact(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<PairReport, C
 /// Decides one candidate pair; true when the pair strictly crosses.
 fn pair_facts(
     preds: &mut Predicates,
-    ta: &Tri,
-    tb: &Tri,
+    a: &Shell,
+    ai: usize,
+    b: &Shell,
+    bi: usize,
     report: &mut PairReport,
 ) -> Result<bool, ContactError> {
+    let ta = a.tris.get(ai).ok_or(ContactError::Range)?;
+    let tb = b.tris.get(bi).ok_or(ContactError::Range)?;
     // Strict crossing: an edge of one triangle pierces the other's plane with
-    // strictly opposite sides, and the closed sign pattern admits the point.
+    // strictly opposite sides, and the exact sign pattern admits the point.
+    // An interior pierce decides; a boundary pierce counts only when the
+    // pierced shell's own surface continues through the shared edge and the
+    // segment passes through that continuation transversally (#721): a
+    // segment grazing along a face plane, or stopping at a perimeter edge,
+    // touches the shell — it does not cross it.
     for (s0, s1) in [(ta[0], ta[1]), (ta[1], ta[2]), (ta[2], ta[0])] {
-        if segment_crosses_triangle(preds, s0, s1, tb)? {
+        if pierce_decides_crossing(preds, b, bi, s0, s1)? {
             report.relation = Relation::Overlapping {
                 surface_crossing: true,
             };
@@ -245,7 +315,7 @@ fn pair_facts(
         }
     }
     for (s0, s1) in [(tb[0], tb[1]), (tb[1], tb[2]), (tb[2], tb[0])] {
-        if segment_crosses_triangle(preds, s0, s1, ta)? {
+        if pierce_decides_crossing(preds, a, ai, s0, s1)? {
             report.relation = Relation::Overlapping {
                 surface_crossing: true,
             };
@@ -259,6 +329,114 @@ fn pair_facts(
         }
     }
     Ok(false)
+}
+
+/// One edge `s0 s1` of a foreign shell against the triangle `ti` of `shell`:
+/// true when the pierce proves a strict crossing of `shell`'s surface. An
+/// interior pierce proves it on its own. A boundary pierce — the pierce point
+/// exactly on the triangle's edge or vertex — proves it only when the local
+/// surface around the point confirms it: the star of triangles sharing the
+/// edge (or, at a vertex, the triangles around that vertex), each plane of
+/// which the segment must pass through transversally at the point (#721). A
+/// segment running along one of those face planes — the diagonal of a
+/// contact face grazing a wall at its bottom edge — or leaving the surface at
+/// a rim, where the star has no continuation, touches the shell; it does not
+/// cross it.
+fn pierce_decides_crossing(
+    preds: &mut Predicates,
+    shell: &Shell,
+    ti: usize,
+    s0: [f64; 3],
+    s1: [f64; 3],
+) -> Result<bool, ContactError> {
+    let tri = shell.tris.get(ti).ok_or(ContactError::Range)?;
+    let verts = shell.verts.get(ti).ok_or(ContactError::Range)?;
+    match segment_pierces_triangle(preds, s0, s1, tri).map_err(ContactError::from)? {
+        Pierce::None => Ok(false),
+        Pierce::Interior => Ok(true),
+        Pierce::Boundary(mask) => {
+            // Locate the pierce point by index identity: on exactly one edge
+            // it is strictly inside that edge, and the local surface is the
+            // edge's faces; on two edges it is their shared vertex, and the
+            // local surface is the whole vertex star. One-bit and two-bit
+            // masks are the only shapes a point on a non-degenerate triangle
+            // takes; anything else would mean corrupt adjacency.
+            let edges: Vec<usize> = (0..3).filter(|j| mask & (1 << j) != 0).collect();
+            let vert = |i: usize| -> Result<u32, ContactError> {
+                verts.get(i).copied().ok_or(ContactError::Range)
+            };
+            let vertex = match edges.as_slice() {
+                [only] => vert(*only)?,
+                [first, second, ..] => {
+                    let a = [vert(*first)?, vert((first + 1) % 3)?];
+                    let b = [vert(*second)?, vert((second + 1) % 3)?];
+                    if a[0] == b[0] || a[0] == b[1] {
+                        a[0]
+                    } else {
+                        a[1]
+                    }
+                }
+                _ => return Err(ContactError::Range),
+            };
+            let star = if edges.len() == 1 {
+                let edge = edges.first().copied().ok_or(ContactError::Range)?;
+                let key = {
+                    let (u, v) = (vert(edge)?, vert((edge + 1) % 3)?);
+                    (u.min(v), u.max(v))
+                };
+                shell.adj.get(&key).ok_or(ContactError::Range)?
+            } else {
+                shell.vstar.get(&vertex).ok_or(ContactError::Range)?
+            };
+            // The segment must pass through every face of the local surface
+            // transversally at the point. Its own triangle's plane it crosses
+            // by the pierce precondition; a face whose plane carries the
+            // segment, or whose plane the segment fails to leave on the far
+            // side, vetoes the crossing.
+            let mut continued = false;
+            for &nf in star.iter() {
+                if nf == ti {
+                    continue;
+                }
+                let face = shell.tris.get(nf).ok_or(ContactError::Range)?;
+                if !crosses_transversally(preds, face, s0, s1).map_err(ContactError::from)? {
+                    return Ok(false);
+                }
+                continued = true;
+            }
+            Ok(continued)
+        }
+    }
+}
+
+/// True when the segment's endpoints lie strictly on opposite sides of the
+/// triangle's plane.
+fn crosses_transversally(
+    preds: &mut Predicates,
+    tri: &Tri,
+    s0: [f64; 3],
+    s1: [f64; 3],
+) -> Result<bool, PredError> {
+    let [a, b, c] = *tri;
+    let d0 = preds.orient3d(a, b, c, s0)?;
+    let d1 = preds.orient3d(a, b, c, s1)?;
+    Ok(d0 != 0 && d1 != 0 && (d0 > 0) != (d1 > 0))
+}
+
+/// The plain `f64` orientation determinant of a point against a triangle's
+/// plane — a measurement, not a predicate: the caller reads only a sample
+/// coordinate from it, and the exact containment classification decides that
+/// sample's fate.
+fn orient3d_value(a: [f64; 3], b: [f64; 3], c: [f64; 3], p: [f64; 3]) -> f64 {
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+    let n = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    n[0] * ap[0] + n[1] * ap[1] + n[2] * ap[2]
 }
 
 /// True when the two triangles lie in one exact plane, overlap in area, and
@@ -334,14 +512,23 @@ fn shell_contains(
 /// The deepest strictly-contained sample of `inside`, measured as its distance
 /// to `shell`'s surface, or `None` when no sample lies strictly inside.
 ///
-/// The samples are the vertices of `inside` and, per triangle, the midpoint
+/// The samples are the vertices of `inside`; per triangle, the midpoint
 /// between one corner and the midpoint of the opposite edge — a point strictly
 /// inside the face by convexity with exactly representable coordinates, which
 /// reaches the interior of aligned prisms whose vertices all lie on the
-/// shell's walls. The value is a deterministic lower bound of the true
-/// penetration depth, invariant under re-triangulations that keep the vertex
-/// set. At most [`Limits::max_candidate_pairs`] contained samples are
-/// measured, in mesh order, so a larger shell keeps the work bounded.
+/// shell's walls; and, per surface edge of `inside` (an edge whose adjacent
+/// triangles are not coplanar), the midpoint between two consecutive
+/// transversal pierce points of the edge through `shell`'s triangles — the
+/// point where the edge runs through the shell's interior, which reaches the
+/// slivers no vertex or face probe lands in: a flush part
+/// whose evaluated placement rounds one or two units in the last place into
+/// the host dips by that ulp along its whole footprint, and the edge
+/// midpoints are the samples that measure it (#721). A midpoint of a
+/// non-convex traversal can sit outside the shell; the strict containment
+/// classification filters it, so a wrong candidate never measures. The value
+/// is a deterministic lower bound of the true penetration depth. At most
+/// [`Limits::max_candidate_pairs`] contained samples are measured, in mesh
+/// order, so a larger shell keeps the work bounded.
 pub fn penetration_depth(
     inside: &TriMesh,
     shell: &TriMesh,
@@ -351,11 +538,14 @@ pub fn penetration_depth(
     let mut preds = Predicates::new(limits.max_exact_predicates);
     let mut deepest: Option<f64> = None;
     let mut measured = 0u64;
-    for sample in &samples_of(inside)? {
+    let mut samples = samples_of(inside)?;
+    samples.extend(edge_traversal_samples(inside, &shell, &mut preds, limits)?);
+    for sample in &samples {
         if !shell.bounds.contains_point(*sample) {
             continue;
         }
-        if shell_contains(&mut preds, &shell, *sample)? != Some(true) {
+        let contained = shell_contains(&mut preds, &shell, *sample)?;
+        if contained != Some(true) {
             continue;
         }
         measured += 1;
@@ -462,7 +652,10 @@ fn edge_inside_run(
         let Some(tri) = shell.tris.get(usize::try_from(ai).unwrap_or(usize::MAX)) else {
             return Err(ContactError::Range);
         };
-        if !segment_crosses_triangle(preds, s0, s1, tri)? {
+        // The closed admit: a boundary pierce still bounds a crossing run's
+        // intervals, and an undecided interval midpoint refuses downstream.
+        if segment_pierces_triangle(preds, s0, s1, tri).map_err(ContactError::from)? == Pierce::None
+        {
             continue;
         }
         let Some(t) = crossing_parameter(s0, s1, tri) else {
@@ -644,6 +837,89 @@ fn samples_of(mesh: &TriMesh) -> Result<Vec<[f64; 3]>, ContactError> {
         let (v0, v1, v2) = (at(t[0])?, at(t[1])?, at(t[2])?);
         samples.extend(face_probes(v0, v1, v2));
     }
+    Ok(samples)
+}
+
+/// The edge traversal samples of `inside` against `shell`: per surface edge —
+/// an edge whose two adjacent triangles are not coplanar, the same
+/// triangulation-invariant set the crossing run reads — the midpoints of
+/// consecutive transversal pierce points through `shell`'s closed triangles.
+/// Between an entry and the next exit the edge runs through the shell's
+/// interior, so the midpoint is a candidate strictly-inside point with exactly
+/// representable coordinates — the sample that measures a last-place dip no
+/// vertex or face probe lands in (#721). A non-convex traversal can put a
+/// midpoint outside; the caller's strict containment classification filters
+/// that.
+fn edge_traversal_samples(
+    inside: &TriMesh,
+    shell: &Shell,
+    preds: &mut Predicates,
+    limits: Limits,
+) -> Result<Vec<[f64; 3]>, ContactError> {
+    let index = BoxIndex::build(&shell.boxes, limits.max_index_nodes, || false)
+        .map_err(ContactError::Index)?;
+    let mut samples = Vec::new();
+    for (s0, s1) in surface_edges(preds, inside)? {
+        let Some(query) = Aabb::from_points([s0, s1]) else {
+            return Err(ContactError::Range);
+        };
+        let candidates = index
+            .overlapping(
+                &query,
+                usize::try_from(limits.max_candidate_pairs).unwrap_or(0),
+            )
+            .map_err(ContactError::Index)?;
+        let mut pierces: Vec<(f64, [f64; 3])> = Vec::new();
+        for ai in candidates {
+            let ti = usize::try_from(ai).unwrap_or(usize::MAX);
+            let Some(tri) = shell.tris.get(ti) else {
+                return Err(ContactError::Range);
+            };
+            let [a, b, c] = *tri;
+            let d0 = preds.orient3d(a, b, c, s0).map_err(ContactError::from)?;
+            let d1 = preds.orient3d(a, b, c, s1).map_err(ContactError::from)?;
+            if d0 == 0 || d1 == 0 || d0 == d1 {
+                continue;
+            }
+            let signs = [
+                preds.orient3d(s0, s1, a, b).map_err(ContactError::from)?,
+                preds.orient3d(s0, s1, b, c).map_err(ContactError::from)?,
+                preds.orient3d(s0, s1, c, a).map_err(ContactError::from)?,
+            ];
+            if signs.contains(&1) && signs.contains(&-1) {
+                continue;
+            }
+            // The exact predicates admit the crossing; the pierce parameter
+            // itself comes from the plain determinants — a measurement for
+            // the sample coordinate, whose ulp error the strict containment
+            // classification then absorbs.
+            let (e0, e1) = (orient3d_value(a, b, c, s0), orient3d_value(a, b, c, s1));
+            if e0 == e1 {
+                continue;
+            }
+            let w = e0 / (e0 - e1);
+            pierces.push((
+                w,
+                [
+                    s0[0] + w * (s1[0] - s0[0]),
+                    s0[1] + w * (s1[1] - s0[1]),
+                    s0[2] + w * (s1[2] - s0[2]),
+                ],
+            ));
+        }
+        pierces.sort_unstable_by(|p, q| p.0.total_cmp(&q.0));
+        for pair in pierces.chunks(2) {
+            if let [p, q] = pair {
+                samples.push([
+                    (p.1[0] + q.1[0]) / 2.0,
+                    (p.1[1] + q.1[1]) / 2.0,
+                    (p.1[2] + q.1[2]) / 2.0,
+                ]);
+            }
+        }
+    }
+    let cap = usize::try_from(limits.max_candidate_pairs).unwrap_or(0);
+    samples.truncate(cap);
     Ok(samples)
 }
 
@@ -1241,5 +1517,269 @@ mod tests {
             (at[0] - 5.0).abs() <= 1e-9 && (at[1] - 5.0).abs() <= 1e-9,
             "{at:?}"
         );
+    }
+
+    /// A box shell whose every quad carries the diagonal flipped against
+    /// [`shell_box`]: a different, equally valid triangulation of the same
+    /// surface.
+    fn flipped_shell_box(lo: [f64; 3], hi: [f64; 3]) -> TriMesh {
+        let v = |i: usize| {
+            [
+                if i & 1 == 1 { hi[0] } else { lo[0] },
+                if i & 2 == 2 { hi[1] } else { lo[1] },
+                if i & 4 == 4 { hi[2] } else { lo[2] },
+            ]
+        };
+        let tris: Vec<[u32; 3]> = [
+            [0, 2, 1],
+            [2, 3, 1], // face z=lo
+            [4, 5, 6],
+            [5, 7, 6], // face z=hi
+            [0, 1, 4],
+            [1, 5, 4], // face y=lo
+            [2, 6, 3],
+            [6, 7, 3], // face y=hi
+            [0, 4, 2],
+            [4, 6, 2], // face x=lo
+            [1, 3, 5],
+            [3, 7, 5], // face x=hi
+        ]
+        .into_iter()
+        .collect();
+        TriMesh::from_buffers(&(0..8).map(v).collect::<Vec<_>>(), &tris).unwrap()
+    }
+
+    #[test]
+    fn flush_walls_overlapping_in_depth_read_touching_then_overlapping() {
+        // #721: two bodies with the same footprint, one shifted up: their
+        // walls are coplanar and every crossing line runs along a face rim,
+        // so no pierce proves a strict crossing — the closed-triangle hit
+        // used to claim one and mask the true fact. The surfaces meet
+        // (Touching with coplanar wall contact), and the containment samples
+        // then read mixed — part of the body strictly inside, part outside —
+        // which promotes the pair to a proven interior overlap without any
+        // surface crossing.
+        let a = shell_box([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]);
+        let b = shell_box([0.0, 0.0, 5.0], [1000.0, 500.0, 15.0]);
+        let report = contact(&a, &b, limits()).unwrap();
+        assert_eq!(
+            report.relation,
+            Relation::Overlapping {
+                surface_crossing: false
+            }
+        );
+        // The depth measurement still measures the 5 mm slab.
+        let depth = penetration_depth(&a, &b, limits()).unwrap();
+        assert!(
+            matches!(depth, Some(d) if (d - 5.0).abs() <= 1e-9),
+            "{depth:?}"
+        );
+    }
+
+    #[test]
+    fn a_last_place_dip_into_the_host_is_measured_by_the_edge_traversal() {
+        // #721: the evaluated placement of the authored quarter-turn rounds
+        // the standing plate's back bottom corner a couple of units in the
+        // last place into the host. The crossing is real and the overlap
+        // sliver is thinner than a coordinate step at that height: no vertex
+        // or face probe of either body lands strictly inside, so the depth
+        // read `None` and a correctly modelled base stayed yellow forever.
+        // The edge traversal sample — the midpoint between the entry and the
+        // exit pierce of the host's own edge through the standing plate's
+        // walls — lands in the sliver and measures the dip.
+        let base = shell_box([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]);
+        let e = 1.7763568394002505e-15;
+        let vertices: Vec<[f64; 3]> = vec![
+            [150.0, -e, 9.999999999999998],
+            [230.0, -e, 9.999999999999998],
+            [150.0, 10.0, 10.0],
+            [230.0, 10.0, 10.0],
+            [150.0, -e, 109.99999999999999],
+            [230.0, -e, 109.99999999999999],
+            [150.0, 10.0, 110.00000000000001],
+            [230.0, 10.0, 110.00000000000001],
+        ];
+        let tris: Vec<[u32; 3]> = [
+            [0, 2, 3],
+            [0, 3, 1], // the dipped bottom face
+            [4, 5, 7],
+            [4, 7, 6], // the top face
+            [0, 1, 5],
+            [0, 5, 4], // the back wall, one step beyond y = 0
+            [2, 6, 7],
+            [2, 7, 3], // the front wall at y = 10
+            [0, 4, 6],
+            [0, 6, 2], // x = 150
+            [1, 3, 7],
+            [1, 7, 5], // x = 230
+        ]
+        .into_iter()
+        .collect();
+        let standing = TriMesh::from_buffers(&vertices, &tris).unwrap();
+        // The dip is real: a proven crossing of the surfaces.
+        let report = contact(&base, &standing, limits()).unwrap();
+        assert_eq!(
+            report.relation,
+            Relation::Overlapping {
+                surface_crossing: true
+            }
+        );
+        // The host's own edge traversal measures the sliver's depth: tiny,
+        // far inside the contact tolerance band.
+        let depth = penetration_depth(&base, &standing, limits()).unwrap();
+        assert!(
+            matches!(depth, Some(d) if d > 0.0 && d < 1e-12),
+            "{depth:?}"
+        );
+    }
+
+    #[test]
+    fn a_box_standing_across_the_cap_diagonal_touches_like_off_it() {
+        // #721: the standing box's footprint crosses the slab's top-cap
+        // diagonal. The diagonal edge lies in the contact plane and pierces
+        // the standing box's wall planes exactly at their bottom edges — a
+        // graze the closed-triangle crossing read as penetration, so a
+        // correctly modelled column base never reached green. The graze is a
+        // touch: the standing box reports face contact, the same fact as the
+        // identical box clear of the diagonal, under either valid
+        // triangulation of the slab's caps.
+        let slab = shell_box([0.0, 0.0, 0.0], [100.0, 100.0, 20.0]);
+        let flipped = flipped_shell_box([0.0, 0.0, 0.0], [100.0, 100.0, 20.0]);
+        // The first footprint crosses both caps' diagonals; the second
+        // crosses neither.
+        let across = shell_box([30.0, 50.0, 20.0], [60.0, 80.0, 40.0]);
+        let clear = shell_box([30.0, 5.0, 20.0], [60.0, 25.0, 40.0]);
+        let mut reports = Vec::new();
+        for slab in [&slab, &flipped] {
+            for standing in [&across, &clear] {
+                let report = contact(slab, standing, limits()).unwrap();
+                assert_eq!(report.relation, Relation::Touching);
+                assert!(report.face_contact);
+                reports.push(report);
+            }
+        }
+        // Every placement and triangulation reads the same contact facts.
+        for report in reports.iter().skip(1) {
+            assert_eq!(report, &reports[0]);
+        }
+        // And the standing relation is decided from the surfaces alone: no
+        // containment promotion had to run for it.
+        assert_eq!(
+            contact(&slab, &across, limits()).unwrap(),
+            contact(&flipped, &clear, limits()).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_shared_edge_pierce_into_the_interior_still_crosses_and_a_graze_does_not() {
+        // #721: dropping the closed-triangle hit alone would miss the
+        // segment that pierces the surface exactly through the edge two
+        // triangles share. The shell's own continuation confirms such a
+        // pierce as a crossing; a graze along a face plane or a rim touch
+        // stays a touch.
+        let mut preds = Predicates::new(limits().max_exact_predicates);
+        // A quad split along its diagonal: the segment pierces it exactly
+        // through the shared diagonal, from below into the interior.
+        let quad = TriMesh::from_buffers(
+            &[
+                [0.0, 0.0, 20.0],
+                [100.0, 0.0, 20.0],
+                [0.0, 100.0, 20.0],
+                [100.0, 100.0, 20.0],
+            ],
+            &[[0, 1, 3], [0, 3, 2]],
+        )
+        .unwrap();
+        let shell = Shell::of(&quad).unwrap();
+        let s0 = [50.0, 50.0, 10.0];
+        let s1 = [50.0, 50.0, 30.0];
+        for ti in 0..shell.tris.len() {
+            assert!(
+                pierce_decides_crossing(&mut preds, &shell, ti, s0, s1).unwrap(),
+                "triangle {ti} must confirm the pierce through their shared edge"
+            );
+        }
+        // The quad's own diagonal split decides through the continuation;
+        // a pierce strictly inside one triangle decides on its own.
+        let single = TriMesh::from_buffers(
+            &[
+                [0.0, 0.0, 20.0],
+                [100.0, 0.0, 20.0],
+                [0.0, 100.0, 20.0],
+                [100.0, 100.0, 20.0],
+            ],
+            &[[0, 1, 3]],
+        )
+        .unwrap();
+        let shell = Shell::of(&single).unwrap();
+        assert!(
+            pierce_decides_crossing(
+                &mut preds,
+                &shell,
+                0,
+                [60.0, 20.0, 10.0],
+                [60.0, 20.0, 30.0]
+            )
+            .unwrap()
+        );
+        // A wall quad split along its diagonal into two coplanar triangles:
+        // a segment running in the z=20 plane through their shared edge
+        // passes through the wall's face — the continuation confirms it.
+        // (The pierce lands in the upper triangle; the lower one misses it
+        // across the diagonal.)
+        let wall = TriMesh::from_buffers(
+            &[
+                [0.0, 0.0, 0.0],
+                [100.0, 0.0, 0.0],
+                [100.0, 0.0, 20.0],
+                [0.0, 0.0, 20.0],
+                [100.0, 0.0, 40.0],
+                [0.0, 0.0, 40.0],
+            ],
+            &[[0, 1, 2], [0, 2, 3], [2, 5, 4], [2, 3, 5]],
+        )
+        .unwrap();
+        let shell = Shell::of(&wall).unwrap();
+        let g0 = [50.0, -100.0, 20.0];
+        let g1 = [50.0, 100.0, 20.0];
+        assert!(!pierce_decides_crossing(&mut preds, &shell, 0, g0, g1).unwrap());
+        assert!(pierce_decides_crossing(&mut preds, &shell, 1, g0, g1).unwrap());
+        // The wall as one quad ending at the rim z=20: the same graze
+        // touches the surface's edge and crosses nothing.
+        let rim = TriMesh::from_buffers(
+            &[
+                [0.0, 0.0, 0.0],
+                [100.0, 0.0, 0.0],
+                [100.0, 0.0, 20.0],
+                [0.0, 0.0, 20.0],
+            ],
+            &[[0, 1, 2], [0, 2, 3]],
+        )
+        .unwrap();
+        let shell = Shell::of(&rim).unwrap();
+        assert!(!pierce_decides_crossing(&mut preds, &shell, 0, g0, g1).unwrap());
+        assert!(!pierce_decides_crossing(&mut preds, &shell, 1, g0, g1).unwrap());
+        // The #721 shape: the wall's bottom edge is shared with a
+        // perpendicular bottom cap. A segment lying in the cap's plane
+        // pierces the wall's plane exactly at that edge — the continuation
+        // is not coplanar, so the segment runs along the cap's surface and
+        // the pierce stays a touch, never a crossing.
+        let capped = TriMesh::from_buffers(
+            &[
+                [0.0, 0.0, 20.0],
+                [100.0, 0.0, 20.0],
+                [100.0, 0.0, 40.0],
+                [0.0, 0.0, 40.0],
+                [100.0, 100.0, 20.0],
+                [0.0, 100.0, 20.0],
+            ],
+            &[[0, 1, 2], [0, 2, 3], [0, 4, 1], [0, 5, 4]],
+        )
+        .unwrap();
+        let shell = Shell::of(&capped).unwrap();
+        // Against the wall triangle: unconfirmed by the cap, a touch.
+        assert!(!pierce_decides_crossing(&mut preds, &shell, 0, g0, g1).unwrap());
+        // Against the cap triangle: the segment lies in its plane, no pierce.
+        assert!(!pierce_decides_crossing(&mut preds, &shell, 2, g0, g1).unwrap());
     }
 }

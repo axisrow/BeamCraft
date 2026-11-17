@@ -108,29 +108,66 @@ pub(crate) fn triangles_meet(p: &mut Predicates, ta: &Tri, tb: &Tri) -> Result<b
     Ok(false)
 }
 
-/// True when the closed segment strictly crosses the triangle: its endpoints
-/// lie on strictly opposite sides of the triangle's plane, and the pierce
-/// point lies in the closed triangle (the exact closed sign pattern of the
-/// three tetrahedra against the segment admits it). A segment that merely
-/// touches the plane or the triangle is not a crossing.
-pub(crate) fn segment_crosses_triangle(
+/// Where a segment pierces a triangle's plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pierce {
+    /// The segment does not cross the plane, or the plane crossing falls
+    /// outside the closed triangle.
+    None,
+    /// The endpoints lie strictly on opposite sides of the triangle's plane
+    /// and the pierce point lies in the open triangle: the segment strictly
+    /// crosses the surface there.
+    Interior,
+    /// The pierce point lies exactly on the triangle's boundary: a boundary
+    /// fact alone — a touch, a graze along a face plane — is not a strict
+    /// crossing. Whether the surface continues through the point and the
+    /// segment passes into it is the shell-level decision of the caller. The
+    /// payload marks the boundary edges carrying the point: bit `j` set means
+    /// the tetrahedron against edge `j` (in the triangle's edge order) read
+    /// exactly zero.
+    Boundary(u8),
+}
+
+/// Where the closed segment `s0 s1` pierces the non-degenerate triangle.
+///
+/// The endpoints must lie on strictly opposite sides of the triangle's plane
+/// for any pierce; the exact closed sign pattern of the three tetrahedra
+/// against the segment then decides interior against boundary. A segment that
+/// merely touches the plane or misses the triangle pierces nothing.
+pub(crate) fn segment_pierces_triangle(
     p: &mut Predicates,
     s0: [f64; 3],
     s1: [f64; 3],
     tri: &Tri,
-) -> Result<bool, PredError> {
+) -> Result<Pierce, PredError> {
     let [a, b, c] = *tri;
     let d0 = p.orient3d(a, b, c, s0)?;
     let d1 = p.orient3d(a, b, c, s1)?;
     if d0 == 0 || d1 == 0 || d0 == d1 {
-        return Ok(false);
+        return Ok(Pierce::None);
     }
     let signs = [
         p.orient3d(s0, s1, a, b)?,
         p.orient3d(s0, s1, b, c)?,
         p.orient3d(s0, s1, c, a)?,
     ];
-    Ok(!(signs.contains(&1) && signs.contains(&-1)))
+    // The exact closed sign pattern admits the pierce point into the closed
+    // triangle; a zero sign puts it on the boundary, and its edge positions
+    // travel with the answer.
+    if signs.contains(&1) && signs.contains(&-1) {
+        return Ok(Pierce::None);
+    }
+    let mut mask = 0u8;
+    for (j, sign) in signs.iter().enumerate() {
+        if *sign == 0 {
+            mask |= 1 << j;
+        }
+    }
+    Ok(if mask != 0 {
+        Pierce::Boundary(mask)
+    } else {
+        Pierce::Interior
+    })
 }
 
 /// True when two coplanar triangles overlap in area, not only along their

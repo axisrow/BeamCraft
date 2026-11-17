@@ -369,19 +369,23 @@ fn a_column_through_its_base_plate_is_red_with_the_measured_thickness() {
     // #722's real-binary matrix: a column straight through its base plate
     // used to report PART_CLASH unknown with exit 0 wherever no contact
     // sample landed inside the plate, and one lucky placement read 37 mm
-    // of probe luck. The crossing run is the plate thickness now: red,
-    // fail, exit 2, for the centred and off-centre rectangle, the
-    // flush-bottom start, and the I shape.
+    // of probe luck. The edge traversal samples (#740) read the crossing's
+    // own edges through the plate now: the measured depth is the mid-slab
+    // distance to the plate's faces, and the pair is red, fail, exit 2,
+    // for the centred and off-centre rectangle, the flush-bottom start,
+    // and the I shape.
     let centred = ["--width", "200", "--height", "200"];
     let small = ["--width", "100", "--height", "100"];
     let i_shape = [
         "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15", "--r", "0",
     ];
-    for (profile, start, end) in [
-        (&centred[..], "500,250,-50", "500,250,1000"),
-        (&small[..], "200,400,-50", "200,400,1000"),
-        (&centred[..], "500,250,0", "500,250,1000"),
-        (&i_shape[..], "500,250,-50", "500,250,1000"),
+    for (profile, start, end, expected) in [
+        (&centred[..], "500,250,-50", "500,250,1000", 10.0),
+        (&small[..], "200,400,-50", "200,400,1000", 10.0),
+        // The flush-bottom start additionally reads a plate face probe:
+        // the column's back face stands on the plate's bottom face.
+        (&centred[..], "500,250,0", "500,250,1000", 20.0),
+        (&i_shape[..], "500,250,-50", "500,250,1000", 10.0),
     ] {
         let f = Fixture::new();
         let steel = f.material();
@@ -410,8 +414,200 @@ fn a_column_through_its_base_plate_is_red_with_the_measured_thickness() {
         let finding = finding_of(&reply, "PART_CLASH");
         assert_eq!(text(finding, "status"), "fail");
         let measured = at(finding, &["measured_mm"]).float().unwrap();
-        assert!((measured - 20.0).abs() <= 1e-6, "{start}: {measured}");
+        assert!((measured - expected).abs() <= 1e-6, "{start}: {measured}");
     }
+}
+
+#[test]
+fn exact_face_contact_stays_green_wherever_the_footprint_lies() {
+    // #721: a plate standing exactly on a 1000x500 base's top face is green
+    // whether its footprint crosses the base cap's triangulation diagonal or
+    // clears it — the cap diagonal lies in the contact plane and grazes the
+    // standing plate's walls exactly at their bottom edges, which is a touch,
+    // never a crossing. The result must not depend on the placement.
+    for placement in ["400,200,20", "400,20,20"] {
+        let f = Fixture::new();
+        let steel = f.material();
+        f.ok(
+            "create-plate",
+            &[
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "20",
+                "--material-digest",
+                &steel,
+            ],
+        );
+        f.ok(
+            "create-plate",
+            &[
+                "--width",
+                "200",
+                "--length",
+                "100",
+                "--thickness",
+                "10",
+                "--material-digest",
+                &steel,
+                "--translation",
+                placement,
+            ],
+        );
+        let (code, reply) = f.check(&[]);
+        assert_eq!(code, 0, "{placement}: {reply:?}");
+        assert_eq!(text(&reply, "status"), "green", "{placement}: {reply:?}");
+        assert_eq!(unknown_count(&reply, "PART_CLASH"), 0, "{placement}");
+    }
+}
+
+#[test]
+fn columns_standing_on_a_base_plate_are_green() {
+    // #721: the column base that motivated the issue — a rectangular column
+    // centred on its base plate (its footprint crosses the cap diagonal) and
+    // an I-shape column in the same spot. Both stand exactly on the plate's
+    // top face and both are green.
+    let f = Fixture::new();
+    let steel = f.material();
+    let rectangular = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "200"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "20",
+            "--material-digest",
+            &steel,
+        ],
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--profile-digest",
+            &rectangular,
+            "--start",
+            "500,250,20",
+            "--end",
+            "500,250,1000",
+            "--kind",
+            "column",
+            "--material-digest",
+            &steel,
+        ],
+    );
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green", "{reply:?}");
+    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
+}
+
+#[test]
+fn an_i_shape_column_standing_on_a_base_plate_is_green() {
+    // #721's I-shape case: the same column base with an I-shape profile —
+    // the profile's faceted geometry rests on the plate's cap diagonal and
+    // stays green with exact coordinates.
+    let f = Fixture::new();
+    let steel = f.material();
+    let i_shape = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
+                    "--r", "0",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "20",
+            "--material-digest",
+            &steel,
+        ],
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--profile-digest",
+            &i_shape,
+            "--start",
+            "500,250,20",
+            "--end",
+            "500,250,1000",
+            "--kind",
+            "column",
+            "--material-digest",
+            &steel,
+        ],
+    );
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green", "{reply:?}");
+    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
+}
+
+#[test]
+fn a_rotated_plate_flush_with_a_side_wall_is_green() {
+    // #721's rotated flush case at exact coordinates: the quarter turn's
+    // rounding dips the standing plate's back bottom corner a couple of
+    // units in the last place into the base, the edge traversal sample
+    // measures that sliver, and the near-threshold rule reads it clear.
+    let f = Fixture::new();
+    let steel = f.material();
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--material-digest",
+            &steel,
+        ],
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "80",
+            "--length",
+            "100",
+            "--thickness",
+            "10",
+            "--material-digest",
+            &steel,
+            "--orientation-xyzw",
+            "0.7071067811865476,0,0,0.7071067811865476",
+            "--translation",
+            "150,10,10",
+        ],
+    );
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green", "{reply:?}");
+    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
 }
 
 #[test]
@@ -967,21 +1163,14 @@ impl Fixture {
     }
     /// The sample column base: the base plate on the floor, the column
     /// standing on it with its face at x = 150, and the rib perpendicular to
-    /// that face with its welded edge on it and its bottom on the plate. The
-    /// standing parts sit one nanometre clear of their neighbours, so the
-    /// quarter-turn rounding never dips a corner into them and the pair
-    /// relations stay determinate.
+    /// that face with its welded edge on it and its bottom on the plate.
+    /// Exact placements: the check's contact facts decide the quarter-turn
+    /// rounding's last-place dip and the grazing cap diagonals determinately
+    /// (#721), so the joint needs no clearance offsets.
     fn joint(&self, steel: &str, rib_corners: &[&str]) -> (String, String, String) {
         let base = self.plate(steel, "10", "0,0,0");
-        let column = self.standing(steel, "100", "200", "40", "50,40,10.000000001", &[]);
-        let rib = self.standing(
-            steel,
-            "80",
-            "100",
-            "10",
-            "150.000000001,10,10.000000001",
-            rib_corners,
-        );
+        let column = self.standing(steel, "100", "200", "40", "50,40,10", &[]);
+        let rib = self.standing(steel, "80", "100", "10", "150,10,10", rib_corners);
         (base, column, rib)
     }
     /// Records the corner-cut requirement of the sample's rib corner: the

@@ -344,32 +344,35 @@ cap triangles and plane-cut half-spaces, then compare with the final closed mesh
 part. Slice 2 validated a simpler method that satisfies the same requirements, and the contract
 below stays what any implementation must satisfy, not the algorithm:
 
-**Validated in slice 2 (2026-11-15).** The implementation compares the two **final evaluated
-closed meshes** directly (`kernel::contact`): the surface facts — strict crossing, coplanar
-face contact, edge/point touch, separation, full containment — are decided by the kernel's
-exact predicates and are properties of the surfaces, so they cannot depend on a triangulation
-or on an artificial decomposition; there are no internal faces to offset. A proven surface
-crossing reads the intersection itself (#722, 2026-11-17): the depth is the largest inside
-run of a strictly crossing surface edge — an edge whose adjacent triangles are not coplanar,
-so the edge set is a property of the surface — with the intervals between that edge's
-consecutive strict crossings of the other shell decided by exact midpoint classifications.
-The value is a deterministic lower bound taken from the intersection, never depends on where
-vertices or probes happen to lie, and does not change under a different valid triangulation.
-A run that cannot be decided (a flush wall or a graze puts an interval midpoint on a
-surface, or a pierce parameter is not representable) falls back to the sampled measure: the
-two meshes' vertices and per-face interior probes (exact midpoint chains), a deterministic
-lower bound invariant under re-triangulations that keep the vertex set — the only measure
-of a full containment, which has no crossing edge. A proven crossing that neither measure
-can read reports `unknown` (`indeterminate`), never a guess. The adversarial cases of #634
-are exercised in `kernel::contact::tests` and `steel::engine::check::tests`: face contact,
-edge/point contact, separation, containment without a surface meeting, corner overlap,
-rotated placements, diagonal-flip re-triangulations, and the through-penetration with no
-vertex of either body inside the other. Remaining ceilings, recorded here: the sampled
-fallback is vertex-based; the crossing run bounds each edge's intervals by that edge's
-strict crossings, so a graze that hides a strict event — a segment passing exactly through
-a shared vertex of the other mesh between crossings — can over-read that one edge's run,
-while a flush run along a face refuses to the sampled fallback; and a point classification
-whose six axis rays all graze edges/vertices reports unresolved.
+**Validated in slice 2 (2026-11-15), amended for #722 and #740 (2026-11-17).** The
+implementation compares the two **final evaluated closed meshes** directly (`kernel::contact`):
+the surface facts — strict crossing, coplanar face contact, edge/point touch, separation,
+full containment — are decided by the kernel's exact predicates and are properties of the
+surfaces, so they cannot depend on a triangulation or on an artificial decomposition; there
+are no internal faces to offset. The measured depth is the sampled measure (#740): the two
+meshes' vertices, per-face interior probes (exact midpoint chains), and — per surface edge
+(an edge whose adjacent triangles are not coplanar, so the edge set is a property of the
+surface) — the midpoint between that edge's consecutive strict crossings of the other shell
+(#722's crossing reading, folded into the samples). The edge traversal reaches both a
+through-penetration whose overlap carries no vertex or probe of either body (#722) and a
+last-place placement dip whose sliver is thinner than a coordinate step (#721); the value is
+a deterministic lower bound, invariant under re-triangulations that keep the vertex set, and
+never depends on where vertices or probes happen to lie. The crossing run — the largest
+inside run of a strictly crossing surface edge, with the intervals decided by exact midpoint
+classifications — stays the last resort for a proven surface crossing the samples cannot
+read at all; a run that cannot be decided (a flush wall or a graze puts an interval midpoint
+on a surface, or a pierce parameter is not representable) reports no value. A proven
+crossing that neither measure can read reports `unknown` (`indeterminate`), never a guess.
+The adversarial cases of #634 are exercised in `kernel::contact::tests` and
+`steel::engine::check::tests`: face contact, edge/point contact, separation, containment
+without a surface meeting, corner overlap, rotated placements, diagonal-flip
+re-triangulations, and the through-penetration with no vertex of either body inside the
+other. Remaining ceilings, recorded here: the sampled measure reads only its samples, so a
+surface region no sample reaches can only make the value smaller; the crossing run bounds
+each edge's intervals by that edge's strict crossings, so a graze that hides a strict event
+— a segment passing exactly through a shared vertex of the other mesh between crossings —
+can over-read that one edge's run, while a flush run along a face refuses; and a point
+classification whose six axis rays all graze edges/vertices reports unresolved.
 
 The requirements any implementation must satisfy:
 
@@ -460,6 +463,24 @@ Recorded ceilings: the fillet cross-section is translated along the qualifying p
 re-orientation and does not re-orient by the weld's recorded `side` (the sides are read from
 the corner's geometry, section 4.4), and the recorded A15 solid stays the weld's own placed
 body — anchored at its path start by the A15 frame rule — not the judging geometry.
+
+**Amended by #721 (2026-11-17).** The contact decision's boundary case is decided at the
+shell level: a segment that pierces the other shell's plane exactly on a triangle's edge or
+vertex proves a crossing only through the local surface around the point — the star of
+triangles sharing that edge, or all triangles at the shared vertex — each of whose planes the
+segment must pass through transversally at the point. A segment running along one of those
+face planes (a contact face's cap diagonal grazing a wall exactly at its bottom edge), or
+leaving the surface at a rim where the star has no continuation, touches the shell: exact
+face contact reports `Touching` with `face_contact` wherever the footprint lies, and the
+result is invariant under a different valid triangulation. The measured penetration depth
+samples, besides vertices and per-face probes, the midpoint between consecutive transversal
+pierce points of each edge through the other shell: the sample that measures the last-place
+dip of an evaluated quarter-turn placement into its host, whose sliver no vertex or face
+probe reaches (the sample's coordinate is a plain measurement; the strict containment
+classification filters it, and the value stays a deterministic lower bound). A flush pair
+whose surfaces meet while part of one body reads strictly inside and part outside is a
+proven interior overlap without a surface crossing; only under `Separated` do mixed
+containment answers stay the defensive error they were.
 
 ### 7.2 Two tolerance layers, kept separate
 
