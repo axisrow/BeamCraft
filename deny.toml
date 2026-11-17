@@ -128,15 +128,26 @@ required-git-spec = "rev"
 
 [advisories]
 yanked = "warn"
-# `zip` 8.6.0 is pulled in only by `openusd` 0.8.0, which requires `zip ^8.2.0`, so the patched
-# 9.x line cannot be selected. All four advisories concern `ZipArchive::extract` and
+# `zip` 8.6.0 is pulled in only by `openusd` 0.8.0, which requires `zip ^8.2.0` with
+# `default-features = false` and only `deflate`, so the patched 9.x line cannot be selected.
+# RUSTSEC-2026-0367/0368/0369/0429/0546 concern `ZipArchive::extract` and
 # `ZipStreamReader::extract` (symlink and permission handling during extraction). `openusd` only
 # reads archive entries into memory (`ZipArchive::new` plus entry reads; no `extract` call outside
-# its tests) and BeamCraft never extracts archives to disk. Revisit when `openusd` moves to
-# `zip` 9 or when a USDZ extraction path is added.
+# its tests) and BeamCraft never extracts archives to disk. RUSTSEC-2026-0548 concerns the
+# streaming readers (`ZipStreamReader::visit`/`extract`, `read_zipfile_from_stream`), which take
+# entry names from the local headers instead of the central directory: `openusd` never streams —
+# it opens archives only through `ZipArchive`, which uses the central directory. RUSTSEC-2026-0545
+# needs the `aes-crypto` feature (reading AES entries with a password) and RUSTSEC-2026-0547 the
+# `legacy-zip` feature (Shrink/Reduce/Implode decoders); `openusd` enables neither, so that code is
+# not compiled. BeamCraft has no direct `zip` use. Revisit when `openusd` moves to `zip` 9, when
+# its `zip` features change, or when a USDZ extraction or streaming path is added.
 ignore = [
     { id = "RUSTSEC-2026-0367", reason = "zip extract() only; openusd 0.8.0 never extracts, BeamCraft never extracts archives" },
     { id = "RUSTSEC-2026-0368", reason = "zip extract() only; openusd 0.8.0 never extracts, BeamCraft never extracts archives" },
     { id = "RUSTSEC-2026-0369", reason = "zip extract() only; openusd 0.8.0 never extracts, BeamCraft never extracts archives" },
     { id = "RUSTSEC-2026-0429", reason = "zip extract() only; openusd 0.8.0 never extracts, BeamCraft never extracts archives" },
+    { id = "RUSTSEC-2026-0545", reason = "zip aes-crypto feature only; openusd 0.8.0 builds zip without aes-crypto, so AES decryption is not compiled" },
+    { id = "RUSTSEC-2026-0546", reason = "zip extract() only; openusd 0.8.0 never extracts, BeamCraft never extracts archives" },
+    { id = "RUSTSEC-2026-0547", reason = "zip legacy-zip feature only; openusd 0.8.0 builds zip without legacy-zip, so the Shrink/Reduce/Implode decoders are not compiled" },
+    { id = "RUSTSEC-2026-0548", reason = "zip ZipStreamReader/read_zipfile_from_stream only; openusd 0.8.0 reads through ZipArchive and never streams, BeamCraft never extracts archives" },
 ]
