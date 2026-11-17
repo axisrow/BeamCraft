@@ -368,18 +368,17 @@ pub fn check_model(
             match outcome.state {
                 ClashState::Clear => {}
                 ClashState::Indeterminate => {
+                    let depth_text = outcome.measured_mm.map_or_else(
+                        || "the measured depth is unmeasured".to_owned(),
+                        |m| format!("the measured depth {m:.3} mm sits at the tolerance band edge"),
+                    );
                     push(Finding {
                         rule: "PART_CLASH",
                         status: "unknown",
                         elements: vec![(a.id, a.name.clone()), (b.id, b.name.clone())],
                         message: format!(
-                            "the parts overlap ({}) but the measured depth {} sits at the \
-                         tolerance band edge",
-                            outcome.contact,
-                            outcome.measured_mm.map_or_else(
-                                || "is unmeasured".to_owned(),
-                                |m| format!("{m:.3} mm")
-                            ),
+                            "the parts overlap ({}) but {}, so the pair stays undecidable",
+                            outcome.contact, depth_text,
                         ),
                         basis: "geometric identity: solid interior overlap".into(),
                         measured_mm: outcome.measured_mm,
