@@ -87,7 +87,11 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
         }
         match tokenize(&line) {
             Ok(tokens) if tokens.is_empty() => continue,
-            Ok(tokens) => session.run_line(tokens),
+            Ok(tokens) => {
+                for (json, _) in session.run_line(tokens) {
+                    let _ = print_json(&json);
+                }
+            }
             Err(message) => {
                 let _ = print_refusal(&Refusal::invalid(message));
             }
@@ -141,19 +145,27 @@ fn session_options(args: &[OsString]) -> Result<SessionOptions, Refusal> {
 }
 
 /// The running session: the store it holds and the operation ids its open batch carried.
-/// The batch guard lives here, so the draft stays open between the bracket lines.
-struct Session<'a> {
-    store: &'a RevisionStore,
-    root: String,
-    batch_ops: BTreeSet<String>,
-    guard: Option<draft::BatchGuard>,
+/// The batch guard lives here, so the draft stays open between the bracket lines. Crate
+/// visible: `run-script` runs its script entries through the same struct (`#738`).
+pub(crate) struct Session<'a> {
+    /// The store the session opened; every command line names it or names no store.
+    pub(crate) store: &'a RevisionStore,
+    /// The session's own store path, the one a command line may name.
+    pub(crate) root: String,
+    /// The operation ids the open batch already carried.
+    pub(crate) batch_ops: BTreeSet<String>,
+    /// The open batch's guard; `None` while no batch is open.
+    pub(crate) guard: Option<draft::BatchGuard>,
 }
 
 impl<'a> Session<'a> {
     /// Runs one line: a batch word or a command through its own adapter. A command refused
     /// inside an open batch abandons the batch whole after its refusal line, exactly as the
     /// design promises: nothing partial is ever published, and the session stays alive.
-    fn run_line(&mut self, tokens: Vec<String>) {
+    /// Returns the answers in print order: the command's own JSON and, when the refusal
+    /// abandons an open batch, the abandonment line after it. Callers decide the transport
+    /// (the session prints each; `run-script` collects them into its summary).
+    pub(crate) fn run_line(&mut self, tokens: Vec<String>) -> Vec<(Json, u8)> {
         let word = tokens
             .first()
             .map(|token| token.as_str())
@@ -166,20 +178,24 @@ impl<'a> Session<'a> {
             "batch-abort" => (self.batch_abort(), 0u8),
             _ => self.command(word, tokens),
         };
-        let _ = print_json(&json);
+        let mut answers = vec![(json, exit)];
         if exit != 0 && draft::is_open() {
             let abandoned = draft::take().map(|state| state.commands.len());
             self.batch_ops.clear();
             self.guard = None;
-            let _ = print_json(&Json::object([
-                ("outcome", Json::text("batch_abandoned")),
-                (
-                    "reason",
-                    Json::text("a command inside the batch was refused"),
-                ),
-                ("commands", Json::uint(abandoned.unwrap_or_default() as u64)),
-            ]));
+            answers.push((
+                Json::object([
+                    ("outcome", Json::text("batch_abandoned")),
+                    (
+                        "reason",
+                        Json::text("a command inside the batch was refused"),
+                    ),
+                    ("commands", Json::uint(abandoned.unwrap_or_default() as u64)),
+                ]),
+                0,
+            ));
         }
+        answers
     }
 
     /// Dispatches one command line through the registry: the same routes, refusals and JSON
@@ -191,6 +207,7 @@ impl<'a> Session<'a> {
                 route,
                 Route::Session
                     | Route::Batch
+                    | Route::Script
                     | Route::Export
                     | Route::ExportView
                     | Route::ScreenshotView
@@ -561,7 +578,7 @@ pub(crate) fn refusal_exit(code: ErrorCode) -> u8 {
 }
 
 /// One JSON object per stdout line: compact, newline-terminated.
-fn print_json(json: &Json) -> Result<(), ()> {
+pub(crate) fn print_json(json: &Json) -> Result<(), ()> {
     use std::io::Write;
     match json.encode(&Limits::DEFAULT) {
         Ok(bytes) => {
@@ -592,7 +609,8 @@ fn revision_object(info: &beamcraft_host::revision::RevisionInfo) -> Json {
     object
 }
 
-fn refusal_json(refusal: &Refusal) -> Json {
+/// The refusal JSON of a session-shaped answer; the sibling modes print the same shape.
+pub(crate) fn refusal_json(refusal: &Refusal) -> Json {
     Json::object([
         (
             "outcome",

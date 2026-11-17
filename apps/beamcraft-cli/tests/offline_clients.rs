@@ -95,19 +95,47 @@ impl Fixture {
             .map(|(name, path)| (name, path.to_str().unwrap().to_owned()))
             .collect(),
         );
-        // A workspaces forks a published revision, so the store seeds one first.
-        f.create("published", SEED, 500, "Seed");
-        for (name, user) in [("a", USER_A), ("b", USER_B)] {
-            f.ok(&[
-                "create-workspace",
-                "--store",
-                f.s("published"),
-                "--workspace-dir",
-                f.s(name),
-                "--user-id",
-                user,
-            ]);
-        }
+        // A workspace forks a published revision, so the store seeds one first. The seed
+        // and both forks ride one `run-script` invocation (`#738`): the replies are not
+        // read, only the exits.
+        f.script(
+            f.s("published"),
+            &[
+                crate::support::Scripted::ok(&[
+                    "create-plate",
+                    "--store",
+                    f.s("published"),
+                    "--width",
+                    "500",
+                    "--length",
+                    "300",
+                    "--thickness",
+                    "8",
+                    "--new-id",
+                    &eid(SEED),
+                    "--name",
+                    "Seed",
+                ]),
+                crate::support::Scripted::ok(&[
+                    "create-workspace",
+                    "--store",
+                    f.s("published"),
+                    "--workspace-dir",
+                    f.s("a"),
+                    "--user-id",
+                    USER_A,
+                ]),
+                crate::support::Scripted::ok(&[
+                    "create-workspace",
+                    "--store",
+                    f.s("published"),
+                    "--workspace-dir",
+                    f.s("b"),
+                    "--user-id",
+                    USER_B,
+                ]),
+            ],
+        );
         f
     }
 
@@ -139,6 +167,13 @@ impl Fixture {
         let (code, json) = self.run(args);
         assert_eq!(code, 0, "{args:?}: {json:?}");
         json
+    }
+
+    /// Runs the lines as one `run-script` invocation over the store `name`, asserting the
+    /// summary's outcome and each line's exit; returns each command's reply in order
+    /// (`#738`: one process for a whole authoring loop instead of one per command).
+    fn script(&self, store: &str, lines: &[crate::support::Scripted]) -> Vec<Json> {
+        crate::support::script_lines(&self.0, store, lines)
     }
 
     fn head(&self, name: &str) -> RevisionInfo {
@@ -483,10 +518,37 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
     let f = Fixture::new();
     let mut created: Vec<(String, String, f64, f64)> =
         vec![(eid(SEED), "Seed".to_owned(), 500.0, 1_200_000.0)];
+    // One authoring loop rides one `run-script` invocation as one batch: the 32 creates
+    // commit as one draft revision, so the O(revisions) verification of every commit
+    // stops growing with the element count (`#738`). The replies carry the same plate
+    // objects the one-process commands printed, and the tests read volumes from them.
     let author = |workspace: &str, first: usize, width: usize, prefix: &str| {
+        let width_arg = width.to_string();
+        let mut lines = vec![crate::support::Scripted::ok(&["batch-open"])];
+        for n in 1..=N {
+            let element = eid(first + n);
+            let name = format!("{prefix}-{n}");
+            lines.push(crate::support::Scripted::ok(&[
+                "create-plate",
+                "--store",
+                f.ws(workspace),
+                "--width",
+                width_arg.as_str(),
+                "--length",
+                "300",
+                "--thickness",
+                "8",
+                "--new-id",
+                element.as_str(),
+                "--name",
+                name.as_str(),
+            ]));
+        }
+        lines.push(crate::support::Scripted::ok(&["batch-commit"]));
+        let replies = f.script(f.ws(workspace), &lines);
         (1..=N)
-            .map(|n| {
-                let reply = f.create(workspace, first + n, width, &format!("{prefix}-{n}"));
+            .zip(&replies[1..=N])
+            .map(|(n, reply)| {
                 let plate = reply.get("plate").unwrap();
                 (
                     text(plate, "element_id").to_owned(),

@@ -20,6 +20,25 @@ slow-timeout = { period = "30s", terminate-after = 4, grace-period = "5s", on-ti
 filter = 'test(=reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has)'
 slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
 
+# The #738 P1 stopgap, owner-approved 2026-11-17: the run-script-converted budget tests
+# measure 15-75 s green on this machine, but a shared-Mac gate racing another worker's
+# builds inflated one of them 3.4x and clamped it at the default 120 s (two gate runs
+# killed, identical code each time). The same R01 reasoning applies: a deliberate
+# budget kill under load reads as a regression. 30 s x 8 = 240 s, exactly the R01
+# budget; every other test keeps the default. Revisit with the #738 P6 slow-tier
+# decision.
+[[profile.default.overrides]]
+filter = 'test(=alpha_scenario_expanded::expanded_alpha_runs_tools_views_regressions_and_exact_outputs)'
+slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
+
+[[profile.default.overrides]]
+filter = 'test(=alpha_scenario_expanded::expanded_alpha_published_surface_regressions_and_exact_outputs)'
+slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
+
+[[profile.default.overrides]]
+filter = 'test(=offline_clients::two_offline_workspaces_publish_independent_elements_and_lose_nothing)'
+slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
+
 [profile.gate-full]
 default-filter = "all()"
 global-timeout = "600s"
