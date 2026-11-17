@@ -272,6 +272,12 @@ pub fn hold_session_lease(args: &[std::ffi::OsString]) -> Result<Option<StoreLea
     hold_serving_lease(args, "session")
 }
 
+/// The same store lease for a serving `run-script`: the scripted process holds the store
+/// for as long as it runs, so a compaction cannot start under an open script (U14).
+pub fn hold_script_lease(args: &[std::ffi::OsString]) -> Result<Option<StoreLease>, Refusal> {
+    hold_serving_lease(args, "run-script")
+}
+
 /// The shared store lease one long-serving command holds while it serves.
 fn hold_serving_lease(
     args: &[std::ffi::OsString],
@@ -295,5 +301,43 @@ fn hold_serving_lease(
             "the store is being compacted",
         )),
         Err(LeaseError::Storage(error)) => Err(refuse(error.code(), "the store lock is unusable")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    /// The serving word is part of the lease wiring: a lease held under one command's
+    /// own word must not silently return `None` because the argv names another. The
+    /// `run-script` lease was lost exactly this way (`#744` review): the script asked
+    /// for the session word, which never matches, so no compaction lease was taken.
+    #[test]
+    fn each_serving_word_holds_its_own_lease() {
+        let root = std::env::temp_dir().join(format!(
+            "beamcraft-lease-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let args: Vec<OsString> = ["run-script", "--store"]
+            .iter()
+            .map(OsString::from)
+            .chain([root.into_os_string()])
+            .collect();
+        assert!(
+            hold_script_lease(&args).unwrap().is_some(),
+            "run-script holds the U14 lease under its own word"
+        );
+        assert!(
+            hold_session_lease(&args).unwrap().is_none(),
+            "the session word takes no lease for a run-script line"
+        );
     }
 }

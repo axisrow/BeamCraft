@@ -36,8 +36,9 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
         Err(refusal) => return print_refusal(&refusal),
     };
     // A serving script holds its store for as long as it runs, so a compaction cannot
-    // start under it (U14) — the shared lease a compaction respects, like the session's.
-    let lease = match crate::history_cmd::session_lease(args) {
+    // start under it (U14) — the shared lease a compaction respects, under the
+    // run-script word itself.
+    let lease = match crate::history_cmd::script_lease(args) {
         Ok(lease) => lease,
         Err((json, _)) => {
             let _ = crate::session_cmd::print_json(&json);
