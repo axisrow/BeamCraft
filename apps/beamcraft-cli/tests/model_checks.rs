@@ -1949,6 +1949,103 @@ fn joint_with_cut(f: &Fixture, size: &str, authoring: &str) -> (String, String, 
     }
 }
 
+/// The #634 sample on a real I-section column (h 200, b 200, tw 9, tf 15,
+/// r 18) standing on a 1000x500x20 base plate, with a 80x100x10 rib against the
+/// flange face y = 350 whose lower inner corner sits at y 350, z 20. The rib is
+/// authored with the given plate options; returns (base, column, rib).
+fn i_section_sample(f: &Fixture, rib_options: &[&str]) -> (String, String, String) {
+    let steel = f.material();
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
+                    "--r", "18",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let base = f.plate(&steel, "20", "0,0,0");
+    let column = text(
+        at(
+            &f.ok(
+                "create-member",
+                &[
+                    "--profile-digest",
+                    &profile,
+                    "--start",
+                    "500,250,20",
+                    "--end",
+                    "500,250,1000",
+                    "--kind",
+                    "column",
+                    "--material-digest",
+                    &steel,
+                ],
+            ),
+            &["member"],
+        ),
+        "element_id",
+    );
+    let mut args: Vec<&str> = vec![
+        "--thickness",
+        "10",
+        "--material-digest",
+        &steel,
+        "--orientation-xyzw",
+        "0.5,0.5,0.5,0.5",
+        "--translation",
+        "495,350,20",
+    ];
+    args.extend(rib_options);
+    let rib = text(at(&f.ok("create-plate", &args), &["plate"]), "element_id");
+    f.corner(&rib, &base, &column, &[]);
+    (base, column, rib)
+}
+
+#[test]
+fn a_contour_authored_cut_on_an_i_section_column_is_judged_like_the_others() {
+    // #746: the 10 mm rib against the 9 mm web of an I-section column. The
+    // contour-authored chamfer's extended edge met the extended top edge at a
+    // phantom point 0.5 mm off the web, so the requirement read indeterminate
+    // while the parameterized and plane-cut chamfers of the same final shape
+    // read green. All three are green now; the 20 mm contour cut is overcut.
+    for rib_options in [
+        &[
+            "--width",
+            "80",
+            "--length",
+            "100",
+            "--corners",
+            "0=chamfer:10",
+        ][..],
+        &["--contour", "10,0;80,0;80,100;0,100;0,10"][..],
+    ] {
+        let f = Fixture::new();
+        i_section_sample(&f, rib_options);
+        let (code, reply) = f.check(&[]);
+        assert_eq!(code, 0, "{rib_options:?}: {reply:?}");
+        assert_eq!(text(&reply, "status"), "green", "{rib_options:?}");
+        assert_eq!(list(&reply, "findings").len(), 0, "{rib_options:?}");
+    }
+    let f = Fixture::new();
+    let (_, _, rib) = i_section_sample(&f, &["--width", "80", "--length", "100"]);
+    f.cut_rib_corner_by_plane(&rib, "10", "019a7bf0-0000-7000-8000-00000000c746");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    let f = Fixture::new();
+    i_section_sample(&f, &["--contour", "20,0;80,0;80,100;0,100;0,20"]);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    let finding = finding_of(&reply, "CORNER_OVERCUT");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
+}
+
 #[test]
 fn equivalent_final_cuts_receive_equivalent_check_results() {
     // The same final shape authored three ways checks the same: a 10×10 cut is
