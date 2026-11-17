@@ -575,6 +575,116 @@ mod tests {
         )
     }
 
+    /// A square plate 200x200 with a square 60x60 through-hole in its
+    /// centre (x, y in 70..130), 20 mm thick along z: an extrusion with one
+    /// cavity contour, the same operation a holed model element evaluates
+    /// through.
+    fn holed_plate() -> TriMesh {
+        let outer = [
+            [-100.0, -100.0],
+            [100.0, -100.0],
+            [100.0, 100.0],
+            [-100.0, 100.0],
+        ];
+        let hole = [[-30.0, -30.0], [-30.0, 30.0], [30.0, 30.0], [30.0, -30.0]];
+        let square = |points: &[[f64; 2]]| {
+            points
+                .iter()
+                .map(|[x, y]| crate::profile::Point2::new(*x, *y))
+                .collect::<Vec<_>>()
+        };
+        let extrusion = crate::profile::extrude(
+            &square(&outer),
+            &[crate::profile::Cavity::polygon(square(&hole))],
+            20.0,
+        )
+        .unwrap();
+        let mesh = extrusion.mesh();
+        TriMesh::from_buffers(
+            &mesh
+                .vertices()
+                .iter()
+                .map(|v| [v.x, v.y, v.z])
+                .collect::<Vec<_>>(),
+            mesh.triangles(),
+        )
+        .unwrap()
+    }
+
+    /// A square hollow box 200x200 outer, 100x100 inner cavity, 200 mm long
+    /// along z (open at both ends): the extrusion of one cavity contour.
+    fn cavity_box() -> TriMesh {
+        let outer = [
+            [-100.0, -100.0],
+            [100.0, -100.0],
+            [100.0, 100.0],
+            [-100.0, 100.0],
+        ];
+        let hole = [[-50.0, -50.0], [-50.0, 50.0], [50.0, 50.0], [50.0, -50.0]];
+        let square = |points: &[[f64; 2]]| {
+            points
+                .iter()
+                .map(|[x, y]| crate::profile::Point2::new(*x, *y))
+                .collect::<Vec<_>>()
+        };
+        let extrusion = crate::profile::extrude(
+            &square(&outer),
+            &[crate::profile::Cavity::polygon(square(&hole))],
+            200.0,
+        )
+        .unwrap();
+        let mesh = extrusion.mesh();
+        TriMesh::from_buffers(
+            &mesh
+                .vertices()
+                .iter()
+                .map(|v| [v.x, v.y, v.z])
+                .collect::<Vec<_>>(),
+            mesh.triangles(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_shaft_through_the_hole_is_separated_and_through_the_rim_overlaps() {
+        // The hole is real missing material: a 50x50 shaft down the 60x60
+        // hole with 5 mm of clearance on every side stays separated even
+        // though it spans the plate's whole thickness and more.
+        let plate = holed_plate();
+        let shaft = cube([-25.0, -25.0, -40.0], 50.0);
+        let report = contact(&plate, &shaft, limits()).unwrap();
+        assert_eq!(report.relation, Relation::Separated);
+        // The same shaft grown to 70x70 crosses the hole walls by 5 mm on
+        // every side: a strict crossing of the surfaces.
+        let fat = cube([-35.0, -35.0, -40.0], 70.0);
+        let report = contact(&plate, &fat, limits()).unwrap();
+        assert_eq!(
+            report.relation,
+            Relation::Overlapping {
+                surface_crossing: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_insert_in_the_cavity_is_separated_and_through_the_wall_overlaps() {
+        // The cavity walls are real material: an 80x80 insert floating
+        // 10 mm from the cavity walls stays separated; a 110x110 insert
+        // crosses the walls by 5 mm on every side.
+        let box_shell = cavity_box();
+        let floating = cube([-40.0, -40.0, 70.0], 80.0);
+        let report = contact(&box_shell, &floating, limits()).unwrap();
+        assert_eq!(report.relation, Relation::Separated);
+        let fat = cube([-55.0, -55.0, 70.0], 110.0);
+        let report = contact(&box_shell, &fat, limits()).unwrap();
+        assert_eq!(
+            report.relation,
+            Relation::Overlapping {
+                surface_crossing: true
+            }
+        );
+    }
+
     #[test]
     fn separate_touching_and_overlapping_cubes_are_decided() {
         let a = cube([0.0; 3], 10.0);
