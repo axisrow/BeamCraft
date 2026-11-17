@@ -3279,6 +3279,33 @@ mod tests {
         }
 
         #[test]
+        fn a_leg_at_the_admitted_band_edge_stays_unknown() {
+            // The acceptance row: weld leg 10.5 against the admitted 10 mm —
+            // the near-threshold band (admitted + contact tolerance 0.5,
+            // delta 0.25) straddles, so the clearance stays unknown without
+            // a guess.
+            let rib = rib_record(10.0);
+            let along_the_joint = vec![
+                [COLUMN_FACE_X, 10.0, PLATE_TOP_Z],
+                [COLUMN_FACE_X, 40.0, PLATE_TOP_Z],
+            ];
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(10.5, Some(along_the_joint))],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            let finding = &findings[0].finding;
+            assert_eq!(finding.rule, "CORNER_NOT_CUT");
+            assert_eq!(finding.status, "unknown");
+            assert_eq!(finding.missing_inputs, vec!["indeterminate"]);
+            let admitted = finding.measured_mm.unwrap_or_default();
+            assert!((admitted - 10.0).abs() <= 1e-6, "{admitted}");
+            assert_eq!(finding.required_mm, Some(10.5));
+        }
+
+        #[test]
         fn a_rounding_and_a_chamfer_with_equal_setbacks_differ_in_the_clearance() {
             // A chamfer of 10 mm admits a 10 mm leg; a rounding of radius
             // 10 mm with the same setback admits R·(2 − √2) ≈ 5.86 mm. The

@@ -177,7 +177,10 @@ fn limitations_text(inputs: &check::RecordedInputs) -> String {
             "the corner-cut rules ran over {count} recorded requirement(s), each judged \
              at the corner re-derived from the final evaluated geometry against its \
              recorded neighbours; a requirement whose target or corner does not resolve \
-             stays unknown (target_unresolved)"
+             stays unknown (target_unresolved); the dependent weld-clearance judgement \
+             (contract 4.4) rides the corner token for a requirement only where a \
+             validated weld's path passes the derived corner, and is not applicable for \
+             a requirement when no weld sits between its recorded neighbours"
         ),
     };
     format!(

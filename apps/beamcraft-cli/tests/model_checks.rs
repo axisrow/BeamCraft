@@ -1328,6 +1328,28 @@ fn a_pathless_weld_between_the_neighbours_stays_unknown_for_the_clearance() {
 }
 
 #[test]
+fn a_weld_leg_at_the_band_edge_is_unknown_indeterminate() {
+    // The acceptance row: weld leg 10.5 against the admitted 10 mm sits at
+    // the near-threshold band edge (contact tolerance 0.5), so the clearance
+    // stays unknown (indeterminate) with the admitted leg reported.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.sized_path_weld(&base, &column, "10.5", "150,5,10;150,50,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    let findings = list(&reply, "findings");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "unknown");
+    assert_eq!(reason_of(&reply, "CORNER_NOT_CUT"), "indeterminate");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 10.0).abs() <= 1e-6, "{measured}");
+}
+
+#[test]
 fn a_rounding_and_a_chamfer_with_equal_setbacks_differ_in_the_clearance() {
     // The chamfer of 10 mm admits the 8 mm weld; the rounding of radius
     // 10 mm — the same setback — admits only R·(2 − √2) ≈ 5.86 mm, so the
