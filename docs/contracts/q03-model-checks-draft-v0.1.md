@@ -427,10 +427,10 @@ run, never from an authored contour vertex: an authored contour edge is a **cont
 the neighbour its evaluated wall provably touches along a stretch (at least two distinct
 points, in the rib plate's local contour frame, of evaluated rib mesh vertices that provably
 touch the neighbour lie on the edge's supporting line; an edge touching at a single point, such
-as a contour-authored chamfer's end, is no contact line), and every intersection of one contact line of each neighbour — itself within
-the contact tolerance of both neighbour surfaces — is a candidate corner. A chamfer authored
-as corner parameters, as contour points, or as a plane cut leaves the same contact lines and
-receives the same candidates. Exactly one candidate is judged; zero or several are `unknown`
+as a contour-authored chamfer's end, is no contact line), and every intersection of one
+contact line of each neighbour — itself within the contact tolerance of both neighbour
+surfaces — is a candidate corner. A chamfer authored as corner parameters, as contour points,
+or as a plane cut leaves the same contact lines and receives the same candidates. Exactly one candidate is judged; zero or several are `unknown`
 (`target_unresolved`), and a wall vertex at a neighbour's contact band edge keeps the
 candidate set from being established (`indeterminate`); a faceted arc vertex between a
 rounding's tangent points lies on no contact line and decides nothing.

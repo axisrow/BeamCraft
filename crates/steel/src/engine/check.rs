@@ -1385,7 +1385,8 @@ fn derive_corner(
 /// 7.3). The corner itself is never stored: each run re-derives the rib's corner
 /// adjacent to both recorded neighbours from the final evaluated geometry and the two
 /// neighbour bodies (#725) — the authored contour edge lines whose walls provably
-/// touch a neighbour in the final body are that neighbour's contact lines, and every
+/// touch a neighbour along a stretch in the final body (two distinct touching
+/// contour points at least, #746) are that neighbour's contact lines, and every
 /// intersection of one line touching each neighbour, itself within the contact
 /// tolerance of both neighbour surfaces, is a candidate corner. No authored vertex is
 /// read, so a cut authored as contour points or as a plane cut is judged like a
