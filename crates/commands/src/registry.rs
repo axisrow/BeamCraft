@@ -96,6 +96,8 @@ pub enum Route {
     Session,
     /// The batch words of a running session.
     Batch,
+    /// `run-script`, which holds one store and runs one script file to the end.
+    Script,
 }
 
 /// What a command changes.
@@ -2889,6 +2891,14 @@ pub const COMMANDS: &[Command] = &[
         Access::Read,
         Ids::None,
         &[],
+    ),
+    entry(
+        Route::Script,
+        "session",
+        "run-script",
+        Access::Write,
+        Ids::None,
+        &[req("--store", "ROOT"), req("--file", "FILE")],
     ),
 ];
 

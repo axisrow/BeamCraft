@@ -79,6 +79,105 @@ impl Drop for StoreFixture {
     }
 }
 
+/// One scripted command line: its tokens and the process exit the answer must carry
+/// (`0` for an accepted command, `2` for a typed refusal, `130` for a cancellation).
+#[derive(Clone)]
+pub(crate) struct Scripted {
+    args: Vec<String>,
+    exit: i32,
+}
+
+impl Scripted {
+    fn line(args: &[&str], exit: i32) -> Self {
+        Self {
+            args: args.iter().map(|token| (*token).to_owned()).collect(),
+            exit,
+        }
+    }
+
+    /// A command expected to succeed.
+    pub(crate) fn ok(args: &[&str]) -> Self {
+        Self::line(args, 0)
+    }
+
+    /// A command expected to be refused.
+    pub(crate) fn refused(args: &[&str]) -> Self {
+        Self::line(args, 2)
+    }
+
+    /// A command expected to answer `cancelled`.
+    pub(crate) fn cancelled(args: &[&str]) -> Self {
+        Self::line(args, 130)
+    }
+}
+
+impl StoreFixture {
+    /// Runs the lines as one `run-script` invocation over the store at `dir`, asserting
+    /// the summary's outcome and every line's exit code; returns each command's reply in
+    /// order. A script must not end with an open batch, so the summary carries exactly
+    /// one reply entry per line.
+    pub(crate) fn script(&self, dir: &Path, lines: &[Scripted]) -> Vec<Json> {
+        script_lines(&self.root, dir.to_str().unwrap(), lines)
+    }
+}
+
+/// The shared `run-script` driver: encodes the lines as one script file under `root`,
+/// runs one real invocation over the store `store`, asserts the summary's outcome and
+/// every line's exit code, and returns each command's reply in order.
+pub(crate) fn script_lines(root: &Path, store: &str, lines: &[Scripted]) -> Vec<Json> {
+    let file = root.join(format!("script-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
+    let entries = lines
+        .iter()
+        .map(|line| {
+            Json::Array(
+                line.args
+                    .iter()
+                    .map(|token| Json::text(token.as_str()))
+                    .collect(),
+            )
+        })
+        .collect();
+    fs::write(
+        &file,
+        Json::Array(entries).encode(&Limits::DEFAULT).unwrap(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+        .args([
+            "run-script",
+            "--store",
+            store,
+            "--file",
+            file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "run-script itself failed: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let summary = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+    assert_eq!(text(&summary, "outcome"), "script_complete");
+    assert_eq!(
+        at(&summary, &["commands"]).unsigned().unwrap(),
+        lines.len() as u64,
+        "one reply entry per scripted line"
+    );
+    let replies = list(&summary, "replies");
+    let exits: Vec<i32> = replies
+        .iter()
+        .map(|entry| at(entry, &["exit"]).unsigned().unwrap() as i32)
+        .collect();
+    let expected: Vec<i32> = lines.iter().map(|line| line.exit).collect();
+    assert_eq!(exits, expected, "the summary's exits follow the script");
+    replies
+        .iter()
+        .map(|entry| at(entry, &["reply"]).clone())
+        .collect()
+}
+
 /// The string value at `key`, failing the test when the key is absent or not a string.
 pub(crate) fn text(json: &Json, key: &str) -> String {
     json.get(key)

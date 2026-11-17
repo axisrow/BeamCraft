@@ -120,6 +120,7 @@ mod russia_fasteners;
 mod russia_materials;
 mod schedules;
 mod schedules_store;
+mod script;
 mod sections;
 mod session;
 mod start;
