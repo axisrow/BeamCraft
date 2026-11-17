@@ -81,9 +81,11 @@ two minutes before failing; a window without a current receipt still fails, and 
 keeps the head, base and tree binding. Master pushes and manual dispatches read the live
 description directly, so they have no such startup race; a dispatch without its source `--ref`
 branch runs the default branch's workflow there and can only plan through the `pr_number` input.
-Publication itself fires `pull_request edited`, whose run replans with the receipt present and,
-through the workflow's `cancel-in-progress` group, may supersede the still-waiting first run: the
-PR then goes green on that run while the superseded run ends cancelled, not red.
+Publication itself fires nothing: `ci.yml` does not trigger on the `edited` event, so no
+second run follows a receipt publish and no run ends cancelled because of a publish. The
+still-waiting first run picks the receipt up through its own grace-window poll and goes green
+itself; a receipt published later than that window needs a new commit or a dispatch, like any
+missed receipt.
 
 | Local report OS | CI quality lanes (ci.yml) | Complete workspace tests (platform track) |
 | --- | --- | --- |
