@@ -1143,7 +1143,8 @@ struct CornerDerivation {
 /// Derives the rib's corner adjacent to both recorded neighbours from the final
 /// evaluated geometry and the two neighbour bodies (contract sections 4.1 and 4.3,
 /// as amended for #725): an authored contour edge is a contact line of the
-/// neighbour its wall provably touches in the final body — an authored vertex is
+/// neighbour its wall provably touches along a stretch in the final body (two
+/// distinct touching contour points at least, #746) — an authored vertex is
 /// never read, so a cut authored as contour points or as a plane cut is judged
 /// like a parameterized treatment of the same final shape — and every
 /// intersection of one line touching each neighbour, itself within the contact
@@ -1215,13 +1216,31 @@ fn derive_corner(
             _ => {}
         }
     }
-    // The contact lines: authored contour edge lines that carry a provably
-    // touching vertex.
+    // The contact lines: authored contour edge lines whose wall lies on the
+    // neighbour along a stretch, not at a point — at least two distinct contour
+    // points of the line provably touch it. A line holding a single touching
+    // point is no contact wall: a chamfer authored as contour points touches the
+    // base at one end and the column at the other, and its extension met the
+    // extension of the rib's top edge at a phantom point 0.5 mm off an I-section
+    // web, which stalled the whole requirement as indeterminate (#746). The two
+    // thickness faces of one wall collapse onto the same contour point, so they
+    // count once.
     let contact_lines = |on: &[[f64; 2]]| -> Vec<ContourLine> {
         contour_lines
             .iter()
             .copied()
-            .filter(|line| on.iter().any(|p| line.holds(*p)))
+            .filter(|line| {
+                let mut distinct: Vec<[f64; 2]> = Vec::new();
+                for point in on.iter().filter(|p| line.holds(**p)) {
+                    if !distinct
+                        .iter()
+                        .any(|seen| (seen[0] - point[0]).hypot(seen[1] - point[1]) <= 1e-6)
+                    {
+                        distinct.push(*point);
+                    }
+                }
+                distinct.len() >= 2
+            })
             .collect()
     };
     let lines_a = contact_lines(&on_a);
@@ -1366,7 +1385,8 @@ fn derive_corner(
 /// 7.3). The corner itself is never stored: each run re-derives the rib's corner
 /// adjacent to both recorded neighbours from the final evaluated geometry and the two
 /// neighbour bodies (#725) — the authored contour edge lines whose walls provably
-/// touch a neighbour in the final body are that neighbour's contact lines, and every
+/// touch a neighbour along a stretch in the final body (two distinct touching
+/// contour points at least, #746) are that neighbour's contact lines, and every
 /// intersection of one line touching each neighbour, itself within the contact
 /// tolerance of both neighbour surfaces, is a candidate corner. No authored vertex is
 /// read, so a cut authored as contour points or as a plane cut is judged like a
