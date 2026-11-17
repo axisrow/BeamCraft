@@ -130,6 +130,10 @@ impl Fixture {
     /// Creates one A06 weld with an authored world path between the two
     /// parts: the placed weld the local-attachment validation can locate.
     fn path_weld(&self, main: &str, secondary: &str, path: &str) -> String {
+        self.sized_path_weld(main, secondary, "6", path)
+    }
+    /// The same, with the recorded weld leg chosen by the test.
+    fn sized_path_weld(&self, main: &str, secondary: &str, size: &str, path: &str) -> String {
         let created = self.ok(
             "create-weld",
             &[
@@ -140,7 +144,7 @@ impl Fixture {
                 "--secondary",
                 secondary,
                 "--size",
-                "6",
+                size,
                 "--location",
                 "workshop",
                 "--side",
@@ -1232,6 +1236,149 @@ fn a_ghost_corner_target_stays_unresolved_and_bad_input_refuses() {
 // the real binary — both legs named, an overcut on either leg red, contour
 // and plane-cut authorings judged like the parameterized chamfer, and a
 // rounding judged by its tangent setbacks, never by the arc faceting.
+
+#[test]
+fn a_weld_leg_within_the_cut_is_green_and_past_it_turns_the_clearance_red() {
+    // #723: the dependent weld-clearance check at the corner. The weld whose
+    // validated path passes the derived corner fits the 10 mm chamfer with a
+    // 6 mm leg — green. Raising the leg to 14 mm turns the clearance red
+    // while the recorded requirement stays 10 mm: the finding rides the
+    // corner token with the weld record named in its basis and bounds.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.sized_path_weld(&base, &column, "6", "150,5,10;150,50,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(list(&reply, "findings").len(), 0);
+
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.sized_path_weld(&base, &column, "14", "150,5,10;150,50,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "fail");
+    assert!(
+        text(finding, "basis").contains("contract 4.4"),
+        "{:?}",
+        text(finding, "basis")
+    );
+    assert!(text(finding, "message").contains("requirement stays 10 mm"));
+    let bounds = list(finding, "bounds");
+    let bound = |name: &str| -> (String, f64) {
+        bounds
+            .iter()
+            .find(|b| text(b, "name") == name)
+            .map(|b| (text(b, "source"), at(b, &["bound_mm"]).float().unwrap()))
+            .unwrap_or_else(|| panic!("no {name} in {bounds:?}"))
+    };
+    let (weld_source, weld_leg) = bound("weld_leg");
+    assert_eq!(weld_source, "weld record");
+    assert!((weld_leg - 14.0).abs() <= 1e-9, "{weld_leg}");
+    let (required_source, required) = bound("required");
+    assert_eq!(required_source, "owner");
+    assert!((required - 10.0).abs() <= 1e-9, "{required}");
+}
+
+#[test]
+fn a_weld_elsewhere_between_the_neighbours_leaves_the_clearance_quiet() {
+    // The validated weld runs along the joint away from the derived corner:
+    // a weld elsewhere between the same parts produces no corner finding
+    // (contract 4.4), and the 14 mm leg changes nothing.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.sized_path_weld(&base, &column, "14", "160,20,10;200,20,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+    assert_eq!(list(&reply, "findings").len(), 0);
+}
+
+#[test]
+fn a_pathless_weld_between_the_neighbours_stays_unknown_for_the_clearance() {
+    // The pathless A06 weld is never locally attached: the model cannot
+    // establish whether it passes the corner, so the clearance stays unknown
+    // (attachment_unvalidated) — the clearance only.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.weld(&base, &column);
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    let findings = list(&reply, "findings");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "unknown");
+    assert_eq!(list(finding, "missing_inputs").len(), 1);
+    assert!(
+        text(finding, "message").contains("unvalidated local attachment"),
+        "{:?}",
+        text(finding, "message")
+    );
+}
+
+#[test]
+fn a_weld_leg_at_the_band_edge_is_unknown_indeterminate() {
+    // The acceptance row: weld leg 10.5 against the admitted 10 mm sits at
+    // the near-threshold band edge (contact tolerance 0.5), so the clearance
+    // stays unknown (indeterminate) with the admitted leg reported.
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.sized_path_weld(&base, &column, "10.5", "150,5,10;150,50,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "unknown");
+    let findings = list(&reply, "findings");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "unknown");
+    assert_eq!(reason_of(&reply, "CORNER_NOT_CUT"), "indeterminate");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 10.0).abs() <= 1e-6, "{measured}");
+}
+
+#[test]
+fn a_rounding_and_a_chamfer_with_equal_setbacks_differ_in_the_clearance() {
+    // The chamfer of 10 mm admits the 8 mm weld; the rounding of radius
+    // 10 mm — the same setback — admits only R·(2 − √2) ≈ 5.86 mm, so the
+    // same weld turns the clearance red there (beside the size finding the
+    // rounding already carries at the required 10 mm).
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.sized_path_weld(&base, &column, "8", "150,5,10;150,50,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+
+    let f = Fixture::new();
+    let steel = f.material();
+    let (base, column, rib) = f.joint(&steel, &["0=round:10"]);
+    f.corner(&rib, &base, &column, &[]);
+    f.sized_path_weld(&base, &column, "8", "150,5,10;150,50,10");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "red");
+    assert_eq!(fail_count(&reply, "CORNER_NOT_CUT"), 2);
+    let clearance = list(&reply, "findings")
+        .iter()
+        .find(|f| text(f, "basis").contains("contract 4.4"))
+        .expect("the clearance finding is missing");
+    assert_eq!(text(clearance, "status"), "fail");
+}
 
 #[test]
 fn an_asymmetric_parameterized_chamfer_is_overcut_with_named_values() {

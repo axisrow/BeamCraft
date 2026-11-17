@@ -256,16 +256,21 @@ pub use beamcraft_model::record::{
     JointIntent, UpperBound,
 };
 
-/// The weld facts the connectivity rules consume: which two parts a weld
-/// element connects, and the authored path when the weld carries one (the
-/// A06 record). Existence and path are plain inputs; the recorded-inputs
-/// slice reads them from the store.
+/// The weld facts the connectivity and clearance rules consume: which weld
+/// element connects which two parts, its recorded leg (a model fact, never a
+/// normative limit — contract section 4.4), and the authored path when the
+/// weld carries one (the A06 record). Existence, size and path are plain
+/// inputs; the recorded-inputs slice reads them from the store.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeldFact {
+    /// The weld element.
+    pub element: ElementId,
     /// The main part of the weld.
     pub main: ElementId,
     /// The part welded to the main part.
     pub secondary: ElementId,
+    /// The recorded weld leg in millimetres (the authored size).
+    pub size_mm: f64,
     /// The ordered world path the weld runs along, when authored. A weld
     /// with no path has no placed solid at the joint, so it is never locally
     /// attached (contract section 5.1).
@@ -456,18 +461,13 @@ fn path_point_contact(
         }
     }
     // The bridged opening: the point spans the two facing surfaces. A point
-    // inside either part's material is never at the contact; on-surface and
-    // unresolved classifications keep the bridged verdict from deciding.
+    // inside either part's material is never at the contact; on the surface
+    // is outside the material, as the near-threshold band on the span below
+    // still decides.
     let mut bridged = PointContact::On;
     for body in [a, b] {
-        match contact::contains(&body.mesh, point, CONTACT_LIMITS)? {
-            Some(true) => bridged = PointContact::Off,
-            None => {
-                if bridged == PointContact::On {
-                    bridged = PointContact::Straddles;
-                }
-            }
-            Some(false) => {}
+        if contact::contains(&body.mesh, point, CONTACT_LIMITS)? == Some(true) {
+            bridged = PointContact::Off;
         }
     }
     let (gap_a, closest_a) = contact::point_gap_closest(point, &a.mesh)?;
@@ -494,6 +494,39 @@ fn path_point_contact(
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+}
+
+/// The least distance from a point to a polyline: over its segments, the
+/// distance to the closest point of each segment. A path with fewer than two
+/// points measures unbounded — the caller treats only validated paths as
+/// poly lines (contract section 4.4).
+fn polyline_distance(point: [f64; 3], path: &[[f64; 3]]) -> f64 {
+    let mut best = f64::INFINITY;
+    for segment in path.windows(2) {
+        let &[from, to] = segment else {
+            continue;
+        };
+        let edge = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+        let len2 = edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2];
+        let offset = [point[0] - from[0], point[1] - from[1], point[2] - from[2]];
+        let along = if len2 <= 0.0 {
+            0.0
+        } else {
+            let projection =
+                (offset[0] * edge[0] + offset[1] * edge[1] + offset[2] * edge[2]) / len2;
+            projection.clamp(0.0, 1.0)
+        };
+        let foot = [
+            from[0] + along * edge[0],
+            from[1] + along * edge[1],
+            from[2] + along * edge[2],
+        ];
+        let gap = distance(point, foot);
+        if gap < best {
+            best = gap;
+        }
+    }
+    best
 }
 
 /// The measured local gap of an attached weld, in millimetres: the smallest
@@ -1575,6 +1608,156 @@ pub fn corner_cut_findings(
                 &mut findings,
             );
         }
+        // The dependent weld-clearance judgement (contract section 4.4): the
+        // qualifying weld between the two recorded neighbours — local
+        // attachment validated (contract 5.1), its path passing the derived
+        // corner within the product tolerance — has its recorded leg compared
+        // with the admitted leg through the near-threshold rule, with the
+        // product contact tolerance as the comparison's band tolerance. The
+        // finding rides this rule's token with its own basis naming the weld
+        // record; the recorded requirement above stays untouched.
+        let neighbours = |weld: &WeldFact| {
+            (weld.main == named[1] && weld.secondary == named[2])
+                || (weld.main == named[2] && weld.secondary == named[1])
+        };
+        let mut qualified: Vec<&WeldFact> = Vec::new();
+        let mut unvalidated: Vec<&WeldFact> = Vec::new();
+        let mut straddling: Vec<&WeldFact> = Vec::new();
+        for weld in inputs.welds.iter().filter(|w| neighbours(w)) {
+            let attached = match attachment_verdict(weld, a, b, tolerance_mm) {
+                Ok(attached) => attached,
+                Err(_) => Attachment::Indeterminate,
+            };
+            if attached != Attachment::Attached {
+                unvalidated.push(weld);
+                continue;
+            }
+            let Some(path) = weld.path_mm.as_ref() else {
+                unvalidated.push(weld);
+                continue;
+            };
+            let corner_gap = polyline_distance(corner, path);
+            match touch_state(corner_gap, tolerance_mm, delta) {
+                Touch::On => qualified.push(weld),
+                Touch::Off => {}
+                Touch::Straddles => straddling.push(weld),
+            }
+        }
+        let clearance_basis: String = "recorded corner-cut requirement (contract 4.1); \
+             derived corner (contract 4.3); rebuilt weld fillet of the weld record \
+             (contract 4.4)"
+            .into();
+        let clearance_bounds = |weld: &WeldFact| -> Vec<NamedBound> {
+            vec![
+                NamedBound {
+                    name: "required",
+                    bound_mm: requirement.required_mm,
+                    tolerance_mm: requirement.tolerance_mm,
+                    source: "owner",
+                },
+                NamedBound {
+                    name: "admitted_leg",
+                    bound_mm: admitted,
+                    tolerance_mm: delta,
+                    source: "measured",
+                },
+                NamedBound {
+                    name: "weld_leg",
+                    bound_mm: weld.size_mm,
+                    tolerance_mm,
+                    source: "weld record",
+                },
+            ]
+        };
+        for weld in &qualified {
+            let state = near_threshold(weld.size_mm, admitted, Some(tolerance_mm), delta);
+            let mut elements = named.to_vec();
+            elements.push(weld.element);
+            let (status, message, missing) = match state {
+                ClashState::Clear => continue,
+                ClashState::Indeterminate => (
+                    "unknown",
+                    format!(
+                        "the weld of leg {} mm sits at the band edge of the admitted leg \
+                         {} mm at the derived corner, so the weld clearance stays \
+                         undecidable; the recorded requirement stays {} mm",
+                        weld.size_mm, admitted, requirement.required_mm,
+                    ),
+                    vec!["indeterminate"],
+                ),
+                ClashState::Penetrated => (
+                    "fail",
+                    format!(
+                        "the weld of leg {} mm exceeds the clearance the cut admits at the \
+                         derived corner: the admitted leg is {} mm, so the fillet of the \
+                         recorded leg does not fit the freed space; the recorded \
+                         requirement stays {} mm",
+                        weld.size_mm, admitted, requirement.required_mm,
+                    ),
+                    Vec::new(),
+                ),
+            };
+            findings.push(CornerCutFinding {
+                finding: ConnectivityFinding {
+                    rule: "CORNER_NOT_CUT",
+                    status,
+                    elements,
+                    message,
+                    basis: clearance_basis.clone(),
+                    measured_mm: Some(admitted),
+                    required_mm: Some(weld.size_mm),
+                    tolerance_mm: Some(tolerance_mm),
+                    bounds: clearance_bounds(weld),
+                    missing_inputs: missing,
+                },
+                corner_point_mm: Some(corner),
+            });
+        }
+        if qualified.is_empty() && !unvalidated.is_empty() {
+            let mut elements = named.to_vec();
+            elements.extend(unvalidated.iter().map(|weld| weld.element));
+            findings.push(CornerCutFinding {
+                finding: ConnectivityFinding {
+                    rule: "CORNER_NOT_CUT",
+                    status: "unknown",
+                    elements,
+                    message: "the weld between the recorded neighbours has an unvalidated \
+                              local attachment, so the model cannot establish whether its \
+                              path passes the derived corner and the weld clearance stays \
+                              unjudged"
+                        .into(),
+                    basis: clearance_basis.clone(),
+                    measured_mm: None,
+                    required_mm: None,
+                    tolerance_mm: None,
+                    bounds: Vec::new(),
+                    missing_inputs: vec!["attachment_unvalidated"],
+                },
+                corner_point_mm: Some(corner),
+            });
+        } else if qualified.is_empty() && !straddling.is_empty() {
+            let mut elements = named.to_vec();
+            elements.extend(straddling.iter().map(|weld| weld.element));
+            findings.push(CornerCutFinding {
+                finding: ConnectivityFinding {
+                    rule: "CORNER_NOT_CUT",
+                    status: "unknown",
+                    elements,
+                    message: "a weld between the recorded neighbours runs at the corner's \
+                              tolerance band edge, so whether its path passes the derived \
+                              corner stays undecidable and the weld clearance stays \
+                              unjudged"
+                        .into(),
+                    basis: clearance_basis.clone(),
+                    measured_mm: None,
+                    required_mm: None,
+                    tolerance_mm: Some(tolerance_mm),
+                    bounds: Vec::new(),
+                    missing_inputs: vec!["indeterminate"],
+                },
+                corner_point_mm: Some(corner),
+            });
+        }
         if !admitted_fails && !admitted_straddles && !setback_exceeds && !setback_straddles {
             // The admitted leg clears the lower edge and the largest setback the
             // upper edge: the required corner cut is provided.
@@ -1959,8 +2142,10 @@ mod tests {
 
     fn weld_at(path: Option<Vec<[f64; 3]>>) -> WeldFact {
         WeldFact {
+            element: id(4),
             main: id(1),
             secondary: id(2),
+            size_mm: 6.0,
             path_mm: path,
         }
     }
@@ -2972,6 +3157,227 @@ mod tests {
                 CONTACT_TOLERANCE_MM,
             );
             assert!(findings.is_empty());
+        }
+
+        /// A weld between the recorded neighbours with the given leg and path.
+        fn weld_between(size: f64, path: Option<Vec<[f64; 3]>>) -> WeldFact {
+            WeldFact {
+                element: id(4),
+                main: id(1),
+                secondary: id(2),
+                size_mm: size,
+                path_mm: path,
+            }
+        }
+
+        fn run_with_welds(
+            requirement: CornerCutRequirement,
+            rib: &crate::engine::committed::PlateRecord,
+            welds: Vec<WeldFact>,
+            scope: &[u8],
+        ) -> Vec<CornerCutFinding> {
+            let bodies = vec![base_plate(), column(), ElementBody::of_plate(rib).unwrap()];
+            let ids: Vec<ElementId> = scope.iter().map(|n| id(*n)).collect();
+            let mut recorded = inputs(requirement);
+            recorded.welds = welds;
+            corner_cut_findings(
+                &recorded,
+                &bodies,
+                std::slice::from_ref(rib),
+                &ids,
+                &[id(1), id(2), id(3)],
+                CONTACT_TOLERANCE_MM,
+            )
+        }
+
+        #[test]
+        fn a_weld_leg_within_the_cut_stays_green_and_one_past_it_turns_the_clearance_red() {
+            // Contract 4.4: the weld that passes the derived corner with a leg
+            // within the cut changes nothing; raising the leg past the cut is
+            // the clearance finding riding this rule's token, with the
+            // admitted leg as the measurement and the recorded weld leg as
+            // the bound — the recorded requirement stays 10 mm.
+            let rib = rib_record(10.0);
+            let along_the_joint = vec![
+                [COLUMN_FACE_X, 10.0, PLATE_TOP_Z],
+                [COLUMN_FACE_X, 40.0, PLATE_TOP_Z],
+            ];
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(6.0, Some(along_the_joint.clone()))],
+                &[1, 2, 3],
+            );
+            assert!(
+                findings.is_empty(),
+                "a 6 mm weld fits the 10 mm cut: {findings:?}"
+            );
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(14.0, Some(along_the_joint))],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            let finding = &findings[0].finding;
+            assert_eq!(finding.rule, "CORNER_NOT_CUT");
+            assert_eq!(finding.status, "fail");
+            let admitted = finding.measured_mm.unwrap_or_default();
+            assert!((admitted - 10.0).abs() <= 1e-6, "{admitted}");
+            // The compared bound is the weld record's leg, named as such.
+            assert_eq!(finding.required_mm, Some(14.0));
+            assert_eq!(finding.elements, vec![id(3), id(1), id(2), id(4)]);
+            assert!(
+                finding.basis.contains("contract 4.4"),
+                "{:?}",
+                finding.basis
+            );
+            let names = finding
+                .bounds
+                .iter()
+                .map(|bound| (bound.name, bound.source))
+                .collect::<Vec<_>>();
+            assert!(names.contains(&("weld_leg", "weld record")), "{names:?}");
+            assert!(names.contains(&("admitted_leg", "measured")), "{names:?}");
+            assert!(finding.message.contains("requirement stays 10 mm"));
+            assert!(findings[0].corner_point_mm.is_some());
+        }
+
+        #[test]
+        fn a_weld_elsewhere_between_the_neighbours_produces_no_clearance_finding() {
+            // The weld is validated at the joint region away from the corner:
+            // its path provably misses the derived corner, so it does not
+            // count and the clearance stays quiet (contract 4.4).
+            let rib = rib_record(10.0);
+            let away = vec![[160.0, 20.0, PLATE_TOP_Z], [200.0, 20.0, PLATE_TOP_Z]];
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(14.0, Some(away))],
+                &[1, 2, 3],
+            );
+            assert!(findings.is_empty(), "{findings:?}");
+        }
+
+        #[test]
+        fn a_pathless_weld_between_the_neighbours_stays_unknown_for_the_clearance() {
+            // The pathless A06 weld is never locally attached, so the model
+            // cannot establish whether it passes the corner: the clearance
+            // stays unknown (attachment_unvalidated), the clearance only.
+            let rib = rib_record(10.0);
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(6.0, None)],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            let finding = &findings[0].finding;
+            assert_eq!(finding.status, "unknown");
+            assert_eq!(finding.missing_inputs, vec!["attachment_unvalidated"]);
+            assert_eq!(finding.elements, vec![id(3), id(1), id(2), id(4)]);
+        }
+
+        #[test]
+        fn a_leg_at_the_admitted_band_edge_stays_unknown() {
+            // The acceptance row: weld leg 10.5 against the admitted 10 mm —
+            // the near-threshold band (admitted + contact tolerance 0.5,
+            // delta 0.25) straddles, so the clearance stays unknown without
+            // a guess.
+            let rib = rib_record(10.0);
+            let along_the_joint = vec![
+                [COLUMN_FACE_X, 10.0, PLATE_TOP_Z],
+                [COLUMN_FACE_X, 40.0, PLATE_TOP_Z],
+            ];
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(10.5, Some(along_the_joint))],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            let finding = &findings[0].finding;
+            assert_eq!(finding.rule, "CORNER_NOT_CUT");
+            assert_eq!(finding.status, "unknown");
+            assert_eq!(finding.missing_inputs, vec!["indeterminate"]);
+            let admitted = finding.measured_mm.unwrap_or_default();
+            assert!((admitted - 10.0).abs() <= 1e-6, "{admitted}");
+            assert_eq!(finding.required_mm, Some(10.5));
+        }
+
+        #[test]
+        fn a_rounding_and_a_chamfer_with_equal_setbacks_differ_in_the_clearance() {
+            // A chamfer of 10 mm admits a 10 mm leg; a rounding of radius
+            // 10 mm with the same setback admits R·(2 − √2) ≈ 5.86 mm. The
+            // 8 mm weld fits the chamfer and does not fit the rounding —
+            // whose cut also fails the size band, so both findings are
+            // reported and the clearance one names the weld record.
+            let chamfer = rib_record(10.0);
+            let rounding = rib_with_corners(vec![PlateCorner {
+                vertex: 0,
+                treatment: CornerTreatment::Round { radius_mm: 10.0 },
+            }]);
+            let along_the_joint = vec![
+                [COLUMN_FACE_X, 10.0, PLATE_TOP_Z],
+                [COLUMN_FACE_X, 40.0, PLATE_TOP_Z],
+            ];
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &chamfer,
+                vec![weld_between(8.0, Some(along_the_joint.clone()))],
+                &[1, 2, 3],
+            );
+            assert!(findings.is_empty(), "the chamfer fits the 8 mm weld");
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rounding,
+                vec![weld_between(8.0, Some(along_the_joint))],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 2, "the rounding does not: {findings:?}");
+            let clearance = findings
+                .iter()
+                .find(|f| f.finding.basis.contains("contract 4.4"))
+                .expect("the clearance finding is missing");
+            assert_eq!(clearance.finding.status, "fail");
+            assert!(
+                clearance
+                    .finding
+                    .bounds
+                    .iter()
+                    .any(|bound| bound.name == "weld_leg" && bound.source == "weld record"),
+                "{:?}",
+                clearance.finding.bounds
+            );
+            assert!(
+                findings
+                    .iter()
+                    .all(|f| f.finding.basis.contains("contract 4.4")
+                        || (f.finding.status == "fail"
+                            && f.finding.basis.contains("contract 7.1"))),
+                "the other finding is the size fail: {findings:?}"
+            );
+        }
+
+        #[test]
+        fn a_path_at_the_corner_band_edge_stays_undecidable() {
+            // The path runs at the corner's tolerance band edge: whether it
+            // passes the derived corner straddles, so the clearance stays
+            // unknown without a guess.
+            let rib = rib_record(10.0);
+            let at_the_edge = vec![
+                [COLUMN_FACE_X, 10.5, PLATE_TOP_Z],
+                [COLUMN_FACE_X, 40.0, PLATE_TOP_Z],
+            ];
+            let findings = run_with_welds(
+                requirement(10.0, 1.0),
+                &rib,
+                vec![weld_between(6.0, Some(at_the_edge))],
+                &[1, 2, 3],
+            );
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            assert_eq!(findings[0].finding.status, "unknown");
+            assert_eq!(findings[0].finding.missing_inputs, vec!["indeterminate"]);
         }
     }
 }
