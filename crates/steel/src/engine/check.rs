@@ -1746,6 +1746,8 @@ pub fn corner_cut_findings(
                     required_mm: Some(weld.size_mm),
                     tolerance_mm: Some(tolerance_mm),
                     bounds: clearance_bounds(weld),
+                    mesh_bound_mm: Some(bound),
+                    delta_mm: Some(delta),
                     missing_inputs: missing,
                 },
                 corner_point_mm: Some(corner),
@@ -1769,6 +1771,8 @@ pub fn corner_cut_findings(
                     required_mm: None,
                     tolerance_mm: None,
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    delta_mm: None,
                     missing_inputs: vec!["attachment_unvalidated"],
                 },
                 corner_point_mm: Some(corner),
@@ -1791,6 +1795,8 @@ pub fn corner_cut_findings(
                     required_mm: None,
                     tolerance_mm: Some(tolerance_mm),
                     bounds: Vec::new(),
+                    mesh_bound_mm: Some(bound),
+                    delta_mm: Some(delta),
                     missing_inputs: vec!["indeterminate"],
                 },
                 corner_point_mm: Some(corner),
@@ -3265,6 +3271,10 @@ mod tests {
             assert!((admitted - 10.0).abs() <= 1e-6, "{admitted}");
             // The compared bound is the weld record's leg, named as such.
             assert_eq!(finding.required_mm, Some(14.0));
+            // The measurement carries its mesh bound and the effective
+            // comparison tolerance like every measurement-bearing family.
+            assert_eq!(finding.mesh_bound_mm, Some(0.0));
+            assert_eq!(finding.delta_mm, Some(0.25));
             assert_eq!(finding.elements, vec![id(3), id(1), id(2), id(4)]);
             assert!(
                 finding.basis.contains("contract 4.4"),
@@ -3417,6 +3427,337 @@ mod tests {
             assert_eq!(findings.len(), 1, "{findings:?}");
             assert_eq!(findings[0].finding.status, "unknown");
             assert_eq!(findings[0].finding.missing_inputs, vec!["indeterminate"]);
+        }
+    }
+
+    /// The adversarial geometry of contract section 7.1: bodies with holes,
+    /// plane cuts and cavities, through the model's own expressible forms —
+    /// an A04 through-hole polygon on a plate, an A03 plane-cut record, and a
+    /// hollow (RHS) section member. A red verdict here would be a finding,
+    /// not something to fix silently.
+    mod adversarial {
+        use super::*;
+        use crate::engine::member::{
+            AuthoredMember, MemberBody, ProfileInfo, evaluate_member, member_quantities,
+        };
+        use crate::model::command::{CutRecord, KeepSide};
+        use beamcraft_model::id::OpId;
+
+        /// A 1000x500x10 plate with a 100x100 square through-hole in its
+        /// centre (element-local x 450..550, y 200..300).
+        fn holed_plate_at(n: u8, x: f64, y: f64, z: f64) -> ElementBody {
+            plate_body(AuthoredPlate {
+                id: id(n),
+                name: format!("Holed plate {n}"),
+                class: 0,
+                contour_points_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [1000.0, 0.0, 0.0],
+                    [1000.0, 500.0, 0.0],
+                    [0.0, 500.0, 0.0],
+                ],
+                thickness_mm: 10.0,
+                thickness_side: None,
+                corners: Vec::new(),
+                placement: Placement {
+                    translation_mm: [x, y, z],
+                    ..Placement::IDENTITY
+                },
+                material: None,
+                holes_mm: vec![vec![
+                    [450.0, 200.0],
+                    [450.0, 300.0],
+                    [550.0, 300.0],
+                    [550.0, 200.0],
+                ]],
+                hole_records: Vec::new(),
+                cuts: Vec::new(),
+                bends: Vec::new(),
+            })
+            .unwrap()
+        }
+
+        /// A 90x90 tab standing upright (thickness 10 across world Y,
+        /// 90 mm across X and Z) through the holed plate's hole, with
+        /// `x` placing it inside the hole, at the hole wall, or on the rim.
+        fn tab_through_the_hole(x: f64) -> ElementBody {
+            plate_body(AuthoredPlate {
+                id: id(2),
+                name: "Tab".into(),
+                class: 0,
+                contour_points_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [90.0, 0.0, 0.0],
+                    [90.0, 90.0, 0.0],
+                    [0.0, 90.0, 0.0],
+                ],
+                thickness_mm: 10.0,
+                thickness_side: None,
+                corners: Vec::new(),
+                // A quarter turn about X maps local (x, y, z) to world
+                // (x, -z, y): local x spans world X, local y spans world Z
+                // (y + translation), and the thickness spans world Y below
+                // the translation.
+                placement: Placement {
+                    translation_mm: [x, 255.0, -45.0],
+                    orientation_xyzw: [
+                        std::f64::consts::FRAC_1_SQRT_2,
+                        0.0,
+                        0.0,
+                        std::f64::consts::FRAC_1_SQRT_2,
+                    ],
+                },
+                material: None,
+                holes_mm: Vec::new(),
+                hole_records: Vec::new(),
+                cuts: Vec::new(),
+                bends: Vec::new(),
+            })
+            .unwrap()
+        }
+
+        #[test]
+        fn a_tab_through_the_hole_is_clear_and_the_same_tab_on_the_rim_penetrates() {
+            let plate = holed_plate_at(1, 0.0, 0.0, 0.0);
+            // Through the hole itself: 5 mm of clearance to the hole walls —
+            // the hole is real missing material, not a hidden clash.
+            let tab = tab_through_the_hole(455.0);
+            let out = clash_verdict(&plate, &tab, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Clear);
+            assert_eq!(out.contact, "separated");
+            // The same tab with its face exactly on the hole wall (x = 450):
+            // the shipped verdict is indeterminate — a proven crossing whose
+            // overlap carries no depth sample, the known false-crossing-on-
+            // exact-face-contact finding of #721. The hole neither hides nor
+            // fakes the verdict: the pair is not silently clear or red.
+            let tab = tab_through_the_hole(450.0);
+            let out = clash_verdict(&plate, &tab, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Indeterminate);
+            assert_eq!(out.measured_mm, None);
+            // Shifted into the rim: 45 mm of overlap with the plate material
+            // beyond the hole edge x = 550 — a proven penetration.
+            let tab = tab_through_the_hole(505.0);
+            let out = clash_verdict(&plate, &tab, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Penetrated);
+            assert_eq!(out.contact, "penetrating");
+            assert!(out.measured_mm.is_some());
+        }
+
+        /// A plate with one A03 plane cut keeping x <= `keep_x` (the A' part
+        /// of a 1000 mm plate; the uncut plate spans x 0..1000).
+        fn cut_plate(keep_x: f64) -> ElementBody {
+            plate_body(AuthoredPlate {
+                id: id(1),
+                name: "Cut plate".into(),
+                class: 0,
+                contour_points_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [1000.0, 0.0, 0.0],
+                    [1000.0, 500.0, 0.0],
+                    [0.0, 500.0, 0.0],
+                ],
+                thickness_mm: 10.0,
+                thickness_side: None,
+                corners: Vec::new(),
+                placement: Placement::IDENTITY,
+                material: None,
+                holes_mm: Vec::new(),
+                hole_records: Vec::new(),
+                cuts: vec![CutRecord {
+                    operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+                    ordinal: 0,
+                    point_mm: [keep_x, 0.0, 0.0],
+                    normal: [1.0, 0.0, 0.0],
+                    keep: KeepSide::Negative,
+                }],
+                bends: Vec::new(),
+            })
+            .unwrap()
+        }
+
+        #[test]
+        fn a_cut_moves_a_pair_across_the_near_threshold_band() {
+            // A plate overlapping its neighbour by 5 mm is a proven
+            // penetration; the plane cut that takes the neighbour's slab back
+            // to the whole plate's exact top face turns the pair into an
+            // exact face contact — the cut, not a placement change, moved the
+            // pair across the near-threshold band (contract 7.1).
+            let whole = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+            let overlapping = plate_at(2, 0.0, 0.0, 5.0).unwrap();
+            let out = clash_verdict(&whole, &overlapping, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Penetrated);
+            assert_eq!(out.measured_mm, Some(5.0));
+            // The same neighbour slab (z 5..15) after a cut keeping z <= 10:
+            // its lower face lands exactly on the whole plate's upper face.
+            let cut_back = plate_body(AuthoredPlate {
+                id: id(2),
+                name: "Cut slab".into(),
+                class: 0,
+                contour_points_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [1000.0, 0.0, 0.0],
+                    [1000.0, 500.0, 0.0],
+                    [0.0, 500.0, 0.0],
+                ],
+                thickness_mm: 10.0,
+                thickness_side: None,
+                corners: Vec::new(),
+                placement: Placement {
+                    translation_mm: [0.0, 0.0, 5.0],
+                    ..Placement::IDENTITY
+                },
+                material: None,
+                holes_mm: Vec::new(),
+                hole_records: Vec::new(),
+                cuts: vec![CutRecord {
+                    operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c8").unwrap(),
+                    ordinal: 0,
+                    // Element-local: the slab spans local z 0..10 (the world
+                    // translation lifts it to z 5..15), so keeping local
+                    // z >= 5 leaves the world slab z 10..15, its lower face
+                    // exactly on the whole plate's upper face z = 10.
+                    point_mm: [0.0, 0.0, 5.0],
+                    normal: [0.0, 0.0, 1.0],
+                    keep: KeepSide::Positive,
+                }],
+                bends: Vec::new(),
+            })
+            .unwrap();
+            let out = clash_verdict(&whole, &cut_back, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Clear);
+            assert_eq!(out.contact, "face_contact");
+        }
+
+        #[test]
+        fn a_cut_creates_a_near_touching_neighbour() {
+            // A neighbour slab resting half inside the whole plate's height
+            // overlaps it — a proven clash. After the plate is cut back to
+            // x = 104 the same neighbour at x = 104.4 sits 0.4 mm from the
+            // new cut face: its uncertainty interval straddles the tolerance
+            // band edge, so the verdict becomes indeterminate instead of
+            // silently clear (contract 7.1). The neighbour stands at z = 5 so
+            // neither body's horizontal faces are coplanar with the other's.
+            let neighbour = plate_at(2, 104.4, 0.0, 5.0).unwrap();
+            let whole = plate_at(1, 0.0, 0.0, 0.0).unwrap();
+            // The uncut pair overlaps (the connectivity proximity reads an
+            // interpenetration as touching); the cut pair sits 0.4 mm from
+            // the new face, and the near-threshold rule refuses to call that
+            // clear or clashing.
+            let out = proximity_verdict(&whole, &neighbour, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out, Proximity::Touching);
+            let cut = cut_plate(104.0);
+            let out = proximity_verdict(&cut, &neighbour, CONTACT_TOLERANCE_MM).unwrap();
+            match out {
+                Proximity::Indeterminate { gap_mm } => {
+                    assert!((gap_mm - 0.4).abs() <= 1e-9, "{gap_mm}");
+                }
+                other => panic!("expected a near-touch, got {other:?}"),
+            }
+        }
+
+        /// A hollow (RHS 120x120x10, corner radius 12) beam member along
+        /// world X: the cavity is the model's own expressible form (the A07.1
+        /// parametric family extrudes the inner contour).
+        fn rhs_member(n: u8) -> ElementBody {
+            let shape = crate::model::section::SectionShape::Parametric(
+                crate::model::section::ParametricSection::new(
+                    crate::model::section::SectionFamily::Rhs,
+                    vec![120.0, 120.0, 10.0, 12.0],
+                )
+                .unwrap(),
+            );
+            let authored = AuthoredMember {
+                curved: false,
+                id: id(n),
+                kind: crate::model::command::MemberKind::Beam,
+                name: "RHS beam".into(),
+                class: 0,
+                axis_points_mm: vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]],
+                follow: None,
+                profile: beamcraft_model::digest::Sha256::digest(b"rhs-profile").unwrap(),
+                roll_rad: None,
+                section_placement: None,
+                placement: Placement::IDENTITY,
+                material: None,
+                cuts: Vec::new(),
+                hole_records: Vec::new(),
+            };
+            let body: MemberBody = evaluate_member(
+                &authored,
+                ProfileInfo::Section {
+                    shape,
+                    declared_area_mm2: None,
+                },
+            )
+            .unwrap();
+            let quantities = member_quantities(&body, None).unwrap();
+            let record = crate::engine::committed::MemberRecord {
+                authored,
+                body,
+                quantities,
+            };
+            ElementBody::of_member(&record).unwrap()
+        }
+
+        /// A flat 80x80x10 plate turned upright the same way as the tab: with
+        /// the quarter turn about X its 80 mm width spans world Z (z in
+        /// [z, z + 80]) and its thickness spans world Y below the translation
+        /// (y in [-5, 5]). `z` shifts it against the -z cavity wall.
+        fn insert_plate(z: f64) -> ElementBody {
+            plate_body(AuthoredPlate {
+                id: id(2),
+                name: "Insert".into(),
+                class: 0,
+                contour_points_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [80.0, 0.0, 0.0],
+                    [80.0, 80.0, 0.0],
+                    [0.0, 80.0, 0.0],
+                ],
+                thickness_mm: 10.0,
+                thickness_side: None,
+                corners: Vec::new(),
+                placement: Placement {
+                    translation_mm: [450.0, 5.0, z],
+                    orientation_xyzw: [
+                        std::f64::consts::FRAC_1_SQRT_2,
+                        0.0,
+                        0.0,
+                        std::f64::consts::FRAC_1_SQRT_2,
+                    ],
+                },
+                material: None,
+                holes_mm: Vec::new(),
+                hole_records: Vec::new(),
+                cuts: Vec::new(),
+                bends: Vec::new(),
+            })
+            .unwrap()
+        }
+
+        #[test]
+        fn an_insert_in_the_rhs_cavity_clears_penetrates_or_stays_unknown() {
+            // The cavity is real: the same insert floats determinately clear
+            // 10 mm from the inner cavity wall, penetrates the wall material
+            // by 5 mm with a measured depth, and — when pushed all the way
+            // through the wall so the crossing's overlap touches no mesh
+            // vertex of either body — stays honestly unknown instead of
+            // guessing (the documented vertex-sampling ceiling of contract
+            // 7.1, slice 2 validated note).
+            let beam = rhs_member(1);
+            let floating = insert_plate(-40.0);
+            let out = clash_verdict(&beam, &floating, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Clear);
+            assert_eq!(out.contact, "separated");
+            let crossing = insert_plate(-55.0);
+            let out = clash_verdict(&beam, &crossing, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Penetrated);
+            assert_eq!(out.contact, "penetrating");
+            assert!(out.measured_mm.is_some());
+            let pushed_through = insert_plate(-60.0);
+            let out = clash_verdict(&beam, &pushed_through, CONTACT_TOLERANCE_MM).unwrap();
+            assert_eq!(out.state, ClashState::Indeterminate);
+            assert_eq!(out.measured_mm, None);
         }
     }
 }
