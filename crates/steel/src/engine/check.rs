@@ -3526,14 +3526,13 @@ mod tests {
             assert_eq!(out.state, ClashState::Clear);
             assert_eq!(out.contact, "separated");
             // The same tab with its face exactly on the hole wall (x = 450):
-            // the shipped verdict is indeterminate — a proven crossing whose
-            // overlap carries no depth sample, the known false-crossing-on-
-            // exact-face-contact finding of #721. The hole neither hides nor
-            // fakes the verdict: the pair is not silently clear or red.
+            // exact face contact — the hole wall and the tab face are one
+            // plane with opposite normals, so the pair is clear face contact
+            // (#721: the cap-diagonal graze no longer reads as a crossing).
             let tab = tab_through_the_hole(450.0);
             let out = clash_verdict(&plate, &tab, CONTACT_TOLERANCE_MM).unwrap();
-            assert_eq!(out.state, ClashState::Indeterminate);
-            assert_eq!(out.measured_mm, None);
+            assert_eq!(out.state, ClashState::Clear);
+            assert_eq!(out.contact, "face_contact");
             // Shifted into the rim: 45 mm of overlap with the plate material
             // beyond the hole edge x = 550 — a proven penetration.
             let tab = tab_through_the_hole(505.0);
@@ -3736,14 +3735,15 @@ mod tests {
         }
 
         #[test]
-        fn an_insert_in_the_rhs_cavity_clears_penetrates_or_stays_unknown() {
+        fn an_insert_in_the_rhs_cavity_clears_and_penetrates_determinately() {
             // The cavity is real: the same insert floats determinately clear
-            // 10 mm from the inner cavity wall, penetrates the wall material
-            // by 5 mm with a measured depth, and — when pushed all the way
-            // through the wall so the crossing's overlap touches no mesh
-            // vertex of either body — stays honestly unknown instead of
-            // guessing (the documented vertex-sampling ceiling of contract
-            // 7.1, slice 2 validated note).
+            // 10 mm from the inner cavity wall and penetrates the wall
+            // material with a measured depth. Pushed all the way through the
+            // wall — its overlap carrying no mesh vertex or face probe of
+            // either body — the pair was indeterminate before #721; the edge
+            // traversal sample (the midpoint between the entry and exit
+            // pierce of the insert's own edge through the wall) measures the
+            // crossing's depth, so the real clash reports red.
             let beam = rhs_member(1);
             let floating = insert_plate(-40.0);
             let out = clash_verdict(&beam, &floating, CONTACT_TOLERANCE_MM).unwrap();
@@ -3756,8 +3756,9 @@ mod tests {
             assert!(out.measured_mm.is_some());
             let pushed_through = insert_plate(-60.0);
             let out = clash_verdict(&beam, &pushed_through, CONTACT_TOLERANCE_MM).unwrap();
-            assert_eq!(out.state, ClashState::Indeterminate);
-            assert_eq!(out.measured_mm, None);
+            assert_eq!(out.state, ClashState::Penetrated);
+            assert_eq!(out.contact, "penetrating");
+            assert!(out.measured_mm.is_some());
         }
     }
 }

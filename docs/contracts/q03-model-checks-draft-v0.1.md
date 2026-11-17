@@ -449,6 +449,24 @@ re-orientation and does not re-orient by the weld's recorded `side` (the sides a
 the corner's geometry, section 4.4), and the recorded A15 solid stays the weld's own placed
 body — anchored at its path start by the A15 frame rule — not the judging geometry.
 
+**Amended by #721 (2026-11-17).** The contact decision's boundary case is decided at the
+shell level: a segment that pierces the other shell's plane exactly on a triangle's edge or
+vertex proves a crossing only through the local surface around the point — the star of
+triangles sharing that edge, or all triangles at the shared vertex — each of whose planes the
+segment must pass through transversally at the point. A segment running along one of those
+face planes (a contact face's cap diagonal grazing a wall exactly at its bottom edge), or
+leaving the surface at a rim where the star has no continuation, touches the shell: exact
+face contact reports `Touching` with `face_contact` wherever the footprint lies, and the
+result is invariant under a different valid triangulation. The measured penetration depth
+samples, besides vertices and per-face probes, the midpoint between consecutive transversal
+pierce points of each edge through the other shell: the sample that measures the last-place
+dip of an evaluated quarter-turn placement into its host, whose sliver no vertex or face
+probe reaches (the sample's coordinate is a plain measurement; the strict containment
+classification filters it, and the value stays a deterministic lower bound). A flush pair
+whose surfaces meet while part of one body reads strictly inside and part outside is a
+proven interior overlap without a surface crossing; only under `Separated` do mixed
+containment answers stay the defensive error they were.
+
 ### 7.2 Two tolerance layers, kept separate
 
 - **Numerical robustness** is the kernel's own: exact predicates for orientation and
