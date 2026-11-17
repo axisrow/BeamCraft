@@ -1746,6 +1746,8 @@ pub fn corner_cut_findings(
                     required_mm: Some(weld.size_mm),
                     tolerance_mm: Some(tolerance_mm),
                     bounds: clearance_bounds(weld),
+                    mesh_bound_mm: Some(bound),
+                    delta_mm: Some(delta),
                     missing_inputs: missing,
                 },
                 corner_point_mm: Some(corner),
@@ -1769,6 +1771,8 @@ pub fn corner_cut_findings(
                     required_mm: None,
                     tolerance_mm: None,
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    delta_mm: None,
                     missing_inputs: vec!["attachment_unvalidated"],
                 },
                 corner_point_mm: Some(corner),
@@ -1791,6 +1795,8 @@ pub fn corner_cut_findings(
                     required_mm: None,
                     tolerance_mm: Some(tolerance_mm),
                     bounds: Vec::new(),
+                    mesh_bound_mm: Some(bound),
+                    delta_mm: Some(delta),
                     missing_inputs: vec!["indeterminate"],
                 },
                 corner_point_mm: Some(corner),
@@ -3265,6 +3271,10 @@ mod tests {
             assert!((admitted - 10.0).abs() <= 1e-6, "{admitted}");
             // The compared bound is the weld record's leg, named as such.
             assert_eq!(finding.required_mm, Some(14.0));
+            // The measurement carries its mesh bound and the effective
+            // comparison tolerance like every measurement-bearing family.
+            assert_eq!(finding.mesh_bound_mm, Some(0.0));
+            assert_eq!(finding.delta_mm, Some(0.25));
             assert_eq!(finding.elements, vec![id(3), id(1), id(2), id(4)]);
             assert!(
                 finding.basis.contains("contract 4.4"),
