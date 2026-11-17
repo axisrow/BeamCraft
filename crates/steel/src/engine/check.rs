@@ -1832,19 +1832,22 @@ pub fn clash_verdict(
             (ClashState::Clear, kind, None)
         }
         Relation::Overlapping { surface_crossing } => {
-            // The deepest contained point of either side: the vertex and face
-            // probes measure both the containment case and the aligned-prism
-            // case whose vertices all lie on shared walls. A crossing whose
-            // overlap touches no sample stays unmeasured, never guessed.
-            let measured = penetration_depth(&a.mesh, &b.mesh)?
-                .into_iter()
-                .chain(penetration_depth(&b.mesh, &a.mesh)?)
-                .fold(None, |best: Option<f64>, depth| {
-                    Some(match best {
-                        Some(x) if x >= depth => x,
-                        _ => depth,
-                    })
-                });
+            // A surface crossing reads the intersection itself first (#722):
+            // the largest inside run of a strictly crossing surface edge,
+            // which never depends on where vertices or probes happen to lie
+            // and survives a different valid triangulation. The vertex and
+            // face probes stay as the fallback when the run cannot be
+            // decided (flush walls, grazing), and as the only measure of a
+            // full containment, which has no crossing edge at all. A
+            // crossing neither measure reads stays unmeasured, never guessed.
+            let measured = if surface_crossing {
+                match contact::crossing_depth(&a.mesh, &b.mesh, CONTACT_LIMITS)? {
+                    Some(depth) => Some(depth),
+                    None => penetration_depth_pair(&a.mesh, &b.mesh)?,
+                }
+            } else {
+                penetration_depth_pair(&a.mesh, &b.mesh)?
+            };
             let kind = if surface_crossing {
                 "penetrating"
             } else {
@@ -1869,8 +1872,19 @@ pub fn clash_verdict(
     })
 }
 
-fn penetration_depth(inside: &TriMesh, shell: &TriMesh) -> Result<Option<f64>, ContactError> {
-    contact::penetration_depth(inside, shell, CONTACT_LIMITS)
+/// The sampled fallback depth: the deepest contained point of either side,
+/// measured as its distance to the other shell's surface by the vertex and
+/// face probes.
+fn penetration_depth_pair(a: &TriMesh, b: &TriMesh) -> Result<Option<f64>, ContactError> {
+    Ok(contact::penetration_depth(a, b, CONTACT_LIMITS)?
+        .into_iter()
+        .chain(contact::penetration_depth(b, a, CONTACT_LIMITS)?)
+        .fold(None, |best: Option<f64>, depth| {
+            Some(match best {
+                Some(x) if x >= depth => x,
+                _ => depth,
+            })
+        }))
 }
 
 #[cfg(test)]
@@ -3736,14 +3750,14 @@ mod tests {
         }
 
         #[test]
-        fn an_insert_in_the_rhs_cavity_clears_penetrates_or_stays_unknown() {
+        fn an_insert_in_the_rhs_cavity_clears_penetrates_and_measures_a_through_run() {
             // The cavity is real: the same insert floats determinately clear
-            // 10 mm from the inner cavity wall, penetrates the wall material
-            // by 5 mm with a measured depth, and — when pushed all the way
-            // through the wall so the crossing's overlap touches no mesh
-            // vertex of either body — stays honestly unknown instead of
-            // guessing (the documented vertex-sampling ceiling of contract
-            // 7.1, slice 2 validated note).
+            // 10 mm from the inner cavity wall and penetrates the wall
+            // material by 5 mm with a measured depth. Pushed all the way
+            // through the wall, the crossing's overlap touches no mesh
+            // vertex of either body and the crossing run reads the wall's
+            // thickness from the intersection itself (#722) — the sampled
+            // ceiling of contract 7.1 no longer applies to this case.
             let beam = rhs_member(1);
             let floating = insert_plate(-40.0);
             let out = clash_verdict(&beam, &floating, CONTACT_TOLERANCE_MM).unwrap();
@@ -3756,8 +3770,141 @@ mod tests {
             assert!(out.measured_mm.is_some());
             let pushed_through = insert_plate(-60.0);
             let out = clash_verdict(&beam, &pushed_through, CONTACT_TOLERANCE_MM).unwrap();
-            assert_eq!(out.state, ClashState::Indeterminate);
-            assert_eq!(out.measured_mm, None);
+            // Pushed all the way through the wall, the crossing's overlap
+            // touches no mesh vertex of either body — the sampled measure
+            // stays empty. The crossing run reads the intersection itself
+            // and reports the wall's thickness (#722), so the pair is red.
+            assert_eq!(out.state, ClashState::Penetrated);
+            let measured = out.measured_mm.unwrap_or_default();
+            assert!((measured - 10.0).abs() <= 1e-6, "{measured}");
+        }
+
+        /// A 1000x500x20 base plate at z 0..20: the shared plate of #722's
+        /// placement matrix.
+        fn base_plate(n: u8) -> ElementBody {
+            plate_body(AuthoredPlate {
+                id: id(n),
+                name: "Base plate".into(),
+                class: 0,
+                contour_points_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [1000.0, 0.0, 0.0],
+                    [1000.0, 500.0, 0.0],
+                    [0.0, 500.0, 0.0],
+                ],
+                thickness_mm: 20.0,
+                thickness_side: None,
+                corners: Vec::new(),
+                placement: Placement::IDENTITY,
+                material: None,
+                holes_mm: Vec::new(),
+                hole_records: Vec::new(),
+                cuts: Vec::new(),
+                bends: Vec::new(),
+            })
+            .unwrap()
+        }
+
+        /// A column member standing on a vertical axis at (`x`, `y`) from
+        /// `z0` to `z1`, with the given first-scope or A07.1 profile.
+        fn column_body(n: u8, info: ProfileInfo, x: f64, y: f64, z0: f64, z1: f64) -> ElementBody {
+            let authored = AuthoredMember {
+                curved: false,
+                id: id(n),
+                kind: crate::model::command::MemberKind::Column,
+                name: format!("Column {n}"),
+                class: 0,
+                axis_points_mm: vec![[x, y, z0], [x, y, z1]],
+                follow: None,
+                profile: beamcraft_model::digest::Sha256::digest(b"column-profile").unwrap(),
+                roll_rad: None,
+                section_placement: None,
+                placement: Placement::IDENTITY,
+                material: None,
+                cuts: Vec::new(),
+                hole_records: Vec::new(),
+            };
+            let body: MemberBody = evaluate_member(&authored, info).unwrap();
+            let quantities = member_quantities(&body, None).unwrap();
+            let record = MemberRecord {
+                authored,
+                body,
+                quantities,
+            };
+            ElementBody::of_member(&record).unwrap()
+        }
+
+        /// The first-scope centred rectangle the CLI defines with
+        /// `--width`/`--height`.
+        fn rectangle_info(w: f64, h: f64) -> ProfileInfo {
+            ProfileInfo::Rectangle {
+                width_mm: w,
+                height_mm: h,
+                declared_area_mm2: None,
+            }
+        }
+
+        /// The A07.1 doubly symmetric I section with sharp roots.
+        fn i_shape_info(h: f64, b: f64, tw: f64, tf: f64) -> ProfileInfo {
+            ProfileInfo::Section {
+                shape: crate::model::section::SectionShape::Parametric(
+                    crate::model::section::ParametricSection::new(
+                        crate::model::section::SectionFamily::IShape,
+                        vec![h, b, tw, tf, 0.0],
+                    )
+                    .unwrap(),
+                ),
+                declared_area_mm2: None,
+            }
+        }
+
+        #[test]
+        fn a_column_through_its_base_plate_is_red_with_the_crossing_run() {
+            // #722's placement matrix: a column straight through its base
+            // plate proves a surface crossing, but no vertex of either body
+            // lies inside the other and no face probe lands in the overlap,
+            // so the sampled depth stays empty and every placement but one
+            // reported `unknown` with exit 0 (the exception read 37 mm of
+            // probe luck). The crossing run — the plate thickness — is the
+            // deterministic depth now: red for the whole matrix, centred or
+            // off centre, below the plate or flush with its bottom face.
+            let plate = base_plate(1);
+            for (x, y, w, h, z0) in [
+                (500.0, 250.0, 200.0, 200.0, -50.0),
+                (200.0, 400.0, 100.0, 100.0, -50.0),
+                (700.0, 300.0, 100.0, 100.0, -50.0),
+                (300.0, 300.0, 60.0, 60.0, -50.0),
+                (437.0, 181.0, 200.0, 200.0, -50.0),
+                (500.0, 250.0, 200.0, 200.0, 0.0),
+            ] {
+                let column = column_body(2, rectangle_info(w, h), x, y, z0, 1000.0);
+                let out = clash_verdict(&plate, &column, CONTACT_TOLERANCE_MM).unwrap();
+                assert_eq!(out.state, ClashState::Penetrated, "{x} {y} {z0}");
+                assert_eq!(out.contact, "penetrating");
+                let measured = out.measured_mm.unwrap_or_default();
+                assert!((measured - 20.0).abs() <= 1e-6, "{x} {y} {z0}: {measured}");
+            }
+        }
+
+        #[test]
+        fn an_i_shape_through_the_plate_measures_the_same_run() {
+            // The I profile's flange and web edges cross the plate caps the
+            // same way: the depth is the plate thickness, wherever the
+            // column stands and wherever a probe would land.
+            let plate = base_plate(1);
+            for (x, y, z0) in [
+                (500.0, 250.0, -50.0),
+                (437.0, 181.0, -50.0),
+                (500.0, 250.0, 0.0),
+            ] {
+                let column =
+                    column_body(2, i_shape_info(200.0, 200.0, 9.0, 15.0), x, y, z0, 1000.0);
+                let out = clash_verdict(&plate, &column, CONTACT_TOLERANCE_MM).unwrap();
+                assert_eq!(out.state, ClashState::Penetrated, "{x} {y} {z0}");
+                assert_eq!(out.contact, "penetrating");
+                let measured = out.measured_mm.unwrap_or_default();
+                assert!((measured - 20.0).abs() <= 1e-6, "{x} {y} {z0}: {measured}");
+            }
         }
     }
 }

@@ -348,16 +348,28 @@ below stays what any implementation must satisfy, not the algorithm:
 closed meshes** directly (`kernel::contact`): the surface facts — strict crossing, coplanar
 face contact, edge/point touch, separation, full containment — are decided by the kernel's
 exact predicates and are properties of the surfaces, so they cannot depend on a triangulation
-or on an artificial decomposition; there are no internal faces to offset. The measured
-penetration depth samples the two meshes' vertices and per-face interior probes (exact
-midpoint chains), is a deterministic lower bound of the true depth, and is invariant under
-re-triangulations that keep the vertex set; a proven crossing whose overlap touches no sample
-reports `unknown` (`indeterminate`), never a guess. The adversarial cases of #634 are
-exercised in `kernel::contact::tests` and `steel::engine::check::tests`: face contact,
+or on an artificial decomposition; there are no internal faces to offset. A proven surface
+crossing reads the intersection itself (#722, 2026-11-17): the depth is the largest inside
+run of a strictly crossing surface edge — an edge whose adjacent triangles are not coplanar,
+so the edge set is a property of the surface — with the intervals between that edge's
+consecutive strict crossings of the other shell decided by exact midpoint classifications.
+The value is a deterministic lower bound taken from the intersection, never depends on where
+vertices or probes happen to lie, and does not change under a different valid triangulation.
+A run that cannot be decided (a flush wall or a graze puts an interval midpoint on a
+surface, or a pierce parameter is not representable) falls back to the sampled measure: the
+two meshes' vertices and per-face interior probes (exact midpoint chains), a deterministic
+lower bound invariant under re-triangulations that keep the vertex set — the only measure
+of a full containment, which has no crossing edge. A proven crossing that neither measure
+can read reports `unknown` (`indeterminate`), never a guess. The adversarial cases of #634
+are exercised in `kernel::contact::tests` and `steel::engine::check::tests`: face contact,
 edge/point contact, separation, containment without a surface meeting, corner overlap,
-rotated placements, and diagonal-flip re-triangulations. Remaining ceilings, recorded here:
-depth sampling is vertex-based (a vertex-independent depth needs the intersection region),
-and a point classification whose six axis rays all graze edges/vertices reports unresolved.
+rotated placements, diagonal-flip re-triangulations, and the through-penetration with no
+vertex of either body inside the other. Remaining ceilings, recorded here: the sampled
+fallback is vertex-based; the crossing run bounds each edge's intervals by that edge's
+strict crossings, so a graze that hides a strict event — a segment passing exactly through
+a shared vertex of the other mesh between crossings — can over-read that one edge's run,
+while a flush run along a face refuses to the sampled fallback; and a point classification
+whose six axis rays all graze edges/vertices reports unresolved.
 
 The requirements any implementation must satisfy:
 
