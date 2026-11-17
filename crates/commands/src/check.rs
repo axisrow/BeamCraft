@@ -700,7 +700,10 @@ fn material_of(inspection: &Inspection, id: &ElementId) -> bool {
 /// reconstruction or a decision the harness does not make: no fix.
 fn corner_fix(corner: &check::CornerCutFinding, inspection: &Inspection) -> Option<FixHint> {
     let finding = &corner.finding;
-    if finding.rule != "CORNER_NOT_CUT" || finding.status != "fail" {
+    // The dependent weld-clearance finding (contract 4.4) never carries a fix: a
+    // larger cut and a smaller weld both repair it, and the chamfer of the weld leg
+    // can overcut the recorded requirement (#723).
+    if corner.clearance || finding.rule != "CORNER_NOT_CUT" || finding.status != "fail" {
         return None;
     }
     let rib = finding.elements.first()?;

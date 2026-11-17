@@ -1087,6 +1087,130 @@ fn a_weld_path_away_from_the_joint_stays_unknown_attachment_unvalidated() {
 }
 
 #[test]
+fn weld_paths_on_one_part_away_from_the_joint_stay_unvalidated() {
+    // #724: a rib standing on the base plate (a tight T-joint). A path point
+    // lying on the plate's own surface spans no opening, so a path far away
+    // on the plate, on its bottom face, or with one point at the joint and
+    // one far away is not locally attached: its gap stays unjudged instead
+    // of reading the distance to the rib as a "local gap".
+    for path in [
+        "600,400,10;700,400,10",
+        "155,205,0;225,205,0",
+        "155,205,10;700,400,10",
+    ] {
+        let f = Fixture::new();
+        let steel = f.material();
+        let base = f.plate(&steel, "10", "0,0,0");
+        let rib = f.standing(&steel, "80", "100", "10", "150,210,10", &[]);
+        f.intent(&[&base, &rib], &[&format!("{base}:weld:{rib}")]);
+        f.path_weld(&base, &rib, path);
+        f.gap(&base, &rib, "0", "2", "0.3");
+        let (code, reply) = f.check(&[]);
+        assert_eq!(code, 0, "{path}: {reply:?}");
+        assert_eq!(text(&reply, "status"), "unknown", "{path}");
+        assert_eq!(
+            reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+            "attachment_unvalidated",
+            "{path}"
+        );
+    }
+    // The path along the rib's bottom edge is the joint itself: green.
+    let f = Fixture::new();
+    let steel = f.material();
+    let base = f.plate(&steel, "10", "0,0,0");
+    let rib = f.standing(&steel, "80", "100", "10", "150,210,10", &[]);
+    f.intent(&[&base, &rib], &[&format!("{base}:weld:{rib}")]);
+    f.path_weld(&base, &rib, "155,205,10;225,205,10");
+    f.gap(&base, &rib, "0", "2", "0.3");
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "status"), "green");
+}
+
+#[test]
+fn an_exact_tight_fit_passes_contact_required_and_fails_a_required_opening() {
+    // #724: plates meeting exactly along the weld path have an opening of
+    // exactly 0, decided by the exact predicates: "contact required"
+    // ([0, 0], no tolerance) and [0, 0.2] with 0.05 pass; a recorded minimum
+    // opening of 1 mm fails with the measured 0.
+    for (min, max, tolerance, green) in [
+        ("0", "0", "0", true),
+        ("0", "0.2", "0.05", true),
+        ("1", "2", "0", false),
+    ] {
+        let f = Fixture::new();
+        let steel = f.material();
+        let base = f.plate(&steel, "10", "0,0,0");
+        let top = f.plate(&steel, "10", "0,0,10");
+        f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
+        f.path_weld(&base, &top, "100,100,10;300,100,10");
+        f.gap(&base, &top, min, max, tolerance);
+        let (code, reply) = f.check(&[]);
+        if green {
+            assert_eq!(code, 0, "[{min}, {max}] ± {tolerance}: {reply:?}");
+            assert_eq!(text(&reply, "status"), "green");
+        } else {
+            assert_eq!(code, 2, "[{min}, {max}] ± {tolerance}: {reply:?}");
+            let finding = finding_of(&reply, "WELD_WITHOUT_CONTACT");
+            assert_eq!(text(finding, "status"), "fail");
+            let measured = at(finding, &["measured_mm"]).float().unwrap();
+            assert!(measured.abs() <= 1e-12, "{measured}");
+        }
+    }
+}
+
+#[test]
+fn a_duplicate_part_and_a_sub_tolerance_copy_are_red() {
+    // #741: a duplicate shares every face with the other part; a copy 0.2 mm
+    // off reads only 0.2 mm slivers by sampling. Both are PART_CLASH fail
+    // with the overlap measured from the shared faces, exit 2.
+    for translation in ["0,0,0", "0.2,0,0"] {
+        let f = Fixture::new();
+        let steel = f.material();
+        f.plate(&steel, "20", "0,0,0");
+        f.plate(&steel, "20", translation);
+        let (code, reply) = f.check(&[]);
+        assert_eq!(code, 2, "{translation}: {reply:?}");
+        assert_eq!(text(&reply, "status"), "red");
+        assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
+        let measured = at(finding_of(&reply, "PART_CLASH"), &["measured_mm"])
+            .float()
+            .unwrap();
+        assert!((measured - 10.0).abs() <= 1e-9, "{measured}");
+    }
+    // A duplicate column, created twice on the same axis.
+    let f = Fixture::new();
+    let steel = f.material();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "200"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    for _ in 0..2 {
+        f.ok(
+            "create-member",
+            &[
+                "--profile-digest",
+                &profile,
+                "--start",
+                "500,250,20",
+                "--end",
+                "500,250,1000",
+                "--kind",
+                "column",
+                "--material-digest",
+                &steel,
+            ],
+        );
+    }
+    let (code, reply) = f.check(&[]);
+    assert_eq!(code, 2, "{reply:?}");
+    assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
+}
+
+#[test]
 fn contact_without_connection_is_red_where_a_weld_is_declared() {
     // The contact-without-connection variant: the parts touch and a weld is
     // declared, but none exists. Contact alone never proves a weld; the
@@ -1514,7 +1638,7 @@ fn a_weld_leg_within_the_cut_is_green_and_past_it_turns_the_clearance_red() {
     let steel = f.material();
     let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
     f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "6", "150,5,10;150,50,10");
+    f.sized_path_weld(&base, &column, "6", "150,5,10;150,40,10");
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 0, "{reply:?}");
     assert_eq!(text(&reply, "status"), "green");
@@ -1524,12 +1648,18 @@ fn a_weld_leg_within_the_cut_is_green_and_past_it_turns_the_clearance_red() {
     let steel = f.material();
     let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
     f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "14", "150,5,10;150,50,10");
+    let weld = f.sized_path_weld(&base, &column, "14", "150,5,10;150,40,10");
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 2, "{reply:?}");
     assert_eq!(text(&reply, "status"), "red");
     let finding = finding_of(&reply, "CORNER_NOT_CUT");
     assert_eq!(text(finding, "status"), "fail");
+    // #723: no fix (a larger cut and a smaller weld both repair it, and the
+    // 14 mm chamfer would overcut the 10 mm requirement), the weld named in
+    // the basis, and the conflict with the requirement band stated.
+    assert!(matches!(finding.get("fix"), Ok(Json::Null)), "{finding:?}");
+    assert!(text(finding, "basis").contains(&weld), "{finding:?}");
+    assert!(text(finding, "message").contains("conflict"), "{finding:?}");
     assert!(
         text(finding, "basis").contains("contract 4.4"),
         "{:?}",
@@ -1561,7 +1691,7 @@ fn a_weld_elsewhere_between_the_neighbours_leaves_the_clearance_quiet() {
     let steel = f.material();
     let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
     f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "14", "160,20,10;200,20,10");
+    f.sized_path_weld(&base, &column, "14", "150,20,10;150,40,10");
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 0, "{reply:?}");
     assert_eq!(text(&reply, "status"), "green");
@@ -1602,7 +1732,7 @@ fn a_weld_leg_at_the_band_edge_is_unknown_indeterminate() {
     let steel = f.material();
     let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
     f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "10.5", "150,5,10;150,50,10");
+    f.sized_path_weld(&base, &column, "10.5", "150,5,10;150,40,10");
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 0, "{reply:?}");
     assert_eq!(text(&reply, "status"), "unknown");
@@ -1625,7 +1755,7 @@ fn a_rounding_and_a_chamfer_with_equal_setbacks_differ_in_the_clearance() {
     let steel = f.material();
     let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
     f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "8", "150,5,10;150,50,10");
+    f.sized_path_weld(&base, &column, "8", "150,5,10;150,40,10");
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 0, "{reply:?}");
     assert_eq!(text(&reply, "status"), "green");
@@ -1634,7 +1764,7 @@ fn a_rounding_and_a_chamfer_with_equal_setbacks_differ_in_the_clearance() {
     let steel = f.material();
     let (base, column, rib) = f.joint(&steel, &["0=round:10"]);
     f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "8", "150,5,10;150,50,10");
+    f.sized_path_weld(&base, &column, "8", "150,5,10;150,40,10");
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 2, "{reply:?}");
     assert_eq!(text(&reply, "status"), "red");
@@ -1692,12 +1822,8 @@ fn contour_authored_cuts_are_judged_like_parameterized_ones() {
     let f = Fixture::new();
     let steel = f.material();
     let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.standing(&steel, "100", "200", "40", "50,40,10.000000001", &[]);
-    let rib = f.standing_contour(
-        &steel,
-        "10,0,0;80,0,0;80,100,0;0,100,0;0,10,0",
-        "150.000000001,10,10.000000001",
-    );
+    let column = f.standing(&steel, "100", "200", "40", "50,40,10", &[]);
+    let rib = f.standing_contour(&steel, "10,0,0;80,0,0;80,100,0;0,100,0;0,10,0", "150,10,10");
     f.corner(&rib, &base, &column, &[]);
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 0, "{reply:?}");
@@ -1706,12 +1832,8 @@ fn contour_authored_cuts_are_judged_like_parameterized_ones() {
     let f = Fixture::new();
     let steel = f.material();
     let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.standing(&steel, "100", "200", "40", "50,40,10.000000001", &[]);
-    let rib = f.standing_contour(
-        &steel,
-        "20,0,0;80,0,0;80,100,0;0,100,0;0,20,0",
-        "150.000000001,10,10.000000001",
-    );
+    let column = f.standing(&steel, "100", "200", "40", "50,40,10", &[]);
+    let rib = f.standing_contour(&steel, "20,0,0;80,0,0;80,100,0;0,100,0;0,20,0", "150,10,10");
     f.corner(&rib, &base, &column, &[]);
     let (code, reply) = f.check(&[]);
     assert_eq!(code, 2, "{reply:?}");
@@ -1720,6 +1842,9 @@ fn contour_authored_cuts_are_judged_like_parameterized_ones() {
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
     assert!(matches!(finding.get("fix"), Ok(Json::Null)));
+    // At exact coordinates the flush rib, column and plate only touch.
+    assert_eq!(fail_count(&reply, "PART_CLASH"), 0);
+    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
 }
 
 #[test]
@@ -1811,9 +1936,9 @@ fn joint_with_cut(f: &Fixture, size: &str, authoring: &str) -> (String, String, 
         }
         "contour points" => {
             let base = f.plate(&steel, "10", "0,0,0");
-            let column = f.standing(&steel, "100", "200", "40", "50,40,10.000000001", &[]);
+            let column = f.standing(&steel, "100", "200", "40", "50,40,10", &[]);
             let contour = format!("{size},0,0;80,0,0;80,100,0;0,100,0;0,{size},0");
-            let rib = f.standing_contour(&steel, &contour, "150.000000001,10,10.000000001");
+            let rib = f.standing_contour(&steel, &contour, "150,10,10");
             (base, column, rib)
         }
         _ => {

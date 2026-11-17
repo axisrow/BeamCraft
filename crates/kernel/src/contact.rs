@@ -20,7 +20,10 @@
 //!   re-triangulations that keep the vertex set;
 //! - [`crossing_depth`] reads the intersection itself for the case no sample
 //!   reaches: the largest inside run of a strictly crossing surface edge,
-//!   decided exactly and invariant under a different valid triangulation.
+//!   decided exactly and invariant under a different valid triangulation;
+//! - [`coincident_depth`] reads a coincident face (#741) — a duplicate part,
+//!   whose every sample lies on the other surface — from points proven
+//!   strictly inside both shells next to the shared face.
 
 use std::collections::BTreeMap;
 
@@ -72,11 +75,12 @@ pub enum Relation {
     /// The closed surfaces meet, but no strict surface crossing and no
     /// interior overlap was proven: face contact, or an edge or vertex touch.
     Touching,
-    /// The interiors overlap: a strict surface crossing, or full containment
-    /// with disjoint surfaces.
+    /// The interiors overlap: a strict surface crossing, a full containment
+    /// with disjoint surfaces, a flush burial, or a coincident face.
     Overlapping {
-        /// True when a strict surface crossing was proven; false for a
-        /// containment without any surface meeting.
+        /// True when a strict surface crossing was proven; false for an
+        /// overlap proven without one (containment, flush burial, or a
+        /// coincident face, see [`PairReport::coincident`]).
         surface_crossing: bool,
     },
 }
@@ -90,12 +94,19 @@ pub struct PairReport {
     /// of one plane with opposite outward orientation. Face contact is a fact
     /// about the surfaces; how much area it covers is not decided here.
     pub face_contact: bool,
+    /// True when a coincident face was seen: meeting triangles of one plane
+    /// that overlap in area with the same outward orientation. Both closed
+    /// shells keep their material on the inward side of that shared area, so
+    /// the interiors overlap there — a duplicate or a flush part placed on
+    /// top of another (#741). [`coincident_depth`] measures it.
+    pub coincident: bool,
 }
 
 fn separated() -> PairReport {
     PairReport {
         relation: Relation::Separated,
         face_contact: false,
+        coincident: false,
     }
 }
 
@@ -258,6 +269,15 @@ pub fn contact(a: &TriMesh, b: &TriMesh, limits: Limits) -> Result<PairReport, C
             }
         }
     }
+    if report.coincident && report.relation == Relation::Touching {
+        // A coincident face keeps both bodies' material on the same side of
+        // the shared area: the interiors overlap without a strict surface
+        // crossing (#741). No sample scan is needed to prove it.
+        report.relation = Relation::Overlapping {
+            surface_crossing: false,
+        };
+        return Ok(report);
+    }
     if matches!(report.relation, Relation::Separated | Relation::Touching) {
         // A strict interior point decides what the surface meeting pattern
         // cannot: a flush-buried part meets the host only along coplanar
@@ -324,8 +344,13 @@ fn pair_facts(
     }
     if triangles_meet(preds, ta, tb)? {
         report.relation = Relation::Touching;
-        if coplanar_opposite(preds, ta, tb)? {
-            report.face_contact = true;
+        match coplanar_orientation(preds, ta, tb)? {
+            Coplanar::Opposite => report.face_contact = true,
+            // A coincident face proves an interior overlap, but the scan
+            // goes on: a strict crossing found by a later pair still decides
+            // the relation as a surface crossing (#741).
+            Coplanar::Same => report.coincident = true,
+            Coplanar::No => {}
         }
     }
     Ok(false)
@@ -439,25 +464,47 @@ fn orient3d_value(a: [f64; 3], b: [f64; 3], c: [f64; 3], p: [f64; 3]) -> f64 {
     n[0] * ap[0] + n[1] * ap[1] + n[2] * ap[2]
 }
 
-/// True when the two triangles lie in one exact plane, overlap in area, and
-/// face opposite ways.
-fn coplanar_opposite(preds: &mut Predicates, ta: &Tri, tb: &Tri) -> Result<bool, ContactError> {
+/// How two meeting triangles share a plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Coplanar {
+    /// Not one exact plane, or no overlap in area.
+    No,
+    /// One plane, overlapping in area, facing opposite ways: face contact.
+    Opposite,
+    /// One plane, overlapping in area, facing the same way: a coincident face.
+    Same,
+}
+
+/// Whether the two triangles lie in one exact plane and overlap in area, and
+/// if so whether their outward normals face opposite ways (face contact) or
+/// the same way (a coincident face).
+fn coplanar_orientation(
+    preds: &mut Predicates,
+    ta: &Tri,
+    tb: &Tri,
+) -> Result<Coplanar, ContactError> {
     let [a0, a1, a2] = *ta;
     for point in tb {
         if preds.orient3d(a0, a1, a2, *point)? != 0 {
-            return Ok(false);
+            return Ok(Coplanar::No);
         }
     }
     if !coplanar_area_overlap(preds, ta, tb)? {
-        return Ok(false);
+        return Ok(Coplanar::No);
     }
-    normals_opposite(ta, tb).map_err(ContactError::from)
+    Ok(match normals_dot_sign(ta, tb)? {
+        s if s < 0 => Coplanar::Opposite,
+        s if s > 0 => Coplanar::Same,
+        // Both triangles are non-degenerate and coplanar, so their normals
+        // are parallel and the dot is never zero; stay conservative anyway.
+        _ => Coplanar::No,
+    })
 }
 
 /// The exact sign of `(b - a) x (c - a) . (e - d) x (f - d)`, the dot of the
 /// two triangle normals, computed over the scaled binary64 inputs. Only the
 /// sign is decided, so the common scale factor drops out.
-fn normals_opposite(ta: &Tri, tb: &Tri) -> Result<bool, PredError> {
+fn normals_dot_sign(ta: &Tri, tb: &Tri) -> Result<i8, PredError> {
     let points = ta.iter().chain(tb.iter()).copied();
     let e = min_exponent(points.flatten());
     let big3 = |p: [f64; 3]| -> Result<[Big; 3], PredError> {
@@ -482,7 +529,7 @@ fn normals_opposite(ta: &Tri, tb: &Tri) -> Result<bool, PredError> {
         .mul(&nb[0])?
         .add(&na[1].mul(&nb[1])?)?
         .add(&na[2].mul(&nb[2])?)?;
-    Ok(dot.sign() < 0)
+    Ok(dot.sign())
 }
 
 /// Position of one point against one mesh: `Some(true)` strictly inside,
@@ -495,6 +542,25 @@ pub fn contains(
     let shell = Shell::of(mesh)?;
     let mut preds = Predicates::new(limits.max_exact_predicates);
     shell_contains(&mut preds, &shell, point)
+}
+
+/// Position of one point against one mesh, closed: `Some(true)` strictly
+/// inside or exactly on the surface, `Some(false)` strictly outside, `None`
+/// unresolved. Surface membership is decided by the exact predicates, so a
+/// point on a face counts as on the material — what a weld path lying exactly
+/// on both parts of a tight joint needs (#724).
+pub fn on_or_inside(
+    mesh: &TriMesh,
+    point: [f64; 3],
+    limits: Limits,
+) -> Result<Option<bool>, ContactError> {
+    let shell = Shell::of(mesh)?;
+    let mut preds = Predicates::new(limits.max_exact_predicates);
+    match classify_point(&mut preds, &shell.tris, point)? {
+        Side::Inside | Side::OnSurface => Ok(Some(true)),
+        Side::Outside => Ok(Some(false)),
+        Side::Unresolved => Ok(None),
+    }
 }
 
 fn shell_contains(
@@ -613,6 +679,194 @@ pub fn crossing_depth(
         }
     }
     Ok(best)
+}
+
+/// The penetration depth of a coincident face (#741), in the meshes'
+/// coordinate units (millimetres in the product), or `None` when no shared
+/// face exists or no sample can be proven inside both shells.
+///
+/// A coincident face is a pair of meeting triangles, one of each shell, that
+/// lie in one exact plane, overlap in area and face the same way: both
+/// shells keep their material on the inward side of the shared area. Its
+/// vertices and face probes all sit on the other surface, so the containment
+/// samples of [`penetration_depth`] read nothing there — a duplicate part, or
+/// a copy shifted by less than the contact tolerance, would measure only the
+/// slivers. The samples here start on the shared face instead: from each face
+/// probe of a triangle with a coincident partner, the segment along the
+/// inward normal runs inside both shells until it first pierces either
+/// surface; the midpoint of that first interval is a candidate, kept only
+/// when the exact containment classification places it strictly inside
+/// both shells. The value is the deepest kept candidate's distance to the
+/// other shell's surface — the same reading as [`penetration_depth`], a
+/// deterministic lower bound, never the length of the ray. At most
+/// [`Limits::max_candidate_pairs`] partner tests and candidates are spent,
+/// so a large shell keeps the work bounded; a probe whose pierce parameter
+/// is not representable is skipped.
+pub fn coincident_depth(
+    a: &TriMesh,
+    b: &TriMesh,
+    limits: Limits,
+) -> Result<Option<f64>, ContactError> {
+    let shell_a = Shell::of(a)?;
+    let shell_b = Shell::of(b)?;
+    if !shell_a.bounds.overlaps(&shell_b.bounds) {
+        return Ok(None);
+    }
+    let union = shell_a.bounds.union(&shell_b.bounds);
+    let span = [
+        union.max[0] - union.min[0],
+        union.max[1] - union.min[1],
+        union.max[2] - union.min[2],
+    ];
+    // Beyond the union box from any point inside it: the ray's far end lies
+    // outside both shells.
+    let reach = (span[0] * span[0] + span[1] * span[1] + span[2] * span[2]).sqrt() + 1.0;
+    if !reach.is_finite() {
+        return Err(ContactError::Range);
+    }
+    let index_a = BoxIndex::build(&shell_a.boxes, limits.max_index_nodes, || false)
+        .map_err(ContactError::Index)?;
+    let index_b = BoxIndex::build(&shell_b.boxes, limits.max_index_nodes, || false)
+        .map_err(ContactError::Index)?;
+    let cap = usize::try_from(limits.max_candidate_pairs).unwrap_or(0);
+    let mut preds = Predicates::new(limits.max_exact_predicates);
+    let mut deepest: Option<f64> = None;
+    let mut spent = 0u64;
+    let sides = [
+        (&shell_a, &index_a, &shell_b, &index_b),
+        (&shell_b, &index_b, &shell_a, &index_a),
+    ];
+    for (own, own_index, other, other_index) in sides {
+        for (ti, tri) in own.tris.iter().enumerate() {
+            let Some(tri_box) = own.boxes.get(ti) else {
+                return Err(ContactError::Range);
+            };
+            let mut partnered = false;
+            for oi in other_index
+                .overlapping(tri_box, cap)
+                .map_err(ContactError::Index)?
+            {
+                let Some(partner) = other.tris.get(usize::try_from(oi).unwrap_or(usize::MAX))
+                else {
+                    return Err(ContactError::Range);
+                };
+                spent += 1;
+                if spent > limits.max_candidate_pairs {
+                    return Ok(deepest);
+                }
+                if triangles_meet(&mut preds, tri, partner)?
+                    && coplanar_orientation(&mut preds, tri, partner)? == Coplanar::Same
+                {
+                    partnered = true;
+                    break;
+                }
+            }
+            if !partnered {
+                continue;
+            }
+            let Some(inward) = inward_unit_normal(tri) else {
+                continue;
+            };
+            for probe in face_probes(tri[0], tri[1], tri[2]) {
+                spent += 1;
+                if spent > limits.max_candidate_pairs {
+                    return Ok(deepest);
+                }
+                let far = [
+                    probe[0] + inward[0] * reach,
+                    probe[1] + inward[1] * reach,
+                    probe[2] + inward[2] * reach,
+                ];
+                let Some(first) = first_pierce(
+                    &mut preds,
+                    probe,
+                    far,
+                    [(own, own_index), (other, other_index)],
+                    cap,
+                )?
+                else {
+                    continue;
+                };
+                let half = first * 0.5;
+                let candidate = [
+                    probe[0] + (far[0] - probe[0]) * half,
+                    probe[1] + (far[1] - probe[1]) * half,
+                    probe[2] + (far[2] - probe[2]) * half,
+                ];
+                if shell_contains(&mut preds, own, candidate)? != Some(true)
+                    || shell_contains(&mut preds, other, candidate)? != Some(true)
+                {
+                    continue;
+                }
+                let depth = point_shell_closest(candidate, other).0;
+                deepest = Some(match deepest {
+                    Some(best) if best >= depth => best,
+                    _ => depth,
+                });
+            }
+        }
+    }
+    Ok(deepest)
+}
+
+/// The inward unit normal of a triangle: the opposite of its outward normal
+/// `(b - a) x (c - a)`, measured in `f64`. `None` for a degenerate or
+/// unrepresentable normal.
+fn inward_unit_normal(tri: &Tri) -> Option<[f64; 3]> {
+    let [a, b, c] = *tri;
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let n = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    if !(length.is_finite() && length > 0.0) {
+        return None;
+    }
+    Some([-n[0] / length, -n[1] / length, -n[2] / length])
+}
+
+/// The smallest pierce parameter of the segment `s0 s1` through the
+/// triangles of the given shells, closed admit (a boundary pierce bounds the
+/// interval too), or `None` when nothing is pierced or a pierce parameter is
+/// not representable — the caller then skips the segment rather than guess.
+/// A triangle whose plane contains `s0` is never pierced by the segment
+/// (`segment_pierces_triangle` needs strictly opposite sides), so the
+/// starting face and its coplanar partner drop out by construction.
+fn first_pierce(
+    preds: &mut Predicates,
+    s0: [f64; 3],
+    s1: [f64; 3],
+    shells: [(&Shell, &BoxIndex); 2],
+    cap: usize,
+) -> Result<Option<f64>, ContactError> {
+    let Some(query) = Aabb::from_points([s0, s1]) else {
+        return Ok(None);
+    };
+    let mut first: Option<f64> = None;
+    for (shell, index) in shells {
+        for ci in index
+            .overlapping(&query, cap)
+            .map_err(ContactError::Index)?
+        {
+            let Some(tri) = shell.tris.get(usize::try_from(ci).unwrap_or(usize::MAX)) else {
+                return Err(ContactError::Range);
+            };
+            if segment_pierces_triangle(preds, s0, s1, tri)? == Pierce::None {
+                continue;
+            }
+            let Some(t) = crossing_parameter(s0, s1, tri) else {
+                return Ok(None);
+            };
+            first = Some(match first {
+                Some(best) if best <= t => best,
+                _ => t,
+            });
+        }
+    }
+    Ok(first)
 }
 
 /// One measurement decision per surface edge.
@@ -1781,5 +2035,116 @@ mod tests {
         assert!(!pierce_decides_crossing(&mut preds, &shell, 0, g0, g1).unwrap());
         // Against the cap triangle: the segment lies in its plane, no pierce.
         assert!(!pierce_decides_crossing(&mut preds, &shell, 2, g0, g1).unwrap());
+    }
+
+    #[test]
+    fn a_duplicate_slab_is_a_coincident_overlap_under_either_triangulation() {
+        // #741: two identical slabs share every face with the same outward
+        // orientation. No edge strictly crosses the other shell and every
+        // sample lies on the other surface, yet the interiors coincide: the
+        // coincident faces prove the overlap, under either valid
+        // triangulation of the second slab.
+        let lo = [0.0, 0.0, 0.0];
+        let hi = [100.0, 100.0, 10.0];
+        let a = shell_box(lo, hi);
+        for b in [shell_box(lo, hi), flipped_shell_box(lo, hi)] {
+            let report = contact(&a, &b, limits()).unwrap();
+            assert!(report.coincident, "{report:?}");
+            assert_eq!(
+                report.relation,
+                Relation::Overlapping {
+                    surface_crossing: false
+                }
+            );
+            assert!(!report.face_contact, "{report:?}");
+            // The samples read nothing on a duplicate; the coincident face
+            // measures the mid-thickness point of the shared caps: 5 mm.
+            assert_eq!(penetration_depth(&a, &b, limits()).unwrap(), None);
+            let depth = coincident_depth(&a, &b, limits()).unwrap().unwrap();
+            assert!((depth - 5.0).abs() <= 1e-9, "{depth}");
+        }
+    }
+
+    #[test]
+    fn a_copy_shifted_below_the_tolerance_measures_its_overlap_not_the_sliver() {
+        // A copy 0.2 mm off along x: no strict crossing, and the samples
+        // reach only the 0.2 mm end slivers. The shared caps and walls are
+        // coincident faces, and they measure the real overlap.
+        let a = shell_box([0.0, 0.0, 0.0], [100.0, 100.0, 10.0]);
+        let b = shell_box([0.2, 0.0, 0.0], [100.2, 100.0, 10.0]);
+        let report = contact(&a, &b, limits()).unwrap();
+        assert!(report.coincident, "{report:?}");
+        assert!(matches!(report.relation, Relation::Overlapping { .. }));
+        let sampled = penetration_depth(&a, &b, limits())
+            .unwrap()
+            .into_iter()
+            .chain(penetration_depth(&b, &a, limits()).unwrap())
+            .fold(0.0f64, f64::max);
+        assert!(sampled <= 0.2 + 1e-9, "{sampled}");
+        let depth = coincident_depth(&a, &b, limits()).unwrap().unwrap();
+        assert!((depth - 5.0).abs() <= 1e-9, "{depth}");
+    }
+
+    #[test]
+    fn a_thin_coincident_strip_never_reads_the_ray_length() {
+        // Two slabs overlapping in a 0.2 mm strip: their caps and walls are
+        // coincident only inside that strip. The probes of the shared
+        // triangles fall outside the strip and are refused by the exact
+        // containment test; the measure never reports the ray's length.
+        let a = shell_box([0.0, 0.0, 0.0], [100.0, 100.0, 10.0]);
+        let b = shell_box([99.8, 0.0, 0.0], [199.8, 100.0, 10.0]);
+        let report = contact(&a, &b, limits()).unwrap();
+        assert!(report.coincident, "{report:?}");
+        let depth = coincident_depth(&a, &b, limits()).unwrap();
+        assert!(depth.is_none_or(|d| d <= 0.2 + 1e-9), "{depth:?}");
+    }
+
+    #[test]
+    fn opposite_faces_and_flush_fits_are_never_coincident() {
+        // Side-by-side boxes share a wall with opposite orientations: face
+        // contact, no coincident face.
+        let a = shell_box([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        let side = shell_box([10.0, 0.0, 0.0], [20.0, 10.0, 10.0]);
+        let report = contact(&a, &side, limits()).unwrap();
+        assert_eq!(report.relation, Relation::Touching);
+        assert!(report.face_contact && !report.coincident, "{report:?}");
+        // A box standing on a larger one, flush with one of its walls: the
+        // flush walls share only a line, the base faces oppose.
+        let base = shell_box([0.0, 0.0, 0.0], [100.0, 100.0, 10.0]);
+        let standing = shell_box([0.0, 40.0, 10.0], [20.0, 60.0, 50.0]);
+        let report = contact(&base, &standing, limits()).unwrap();
+        assert_eq!(report.relation, Relation::Touching);
+        assert!(report.face_contact && !report.coincident, "{report:?}");
+        // A plug flush in a through-hole: its walls oppose the hole walls,
+        // and the holed caps hold no area over the hole.
+        let plug = shell_box([-30.0, -30.0, 0.0], [30.0, 30.0, 20.0]);
+        let report = contact(&holed_plate(), &plug, limits()).unwrap();
+        assert_eq!(report.relation, Relation::Touching);
+        assert!(report.face_contact && !report.coincident, "{report:?}");
+    }
+
+    #[test]
+    fn on_or_inside_counts_the_surface_as_material() {
+        let cube = shell_box([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        // Off the cube centre, whose six axis rays all graze a face diagonal
+        // (the documented unresolved ceiling).
+        assert_eq!(
+            on_or_inside(&cube, [3.0, 4.0, 2.0], limits()),
+            Ok(Some(true))
+        );
+        assert_eq!(
+            on_or_inside(&cube, [5.0, 5.0, 10.0], limits()),
+            Ok(Some(true))
+        );
+        assert_eq!(
+            on_or_inside(&cube, [10.0, 10.0, 10.0], limits()),
+            Ok(Some(true))
+        );
+        assert_eq!(
+            on_or_inside(&cube, [5.0, 5.0, 10.1], limits()),
+            Ok(Some(false))
+        );
+        // The strict variant keeps the surface out.
+        assert_eq!(contains(&cube, [5.0, 5.0, 10.0], limits()), Ok(None));
     }
 }

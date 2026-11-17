@@ -3,9 +3,10 @@
 Status: **draft.** This document is the slice 1 contract of [#634](https://github.com/axisrow/BeamCraft/issues/634)
 (delivery task [#661](https://github.com/axisrow/BeamCraft/issues/661)): it defines what the
 `check-model` harness checks, against what basis, with what tolerances and report semantics.
-Nothing in it is implemented yet; slices 2–5 implement it and change code and this document
-together. The normative research of section 3 was retrieved on 2026-11-15; unverified rules stay
-outside the supported set.
+Slices 2–5 and the follow-ups of epic #634 (#721–#728, #741) implement it; every change of
+behaviour changes the code and this document together, and the "Validated" and "Amended"
+paragraphs of section 7.1 record what each delivery proved. The normative research of
+section 3 was retrieved on 2026-11-15; unverified rules stay outside the supported set.
 
 The guarantee is detection within the declared scope and the supported rules. These checks do
 not block export or publication, and a green report is not a structural design approval. The
@@ -251,7 +252,17 @@ kept distinguishable by its basis, never by a new token: the basis names the der
 the weld record and the geometric identity of this section, and the requirement's
 `required_mm` stays the recorded size (section 4.2). The finding reports the admitted leg as
 its measurement with the recorded weld leg `K` as the bound it was compared against, named as
-coming from the weld record, so it cannot be mistaken for the explicit size requirement.
+coming from the weld record, so it cannot be mistaken for the explicit size requirement. The
+basis names the judged weld by its id.
+
+**No fix, and the conflict stated** (#723). A clearance finding never carries a fix: a larger
+cut and a smaller weld both repair it, and geometry does not choose a weld size (section 9) —
+a chamfer of the weld leg can itself overcut the recorded requirement. Its message says which
+repairs remain. A cut `c` clears the weld when `K + δ − t < c` and passes the size check when
+`c + δ` stays below the band's upper edge, so once `K ≥ upper edge + t − 2δ` no cut does both:
+the message then states that the recorded requirement and the weld leg conflict, and that a
+smaller weld or a changed requirement repairs it. Below that bound it states that a larger cut
+inside the acceptance band or a smaller weld repairs it.
 
 ## 5. Joint intent: declared connections
 
@@ -286,10 +297,15 @@ attachment is **validated** against the final evaluated bodies, one authored pat
 time (#724): a point lies at the declared contact of the two connected parts when either
 
 - it lies within the product tolerance of **both** surfaces — a tight fit; or
-- it lies **between the two facing surfaces**: it is outside the material of both parts, and
-  the opening it spans — the sum of its distances to the two surfaces — agrees within the
+- it lies **between the two facing surfaces**: it is outside the material of both parts, the
+  opening it spans — the sum of its distances to the two surfaces — agrees within the
   product tolerance with the distance between the two nearest surface points, so the point
-  spans the contact rather than air beside it.
+  spans the contact rather than air beside it, and those two surface points **face each
+  other**: each is the other's nearest point on its own part, within the product tolerance
+  (#724). A point lying on one part's surface away from the joint fails the last condition —
+  its own surface point is the point itself, and the other part's nearest point lies elsewhere
+  on that surface, not across an opening — and so does a point on a part's far face, whose
+  nearest point on the other part lies across that part's own material.
 
 The second case is what lets an attached weld bridge an opening of any size: local attachment
 does not cap the measurable opening at the contact tolerance, and the gap rule judges the
@@ -464,6 +480,27 @@ re-orientation and does not re-orient by the weld's recorded `side` (the sides a
 the corner's geometry, section 4.4), and the recorded A15 solid stays the weld's own placed
 body — anchored at its path start by the A15 frame rule — not the judging geometry.
 
+**Amended by #741 (2026-11-17).** A **coincident face** — a pair of meeting triangles, one
+of each shell, in one exact plane, overlapping in area and facing the same way — proves an
+interior overlap: both closed, consistently oriented shells keep their material on the inward
+side of the shared area. A duplicate part shares every face this way, and no edge crosses the
+other shell while every vertex and face probe lies on the other surface, so before this
+amendment the pair read as touching and green; a copy shifted by less than the contact
+tolerance read only its slivers. The contact facts record the coincident face and keep
+scanning, so a strict crossing found elsewhere still decides the relation as a surface
+crossing; without one the relation is an overlap without a surface crossing. Its depth starts
+on the shared faces: from each face probe of a triangle with a coincident partner, the
+segment along the inward normal runs inside both shells until it first pierces either
+surface, and the midpoint of that first interval, kept only when the exact containment
+classification places it strictly inside both shells, is measured to the other shell's
+surface. The deeper of this and the sampled measure is the reported depth — a deterministic
+lower bound, never the length of the ray. Ceilings: a duplicate thinner than twice the
+contact tolerance (a sheet under 1 mm) reads at most half its thickness and stays
+`indeterminate`, never green; a probe whose ray parameter is not representable, or whose
+midpoint the classification leaves unresolved, contributes nothing; and rotated meshes are
+re-admitted from their evaluated vertices without re-certification, so a near-degenerate
+sliver whose orientation flips in rounding could read as a coincident face.
+
 **Amended by #721 (2026-11-17).** The contact decision's boundary case is decided at the
 shell level: a segment that pierces the other shell's plane exactly on a triangle's edge or
 vertex proves a crossing only through the local surface around the point — the star of
@@ -512,8 +549,15 @@ mesh approximation and half the contact tolerance together. Then:
   recorded `tolerance_mm` therefore widens what is accepted, not just what is reported;
 - a band edge at or below the physical floor of the measured quantity cannot straddle (#724):
   no physical value lies beyond it. A measured gap is never negative, so a permitted-range
-  lower edge at or below zero is never tested — only the upper edge decides there, and a
-  tight fit against a range `[0, max]` passes with any non-negative recorded tolerance;
+  lower edge at or below zero is never tested — only the upper edge decides there. A measured
+  zero still carries `δ`, so it passes `[0, max]` only when `max + tolerance` exceeds `δ`;
+- an **exact contact at the weld** is not a measurement (#724): when every path point lies on
+  or inside the closed material of both parts, decided by the exact predicates, the parts meet
+  along the path and the opening is exactly zero, with no physical tolerance band around it.
+  It passes any range whose lower edge `min − tolerance` is at or below zero — "contact
+  required" `[0, 0]` with no tolerance included — and fails a range that requires an opening.
+  A path in a thin opening, however thin, is outside both materials and keeps the measured
+  rule;
 - `unknown` with reason `indeterminate` and the measured value reported, when the interval
   straddles a band edge — a near-threshold result never silently resolves to pass or fail, and
   its resolution must not depend on artificial decomposition boundaries.
@@ -581,6 +625,7 @@ require recorded inputs the model must already contain.
   `null`. Parameterized chamfers, contour-authored chamfers and plane cuts that produce
   equivalent final geometry receive equivalent results; a rounding with equal setbacks is **not**
   equivalent (different freed space at a right-angle corner) and must not receive the same fix.
+  The dependent weld-clearance finding of section 4.4 carries no fix at all (#723).
 - The workflow is: apply one fix, **recheck**, then select the next fix — commands from an
   earlier report may no longer apply. There is no promise that blindly executing every hint
   reaches green; a contact that does not require a weld never receives an unconditional
