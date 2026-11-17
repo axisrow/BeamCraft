@@ -365,6 +365,60 @@ fn a_band_edge_overlap_is_unknown_yellow_and_exits_zero() {
 }
 
 #[test]
+fn a_column_through_its_base_plate_is_red_with_the_measured_thickness() {
+    // #722's real-binary matrix: a column straight through its base plate
+    // used to report PART_CLASH unknown with exit 0 wherever no contact
+    // sample landed inside the plate, and one lucky placement read 37 mm
+    // of probe luck. The edge traversal samples (#740) read the crossing's
+    // own edges through the plate now: the measured depth is the mid-slab
+    // distance to the plate's faces, and the pair is red, fail, exit 2,
+    // for the centred and off-centre rectangle, the flush-bottom start,
+    // and the I shape.
+    let centred = ["--width", "200", "--height", "200"];
+    let small = ["--width", "100", "--height", "100"];
+    let i_shape = [
+        "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15", "--r", "0",
+    ];
+    for (profile, start, end, expected) in [
+        (&centred[..], "500,250,-50", "500,250,1000", 10.0),
+        (&small[..], "200,400,-50", "200,400,1000", 10.0),
+        // The flush-bottom start additionally reads a plate face probe:
+        // the column's back face stands on the plate's bottom face.
+        (&centred[..], "500,250,0", "500,250,1000", 20.0),
+        (&i_shape[..], "500,250,-50", "500,250,1000", 10.0),
+    ] {
+        let f = Fixture::new();
+        let steel = f.material();
+        f.plate(&steel, "20", "0,0,0");
+        let defined = f.ok("define-profile", profile);
+        let digest = text(at(&defined, &["definition"]), "digest");
+        f.ok(
+            "create-member",
+            &[
+                "--profile-digest",
+                &digest,
+                "--start",
+                start,
+                "--end",
+                end,
+                "--kind",
+                "column",
+                "--material-digest",
+                &steel,
+            ],
+        );
+        let (code, reply) = f.check(&[]);
+        assert_eq!(code, 2, "{start}: {reply:?}");
+        assert_eq!(text(&reply, "status"), "red");
+        assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
+        let finding = finding_of(&reply, "PART_CLASH");
+        assert_eq!(text(finding, "status"), "fail");
+        let measured = at(finding, &["measured_mm"]).float().unwrap();
+        assert!((measured - expected).abs() <= 1e-6, "{start}: {measured}");
+    }
+}
+
+#[test]
 fn exact_face_contact_stays_green_wherever_the_footprint_lies() {
     // #721: a plate standing exactly on a 1000x500 base's top face is green
     // whether its footprint crosses the base cap's triangulation diagonal or

@@ -344,20 +344,35 @@ cap triangles and plane-cut half-spaces, then compare with the final closed mesh
 part. Slice 2 validated a simpler method that satisfies the same requirements, and the contract
 below stays what any implementation must satisfy, not the algorithm:
 
-**Validated in slice 2 (2026-11-15).** The implementation compares the two **final evaluated
-closed meshes** directly (`kernel::contact`): the surface facts — strict crossing, coplanar
-face contact, edge/point touch, separation, full containment — are decided by the kernel's
-exact predicates and are properties of the surfaces, so they cannot depend on a triangulation
-or on an artificial decomposition; there are no internal faces to offset. The measured
-penetration depth samples the two meshes' vertices and per-face interior probes (exact
-midpoint chains), is a deterministic lower bound of the true depth, and is invariant under
-re-triangulations that keep the vertex set; a proven crossing whose overlap touches no sample
-reports `unknown` (`indeterminate`), never a guess. The adversarial cases of #634 are
-exercised in `kernel::contact::tests` and `steel::engine::check::tests`: face contact,
-edge/point contact, separation, containment without a surface meeting, corner overlap,
-rotated placements, and diagonal-flip re-triangulations. Remaining ceilings, recorded here:
-depth sampling is vertex-based (a vertex-independent depth needs the intersection region),
-and a point classification whose six axis rays all graze edges/vertices reports unresolved.
+**Validated in slice 2 (2026-11-15), amended for #722 and #740 (2026-11-17).** The
+implementation compares the two **final evaluated closed meshes** directly (`kernel::contact`):
+the surface facts — strict crossing, coplanar face contact, edge/point touch, separation,
+full containment — are decided by the kernel's exact predicates and are properties of the
+surfaces, so they cannot depend on a triangulation or on an artificial decomposition; there
+are no internal faces to offset. The measured depth is the sampled measure (#740): the two
+meshes' vertices, per-face interior probes (exact midpoint chains), and — per surface edge
+(an edge whose adjacent triangles are not coplanar, so the edge set is a property of the
+surface) — the midpoint between that edge's consecutive strict crossings of the other shell
+(#722's crossing reading, folded into the samples). The edge traversal reaches both a
+through-penetration whose overlap carries no vertex or probe of either body (#722) and a
+last-place placement dip whose sliver is thinner than a coordinate step (#721); the value is
+a deterministic lower bound, invariant under re-triangulations that keep the vertex set, and
+never depends on where vertices or probes happen to lie. The crossing run — the largest
+inside run of a strictly crossing surface edge, with the intervals decided by exact midpoint
+classifications — stays the last resort for a proven surface crossing the samples cannot
+read at all; a run that cannot be decided (a flush wall or a graze puts an interval midpoint
+on a surface, or a pierce parameter is not representable) reports no value. A proven
+crossing that neither measure can read reports `unknown` (`indeterminate`), never a guess.
+The adversarial cases of #634 are exercised in `kernel::contact::tests` and
+`steel::engine::check::tests`: face contact, edge/point contact, separation, containment
+without a surface meeting, corner overlap, rotated placements, diagonal-flip
+re-triangulations, and the through-penetration with no vertex of either body inside the
+other. Remaining ceilings, recorded here: the sampled measure reads only its samples, so a
+surface region no sample reaches can only make the value smaller; the crossing run bounds
+each edge's intervals by that edge's strict crossings, so a graze that hides a strict event
+— a segment passing exactly through a shared vertex of the other mesh between crossings —
+can over-read that one edge's run, while a flush run along a face refuses; and a point
+classification whose six axis rays all graze edges/vertices reports unresolved.
 
 The requirements any implementation must satisfy:
 
