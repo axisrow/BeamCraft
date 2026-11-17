@@ -58,7 +58,8 @@ cargo run --locked -p beamcraft-test-gate -- publish --report target/test-gate/R
 `--repo owner/name` overrides the GitHub origin selection. Publication patches only the
 delimited machine block in the description; it preserves human text and rechecks the current
 PR head/base and local clean snapshot. No publication happens during `check`. A new commit or
-base requires another local gate and publication. A PR edit retriggers CI selection.
+base requires another local gate and publication. A PR edit no longer retriggers CI selection:
+`ci.yml` does not trigger on the `edited` event.
 
 CI selects exactly the two operating systems other than the one recorded locally for the
 quality lanes of `ci.yml`: format, Clippy, fixtures, boundaries, docs on the first selected
@@ -75,8 +76,9 @@ triggered the run. `ci-plan` keeps the event snapshot as the fast path and, when
 receipt current for the run's head and base, polls the live description for at most two minutes
 before failing; every attempt keeps the head/base/tree binding, and a window without a receipt is
 a failure. Master pushes and manual dispatches read the live description directly. Publication
-fires `pull_request edited`, so a receipt-bearing run follows the first one and may supersede it
-through `cancel-in-progress`; the first run then ends cancelled instead of red.
+fires nothing: `ci.yml` does not trigger on the `edited` event, so no receipt-bearing run follows
+the first one and no run ends cancelled because of a publish; the first run finds the receipt
+through its own grace-window poll.
 
 Make `CI verdict` the required PR check and require branches to be up to date in the integration
 branch's GitHub protection/ruleset. The verdict rechecks live head/base before it succeeds;
