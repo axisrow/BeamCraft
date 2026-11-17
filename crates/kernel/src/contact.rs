@@ -539,10 +539,7 @@ type SurfaceEdge = ([f64; 3], [f64; 3]);
 /// skipped: the contact facts assume closed, consistently oriented shells,
 /// and a boundary or non-manifold edge star has no single surface side to
 /// cross. The vertex-index key order keeps the scan deterministic.
-fn surface_edges(
-    preds: &mut Predicates,
-    mesh: &TriMesh,
-) -> Result<Vec<SurfaceEdge>, ContactError> {
+fn surface_edges(preds: &mut Predicates, mesh: &TriMesh) -> Result<Vec<SurfaceEdge>, ContactError> {
     let vertices = mesh.vertices();
     let at = |i: u32| -> Result<[f64; 3], ContactError> {
         usize::try_from(i)
