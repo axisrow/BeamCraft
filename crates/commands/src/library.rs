@@ -6352,7 +6352,14 @@ mod tests {
         let refused: Vec<&str> = layer
             .refused
             .iter()
-            .map(|r| r.path.rsplit('/').next().unwrap())
+            // The stored path is the platform's own spelling, so the file name comes off
+            // the path the same way (`Path::file_name`), never by splitting on `/`.
+            .map(|r| {
+                std::path::Path::new(r.path.as_str())
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap()
+            })
             .collect();
         assert_eq!(
             refused,
