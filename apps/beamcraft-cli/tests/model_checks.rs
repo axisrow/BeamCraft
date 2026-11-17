@@ -234,6 +234,14 @@ fn a_deep_overlap_is_red_with_a_part_clash_finding_and_exit_two() {
     assert!((measured - 5.0).abs() <= 1e-6, "{measured}");
     let tolerance = at(finding, &["tolerance_mm"]).float().unwrap();
     assert!((tolerance - 0.5).abs() <= 1e-9);
+    // The measurement carries the mesh approximation bound it read and the
+    // effective comparison tolerance δ = max(bound, t/2) it applied (contract
+    // sections 7.2 and 7.3): flat-faced rectangles keep a zero bound, so δ
+    // is the tolerance half.
+    let bound = at(finding, &["mesh_bound_mm"]).float().unwrap();
+    assert!(bound.abs() <= 1e-9, "{bound}");
+    let delta = at(finding, &["effective_tolerance_mm"]).float().unwrap();
+    assert!((delta - 0.25).abs() <= 1e-9, "{delta}");
     // Both parts were checked, nothing unknown, no fix offered in this slice.
     assert_eq!(at(&reply, &["coverage", "checked"]).unsigned().unwrap(), 2);
     assert_eq!(at(&reply, &["coverage", "unknown"]).unsigned().unwrap(), 0);
@@ -379,6 +387,12 @@ fn a_part_without_material_is_red_by_completeness() {
     let finding = finding_of(&reply, "PART_WITHOUT_MATERIAL");
     assert_eq!(text(finding, "status"), "fail");
     assert_eq!(fail_count(&reply, "PART_WITHOUT_MATERIAL"), 1);
+    // A finding without a measurement keeps its shape: no bound, no applied δ.
+    assert!(matches!(finding.get("mesh_bound_mm"), Ok(Json::Null)));
+    assert!(matches!(
+        finding.get("effective_tolerance_mm"),
+        Ok(Json::Null)
+    ));
 }
 
 #[test]
@@ -764,6 +778,13 @@ fn an_attached_weld_bridging_an_excessive_gap_turns_the_joint_red() {
     assert_eq!(text(&bounds[1], "name"), "permitted_max");
     assert_eq!(at(&bounds[1], &["bound_mm"]).float().unwrap(), 2.0);
     assert!(text(finding, "message").contains("exceeds the permitted maximum"));
+    // The measurement carries the mesh approximation bound it read and the
+    // effective comparison tolerance δ = max(bound, t/2) it applied
+    // (contract sections 7.2 and 7.3): flat-faced plates keep a zero bound.
+    let bound = at(finding, &["mesh_bound_mm"]).float().unwrap();
+    assert!(bound.abs() <= 1e-9, "{bound}");
+    let delta = at(finding, &["effective_tolerance_mm"]).float().unwrap();
+    assert!((delta - 0.25).abs() <= 1e-9, "{delta}");
 }
 
 #[test]
@@ -1116,6 +1137,12 @@ fn a_twenty_millimetre_cut_is_overcut_with_measured_and_required() {
     assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
     let required = at(finding, &["required_mm"]).float().unwrap();
     assert!((required - 10.0).abs() <= 1e-9, "{required}");
+    // The corner family reports its bound and applied δ too (contract
+    // sections 7.2 and 7.3): the joint's flat faces keep a zero bound.
+    let bound = at(finding, &["mesh_bound_mm"]).float().unwrap();
+    assert!(bound.abs() <= 1e-9, "{bound}");
+    let delta = at(finding, &["effective_tolerance_mm"]).float().unwrap();
+    assert!((delta - 0.25).abs() <= 1e-9, "{delta}");
     let bounds = list(finding, "bounds");
     assert_eq!(bounds.len(), 3);
     assert_eq!(text(bounds.first().unwrap(), "name"), "required");

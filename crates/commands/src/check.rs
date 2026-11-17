@@ -80,6 +80,14 @@ pub struct Finding {
     /// The named bounds of a range comparison, where one measurement is
     /// judged against several recorded bounds (contract section 8.1).
     pub bounds: Vec<check::NamedBound>,
+    /// The mesh approximation bound the measurement read, in millimetres: the
+    /// largest chord deviation among the evaluated bodies the measurement
+    /// used (contract section 7.2); absent where nothing was measured.
+    pub mesh_bound_mm: Option<f64>,
+    /// The effective comparison tolerance the comparison applied, in
+    /// millimetres: `max(mesh bound, contact tolerance / 2)` (contract
+    /// section 7.3); absent where no comparison ran.
+    pub effective_tolerance_mm: Option<f64>,
     /// The inputs whose absence kept the check from deciding.
     pub missing_inputs: Vec<&'static str>,
     /// The unambiguous repair, when one exists (contract section 9); absent
@@ -313,6 +321,8 @@ pub fn check_model(
                 required_mm: None,
                 tolerance_mm: None,
                 bounds: Vec::new(),
+                mesh_bound_mm: None,
+                effective_tolerance_mm: None,
                 missing_inputs: Vec::new(),
                 fix: None,
             });
@@ -348,6 +358,8 @@ pub fn check_model(
                     required_mm: None,
                     tolerance_mm: Some(CONTACT_TOLERANCE_MM),
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    effective_tolerance_mm: None,
                     missing_inputs: vec!["unresolved contact predicates"],
                     fix: None,
                 });
@@ -374,6 +386,8 @@ pub fn check_model(
                         required_mm: Some(CONTACT_TOLERANCE_MM),
                         tolerance_mm: Some(CONTACT_TOLERANCE_MM),
                         bounds: Vec::new(),
+                        mesh_bound_mm: Some(outcome.mesh_bound_mm),
+                        effective_tolerance_mm: Some(outcome.delta_mm),
                         missing_inputs: vec!["indeterminate"],
                         fix: None,
                     });
@@ -392,6 +406,8 @@ pub fn check_model(
                         required_mm: Some(CONTACT_TOLERANCE_MM),
                         tolerance_mm: Some(CONTACT_TOLERANCE_MM),
                         bounds: Vec::new(),
+                        mesh_bound_mm: Some(outcome.mesh_bound_mm),
+                        effective_tolerance_mm: Some(outcome.delta_mm),
                         missing_inputs: Vec::new(),
                         fix: None,
                     });
@@ -436,6 +452,8 @@ pub fn check_model(
             required_mm: finding.required_mm,
             tolerance_mm: finding.tolerance_mm,
             bounds: finding.bounds,
+            mesh_bound_mm: finding.mesh_bound_mm,
+            effective_tolerance_mm: finding.delta_mm,
             missing_inputs: finding.missing_inputs,
             fix: None,
         });
@@ -476,6 +494,8 @@ pub fn check_model(
             required_mm: corner.finding.required_mm,
             tolerance_mm: corner.finding.tolerance_mm,
             bounds: corner.finding.bounds,
+            mesh_bound_mm: corner.finding.mesh_bound_mm,
+            effective_tolerance_mm: corner.finding.delta_mm,
             missing_inputs: corner.finding.missing_inputs,
             fix,
         });
@@ -500,6 +520,8 @@ pub fn check_model(
                 required_mm: None,
                 tolerance_mm: None,
                 bounds: Vec::new(),
+                mesh_bound_mm: None,
+                effective_tolerance_mm: None,
                 missing_inputs: Vec::new(),
                 fix: None,
             });
@@ -562,6 +584,8 @@ pub fn check_model(
             required_mm: None,
             tolerance_mm: None,
             bounds: Vec::new(),
+            mesh_bound_mm: None,
+            effective_tolerance_mm: None,
             missing_inputs: Vec::new(),
             fix: None,
         });

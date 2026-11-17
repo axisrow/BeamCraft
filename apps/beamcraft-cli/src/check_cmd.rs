@@ -227,6 +227,11 @@ fn finding_json(finding: &check::Finding) -> Json {
         ("measured_mm", number_opt(finding.measured_mm)),
         ("required_mm", number_opt(finding.required_mm)),
         ("tolerance_mm", number_opt(finding.tolerance_mm)),
+        ("mesh_bound_mm", number_opt(finding.mesh_bound_mm)),
+        (
+            "effective_tolerance_mm",
+            number_opt(finding.effective_tolerance_mm),
+        ),
         (
             "bounds",
             Json::Array(
