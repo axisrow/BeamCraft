@@ -530,6 +530,9 @@ fn crossing_parameter(s0: [f64; 3], s1: [f64; 3], tri: &Tri) -> Option<f64> {
     Some(t)
 }
 
+/// One surface edge as its two endpoint positions.
+type SurfaceEdge = ([f64; 3], [f64; 3]);
+
 /// The surface edges of a mesh: each edge whose adjacent triangles are not
 /// coplanar, decided with the exact predicates, as its two endpoint
 /// positions. An edge with fewer or more than two adjacent triangles is
@@ -539,7 +542,7 @@ fn crossing_parameter(s0: [f64; 3], s1: [f64; 3], tri: &Tri) -> Option<f64> {
 fn surface_edges(
     preds: &mut Predicates,
     mesh: &TriMesh,
-) -> Result<Vec<([f64; 3], [f64; 3])>, ContactError> {
+) -> Result<Vec<SurfaceEdge>, ContactError> {
     let vertices = mesh.vertices();
     let at = |i: u32| -> Result<[f64; 3], ContactError> {
         usize::try_from(i)
