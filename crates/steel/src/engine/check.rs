@@ -1000,9 +1000,11 @@ fn weld_connection(
             });
             continue;
         }
-        // An exact contact at the weld (#724): every path point lies on or
-        // inside the closed material of both parts, decided by the exact
-        // predicates. The opening there is exactly zero — a fact the
+        // An exact contact at the weld (#724): every segment of the path is
+        // proven to lie on both parts' surfaces by exact coverage, decided
+        // by the exact predicates — not merely its endpoints, since a
+        // straight path may leave the material between two valid points.
+        // The opening there is exactly zero — a fact the
         // predicates decided, so no physical tolerance band applies to it —
         // and the recorded range passes whenever its lower edge
         // `min - tolerance` is at or below zero, whatever its maximum and
