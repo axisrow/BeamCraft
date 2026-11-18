@@ -2511,3 +2511,181 @@ fn reads_and_store_level_writes_carry_no_checks_summary() {
     assert_eq!(output.status.code().unwrap(), 0, "{reply:?}");
     assert!(reply.get("checks").is_err(), "{reply:?}");
 }
+
+#[test]
+fn whole_weld_gaps_judge_both_range_edges() {
+    for (min, max, expected) in [("0", "2", 9.0), ("5", "10", 1.0)] {
+        let f = Fixture::new();
+        let steel = f.material();
+        let a = f.plate(&steel, "10", "0,0,0");
+        let angle = 0.01_f64;
+        let orientation = format!("0,{},0,{}", -(angle / 2.0).sin(), (angle / 2.0).cos());
+        let b = text(
+            at(
+                &f.ok(
+                    "create-plate",
+                    &[
+                        "--width",
+                        "1000",
+                        "--length",
+                        "500",
+                        "--thickness",
+                        "10",
+                        "--material-digest",
+                        &steel,
+                        "--translation",
+                        "0,0,10",
+                        "--orientation-xyzw",
+                        &orientation,
+                    ],
+                ),
+                &["plate"],
+            ),
+            "element_id",
+        );
+        f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
+        let path = [100.0, 900.0]
+            .map(|x| format!("{x},100,{}", 10.0 + x * angle.tan() / 2.0))
+            .join(";");
+        f.path_weld(&a, &b, &path);
+        f.gap(&a, &b, min, max, "0.3");
+        let (code, report) = f.check(&[]);
+        assert_eq!(code, 2, "[{min}, {max}]: {report:?}");
+        let finding = finding_of(&report, "WELD_WITHOUT_CONTACT");
+        assert_eq!(text(finding, "status"), "fail");
+        assert!((at(finding, &["measured_mm"]).float().unwrap() - expected).abs() < 0.01);
+    }
+}
+
+#[test]
+fn exact_contact_endpoints_do_not_hide_a_hole_inside_the_weld_path() {
+    let f = Fixture::new();
+    let steel = f.material();
+    let a = f.plate(&steel, "10", "0,0,0");
+    let b = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &[
+                    "--width",
+                    "1000",
+                    "--length",
+                    "500",
+                    "--thickness",
+                    "10",
+                    "--material-digest",
+                    &steel,
+                    "--translation",
+                    "0,0,10",
+                    "--hole-rect",
+                    "450,200,100,100",
+                ],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
+    f.path_weld(&a, &b, "100,250,10;900,250,10");
+    f.gap(&a, &b, "0", "0", "0");
+    let (_, report) = f.check(&[]);
+    // Both authored endpoints lie exactly on both parts, but the segment
+    // between them crosses the hole. Incomplete coverage cannot report green.
+    assert_ne!(text(&report, "status"), "green", "{report:?}");
+    assert!(
+        unknown_count(&report, "WELD_WITHOUT_CONTACT") > 0
+            || fail_count(&report, "WELD_WITHOUT_CONTACT") > 0,
+        "{report:?}"
+    );
+}
+
+#[test]
+fn replay_checks_the_result_revision_after_geometry_and_requirement_edits() {
+    let f = Fixture::new();
+    let steel = f.material();
+    let args = [
+        "--width",
+        "1000",
+        "--length",
+        "500",
+        "--thickness",
+        "10",
+        "--material-digest",
+        &steel,
+        "--op-id",
+        "019a7bf0-0000-7000-8000-000000000301",
+        "--new-id",
+        "019a7bf0-0000-7000-8000-000000000302",
+    ];
+    let original = f.ok("create-plate", &args);
+    let a = text(at(&original, &["plate"]), "element_id");
+    let b = f.plate(&steel, "10", "0,0,10");
+    f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
+    assert_eq!(text(&f.check(&[]).1, "status"), "red");
+    let replay = f.ok("create-plate", &args);
+    assert_eq!(text(&replay, "outcome"), "plate_replayed");
+    assert_eq!(at(&replay, &["checks"]), at(&original, &["checks"]));
+    assert_eq!(
+        text(at(&replay, &["revision"]), "revision_id"),
+        text(at(&replay, &["checks"]), "revision_id")
+    );
+    // A different later geometry also must not change the replay's report.
+    f.plate(&steel, "10", "0,0,5");
+    let replay = f.ok("create-plate", &args);
+    assert_eq!(at(&replay, &["checks"]), at(&original, &["checks"]));
+}
+
+#[test]
+fn a_carried_batch_operation_replays_the_batch_snapshot_in_a_session() {
+    let f = Fixture::new();
+    let steel = f.material();
+    f.plate(&steel, "10", "0,0,0");
+    let store = store_root_of(&f);
+    let mut session = SessionLines::start(&store);
+    assert_eq!(text(&session.ask("batch-open"), "outcome"), "batch_opened");
+    let line = format!(
+        "create-plate --store {store} --width 1000 --length 500 --thickness 10 --translation 0,0,10 --material-digest {steel} --op-id 019a7bf0-0000-7000-8000-000000000401 --new-id 019a7bf0-0000-7000-8000-000000000402"
+    );
+    session.ask(&line);
+    let committed = session.ask("batch-commit");
+    assert_eq!(text(at(&committed, &["checks"]), "status"), "green");
+    f.plate(&steel, "10", "0,0,5");
+    let replay = session.ask(&line);
+    assert_eq!(text(&replay, "outcome"), "plate_replayed");
+    assert_eq!(at(&replay, &["checks"]), at(&committed, &["checks"]));
+}
+
+#[test]
+fn a_replayed_requirement_reads_the_welds_of_its_original_revision() {
+    let f = Fixture::new();
+    let steel = f.material();
+    let a = f.plate(&steel, "10", "0,0,0");
+    let b = f.plate(&steel, "10", "0,0,10");
+    f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
+    let args = [
+        "--name",
+        "gap",
+        "--kind",
+        "gap_requirement",
+        "--gap-a",
+        &a,
+        "--gap-b",
+        &b,
+        "--gap-min",
+        "0",
+        "--gap-max",
+        "2",
+        "--gap-tolerance",
+        "0.3",
+        "--new-id",
+        "019a7bf0-0000-7000-8000-000000000501",
+        "--op-id",
+        "019a7bf0-0000-7000-8000-000000000502",
+    ];
+    let original = f.ok("record-create", &args);
+    assert_eq!(text(at(&original, &["checks"]), "status"), "red");
+    f.path_weld(&a, &b, "100,100,10;300,100,10");
+    assert_eq!(text(&f.check(&[]).1, "status"), "green");
+    let replay = f.ok("record-create", &args);
+    assert_eq!(at(&replay, &["checks"]), at(&original, &["checks"]));
+}

@@ -10,9 +10,12 @@
 //! the code alone.
 
 use beamcraft_commands::check::{self, Bucket, CheckReport, Coverage};
-use beamcraft_commands::plate::inspect;
+use beamcraft_commands::plate::inspect_revision;
 use beamcraft_commands::registry::{self, Route};
-use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+use beamcraft_host::{
+    revision::{Revision, RevisionStore, Uuid7},
+    storage::BlobStore,
+};
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
@@ -36,10 +39,10 @@ fn invalid(message: &'static str) -> Refusal {
 /// concatenate), the recorded gap requirements, and the weld facts of the
 /// A06 and A15 welds. A store with no records yields the default inputs and
 /// the connectivity rules stay not applicable for every element.
-fn inputs_of(store: &RevisionStore) -> Run<steel::engine::check::RecordedInputs> {
+fn inputs_of(revision: &Revision) -> Run<steel::engine::check::RecordedInputs> {
     let mut inputs = steel::engine::check::RecordedInputs::default();
     let mut scope = Vec::new();
-    for record in beamcraft_commands::record::records(store)? {
+    for record in beamcraft_commands::record::records_revision(revision)? {
         match record.payload {
             beamcraft_model::record::RecordPayload::JointIntent(mut intent) => {
                 scope.append(&mut intent.scope);
@@ -61,7 +64,7 @@ fn inputs_of(store: &RevisionStore) -> Run<steel::engine::check::RecordedInputs>
         scope.dedup();
         joint.scope = scope;
     }
-    for weld in beamcraft_commands::weld::welds(store)? {
+    for weld in beamcraft_commands::weld::welds_revision(revision)? {
         inputs.welds.push(steel::engine::check::WeldFact {
             element: weld.id,
             main: weld.main,
@@ -105,8 +108,9 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
         })
         .transpose()?;
     let (offset, limit) = crate::plate_cmd::page_of(&options)?;
-    let inspection = inspect(&store)?;
-    let inputs = inputs_of(&store)?;
+    let revision = store.open()?;
+    let inspection = inspect_revision(&revision)?;
+    let inputs = inputs_of(&revision)?;
     let report = check::check_model(&inspection, &inputs, element, offset, limit)?;
     let buckets = report
         .coverage
@@ -332,8 +336,8 @@ pub(crate) fn checks_opted_out() -> bool {
 }
 
 /// Attaches the `checks` summary to a successful write reply (contract
-/// section 11): the summary checks the resulting revision — the head the
-/// check itself opens and names — and reports counts only. A refused write
+/// section 11): the summary checks the result revision named by the write
+/// reply, including an earlier replay, and reports counts only. A refused write
 /// keeps its rejected reply with no summary; the summary never changes the
 /// write's exit code, because the write happened. A command running inside an
 /// open draft batch reports the draft as not evaluated instead of checking
@@ -362,7 +366,7 @@ pub(crate) fn with_summary(args: &[OsString], json: Json, exit: u8) -> (Json, u8
             ("reason", Json::text("draft_not_evaluated")),
         ])
     } else {
-        summary_for_root(root)
+        summary_for_root(root, &json)
     };
     (insert_checks(json, checks), exit)
 }
@@ -382,9 +386,9 @@ fn store_root(args: &[OsString]) -> Option<&str> {
 
 /// The summary for a store named by root: an operational failure of the
 /// follow-up check reports the checks as unavailable, never green.
-fn summary_for_root(root: &str) -> Json {
+fn summary_for_root(root: &str, reply: &Json) -> Json {
     match BlobStore::new(root) {
-        Ok(blobs) => summary_for_store(&RevisionStore::new(blobs)),
+        Ok(blobs) => summary_for_store(&RevisionStore::new(blobs), reply),
         Err(e) => unavailable(&format!(
             "the store could not be opened ({})",
             e.code().as_str()
@@ -396,10 +400,30 @@ fn summary_for_root(root: &str) -> Json {
 /// A refusal of the check (an unreadable store, a head that cannot be
 /// inspected) becomes `unavailable` with the refusal's message and code, so
 /// the successful write result travels with an honest "not checked".
-pub(crate) fn summary_for_store(store: &RevisionStore) -> Json {
+pub(crate) fn summary_for_store(store: &RevisionStore, reply: &Json) -> Json {
     let summary = (|| -> Run<Json> {
-        let inspection = inspect(store)?;
-        let inputs = inputs_of(store)?;
+        let id = reply
+            .get("revision")
+            .and_then(|r| r.get("revision_id"))
+            .and_then(Json::string)
+            .map_err(|_| invalid("the write result does not identify its revision"))?;
+        let id =
+            Uuid7::parse(id).map_err(|_| invalid("the write result has an invalid revision"))?;
+        let sequence = reply
+            .get("revision")
+            .and_then(|r| r.get("sequence"))
+            .and_then(Json::string)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or_else(|| invalid("the write result does not identify its revision sequence"))?;
+        let revision = store.open_at(sequence)?;
+        if revision.info().revision() != &id {
+            return Err(invalid(
+                "the write result revision does not match the opened snapshot",
+            ));
+        }
+        let inspection = inspect_revision(&revision)?;
+        let inputs = inputs_of(&revision)?;
         let report = check::check_model(&inspection, &inputs, None, 0, SUMMARY_PAGE_LIMIT)?;
         Ok(Json::object([
             ("revision_id", Json::text(report.revision_id.clone())),
@@ -578,7 +602,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let blobs = BlobStore::new(root.to_str().unwrap()).unwrap();
-        let summary = summary_for_store(&RevisionStore::new(blobs));
+        let summary = summary_for_store(&RevisionStore::new(blobs), &Json::Null);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(text_of(&summary, "status"), "unavailable");
         let reason = summary

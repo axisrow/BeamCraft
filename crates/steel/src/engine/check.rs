@@ -560,11 +560,8 @@ fn polyline_distance(point: [f64; 3], path: &[[f64; 3]]) -> f64 {
     best
 }
 
-/// Whether every path point of a weld lies on or inside the closed material
-/// of both parts, decided by the exact predicates (#724): the parts meet
-/// exactly along the path, so the opening there is zero. `false` for a weld
-/// without a usable path or a point outside either part; an unresolved
-/// classification is never a contact.
+/// Exact zero requires a surface proof for every segment, not just its ends:
+/// a straight path may leave the material between two valid endpoints.
 fn exact_contact_at(
     weld: &WeldFact,
     a: &ElementBody,
@@ -573,9 +570,28 @@ fn exact_contact_at(
     let Some(path) = weld.path_mm.as_ref().filter(|p| !p.is_empty()) else {
         return Ok(false);
     };
-    for point in path {
+    // Share one weld's proof budget across both bodies and all path segments.
+    let queries = u64::try_from(path.len())
+        .unwrap_or(u64::MAX)
+        .saturating_mul(2)
+        .max(1);
+    let limits = Limits {
+        max_candidate_pairs: CONTACT_LIMITS.max_candidate_pairs / queries,
+        max_exact_predicates: CONTACT_LIMITS.max_exact_predicates / queries,
+        ..CONTACT_LIMITS
+    };
+    let Some(first) = path.first() else {
+        return Ok(false);
+    };
+    for body in [a, b] {
+        if !contact::segment_on_surface(*first, *first, &body.mesh, limits)? {
+            return Ok(false);
+        }
+    }
+    for segment in path.windows(2) {
+        let [from, to] = segment else { continue };
         for body in [a, b] {
-            if contact::on_or_inside(&body.mesh, *point, CONTACT_LIMITS)? != Some(true) {
+            if !contact::segment_on_surface(*from, *to, &body.mesh, limits)? {
                 return Ok(false);
             }
         }
@@ -583,7 +599,7 @@ fn exact_contact_at(
     Ok(true)
 }
 
-/// The measured local gap of an attached weld, in millimetres: the smallest
+/// The largest sampled local gap of an attached weld, in millimetres: the largest
 /// summed point-to-surface distance of the path points against both bodies —
 /// zero where the path runs on the meeting surfaces of touching parts, the
 /// air width where the weld bridges an opening. `None` for a weld without a
@@ -600,11 +616,125 @@ pub fn weld_gap_mm(
     for point in path {
         let gap = contact::point_gap(*point, &a.mesh)? + contact::point_gap(*point, &b.mesh)?;
         best = Some(match best {
-            Some(current) if current <= gap => current,
+            Some(current) if current >= gap => current,
             _ => gap,
         });
     }
     Ok(best)
+}
+
+/// Judge the complete path, retaining a measured witness for a failure and
+/// refusing to pass a segment whose unsampled interior is not bounded.
+fn whole_weld_gap(
+    weld: &WeldFact,
+    a: &ElementBody,
+    b: &ElementBody,
+    requirement: &GapRequirement,
+    tolerance_mm: f64,
+) -> Result<(ClashState, f64, &'static str), ContactError> {
+    let path = weld.path_mm.as_ref().ok_or(ContactError::Range)?;
+    let delta = a.mesh_bound_mm.max(b.mesh_bound_mm).max(tolerance_mm / 2.0);
+    let lo = requirement.permitted_min_mm - requirement.tolerance_mm;
+    let hi = requirement.permitted_max_mm + requirement.tolerance_mm;
+    let measure = |point| -> Result<f64, ContactError> {
+        Ok(contact::point_gap(point, &a.mesh)? + contact::point_gap(point, &b.mesh)?)
+    };
+    let judge = |gap| {
+        range_threshold(
+            gap,
+            requirement.permitted_min_mm,
+            requirement.permitted_max_mm,
+            requirement.tolerance_mm,
+            delta,
+        )
+    };
+    let mut unknown = false;
+    let mut reason = "indeterminate";
+    let mut witness = 0.0f64;
+    // Count conservative triangle visits as well as samples: a large mesh
+    // must not multiply the subdivision cap into unbounded surface scans.
+    let triangles = a
+        .mesh
+        .triangles()
+        .len()
+        .saturating_add(b.mesh.triangles().len())
+        .max(1);
+    let sample_limit = 4096usize
+        .min(usize::try_from(CONTACT_LIMITS.max_candidate_pairs).unwrap_or(0) / triangles / 16);
+    let mut spent = 0usize;
+    if path.is_empty() || sample_limit == 0 {
+        return Err(ContactError::Budget);
+    }
+    for point in path {
+        if spent >= sample_limit {
+            return Ok((ClashState::Indeterminate, witness, reason));
+        }
+        spent += 1;
+        let gap = measure(*point)?;
+        witness = witness.max(gap);
+        match judge(gap) {
+            ClashState::Penetrated => return Ok((ClashState::Penetrated, gap, reason)),
+            ClashState::Indeterminate => unknown = true,
+            ClashState::Clear => {}
+        }
+    }
+    for segment in path.windows(2) {
+        let [from, to] = segment else { continue };
+        let g0 = measure(*from)?;
+        let g1 = measure(*to)?;
+        let mut pending = vec![(*from, *to, g0, g1, 0u8)];
+        while let Some((from, to, g0, g1, depth)) = pending.pop() {
+            for gap in [g0, g1] {
+                witness = witness.max(gap);
+                if judge(gap) == ClashState::Penetrated {
+                    return Ok((ClashState::Penetrated, gap, reason));
+                }
+            }
+            if spent >= sample_limit {
+                unknown = true;
+                continue;
+            }
+            spent += 1;
+            // Each surface distance is 1-Lipschitz. Their sum is 2-Lipschitz;
+            // the endpoint cones give a lower bound everywhere on the segment.
+            let length = distance(from, to);
+            let lower = ((g0 + g1) * 0.5 - length).max(0.0);
+            let upper = (g0.max(g1) + length).min(
+                contact::segment_gap_upper(from, to, &a.mesh)?
+                    + contact::segment_gap_upper(from, to, &b.mesh)?,
+            );
+            if (lo <= 0.0 || lower - delta > lo) && upper + delta < hi {
+                continue;
+            }
+            if depth >= 32 {
+                unknown = true;
+                continue;
+            }
+            let Some(mid) = contact::segment_midpoint(from, to, CONTACT_LIMITS)? else {
+                unknown = true;
+                continue;
+            };
+            // Additional samples are subject to the same local-attachment test.
+            // An invalid or undecidable interior attachment cannot certify a gap.
+            if path_point_contact(mid, a, b, tolerance_mm)? != PointContact::On {
+                unknown = true;
+                reason = "attachment_unvalidated";
+                continue;
+            }
+            let gap = measure(mid)?;
+            pending.push((mid, to, gap, g1, depth + 1));
+            pending.push((from, mid, g0, gap, depth + 1));
+        }
+    }
+    Ok((
+        if unknown {
+            ClashState::Indeterminate
+        } else {
+            ClashState::Clear
+        },
+        witness,
+        reason,
+    ))
 }
 
 /// The connectivity rules over the recorded inputs (contract sections 2.1
@@ -870,9 +1000,11 @@ fn weld_connection(
             });
             continue;
         }
-        // An exact contact at the weld (#724): every path point lies on or
-        // inside the closed material of both parts, decided by the exact
-        // predicates. The opening there is exactly zero — a fact the
+        // An exact contact at the weld (#724): every segment of the path is
+        // proven to lie on both parts' surfaces by exact coverage, decided
+        // by the exact predicates — not merely its endpoints, since a
+        // straight path may leave the material between two valid points.
+        // The opening there is exactly zero — a fact the
         // predicates decided, so no physical tolerance band applies to it —
         // and the recorded range passes whenever its lower edge
         // `min - tolerance` is at or below zero, whatever its maximum and
@@ -916,49 +1048,43 @@ fn weld_connection(
             }
             continue;
         }
-        let gap = match weld_gap_mm(weld, body_a, body_b) {
-            Ok(Some(gap)) => gap,
-            // A weld without a usable path was reported not attached above.
-            Ok(None) => continue,
-            Err(_) => {
-                findings.push(ConnectivityFinding {
-                    rule: "WELD_WITHOUT_CONTACT",
-                    status: "unknown",
-                    elements: vec![connection.a, connection.b],
-                    message: "the gap decision could not be completed for this weld".into(),
-                    basis: "recorded gap requirement (contract 4.1)".into(),
-                    measured_mm: None,
-                    required_mm: None,
-                    tolerance_mm: Some(requirement.tolerance_mm),
-                    bounds: Vec::new(),
-                    mesh_bound_mm: None,
-                    delta_mm: None,
-                    missing_inputs: vec!["unresolved contact predicates"],
-                });
-                continue;
-            }
-        };
+        let (state, gap, reason) =
+            match whole_weld_gap(weld, body_a, body_b, requirement, tolerance_mm) {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    findings.push(ConnectivityFinding {
+                        rule: "WELD_WITHOUT_CONTACT",
+                        status: "unknown",
+                        elements: vec![connection.a, connection.b],
+                        message: "the gap decision could not be completed for this weld".into(),
+                        basis: "recorded gap requirement (contract 4.1)".into(),
+                        measured_mm: None,
+                        required_mm: None,
+                        tolerance_mm: Some(requirement.tolerance_mm),
+                        bounds: Vec::new(),
+                        mesh_bound_mm: None,
+                        delta_mm: None,
+                        missing_inputs: vec!["unresolved contact predicates"],
+                    });
+                    continue;
+                }
+            };
         let bound = body_a.mesh_bound_mm.max(body_b.mesh_bound_mm);
         let delta = bound.max(tolerance_mm / 2.0);
-        match range_threshold(
-            gap,
-            requirement.permitted_min_mm,
-            requirement.permitted_max_mm,
-            requirement.tolerance_mm,
-            delta,
-        ) {
+        match state {
             // A permissible weld gap passes its applicable gap rule.
             ClashState::Clear => {}
             ClashState::Indeterminate => findings.push(ConnectivityFinding {
                 rule: "WELD_WITHOUT_CONTACT",
                 status: "unknown",
                 elements: vec![connection.a, connection.b],
-                message: format!(
-                    "the measured local gap {} mm sits at the permitted-range band edge",
-                    gap,
-                ),
+                message: if reason == "attachment_unvalidated" {
+                    "the weld path leaves its validated attachment between authored points, so its local gap stays unjudged".into()
+                } else { format!(
+                    "the whole weld gap could not be bounded inside the permitted range (largest sample {} mm)", gap,
+                ) },
                 basis: "recorded gap requirement (contract 4.1)".into(),
-                measured_mm: Some(gap),
+                measured_mm: (reason != "attachment_unvalidated").then_some(gap),
                 required_mm: None,
                 tolerance_mm: Some(requirement.tolerance_mm),
                 bounds: vec![
@@ -977,7 +1103,7 @@ fn weld_connection(
                 ],
                 mesh_bound_mm: Some(bound),
                 delta_mm: Some(delta),
-                missing_inputs: vec!["indeterminate"],
+                missing_inputs: vec![reason],
             }),
             ClashState::Penetrated => {
                 let side = if gap - delta > requirement.permitted_max_mm + requirement.tolerance_mm

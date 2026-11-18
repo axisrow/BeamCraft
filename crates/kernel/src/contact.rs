@@ -28,7 +28,7 @@
 use std::collections::BTreeMap;
 
 use crate::bigint::Big;
-use crate::exact::{PredError, Predicates, min_exponent, scaled};
+use crate::exact::{PredError, Predicates, min_exponent, project, scaled};
 use crate::intersect::{
     Pierce, Side, Tri, classify_point, coplanar_area_overlap, segment_pierces_triangle,
     triangles_meet,
@@ -1037,6 +1037,203 @@ pub fn point_gap(point: [f64; 3], mesh: &TriMesh) -> Result<f64, ContactError> {
     Ok(point_shell_closest(point, &Shell::of(mesh)?).0)
 }
 
+/// An upper bound on distance to the surface over a whole segment. Distance
+/// to a closed triangle is convex: the larger endpoint distance bounds the
+/// segment. Any triangle supplies an upper bound on distance to the mesh;
+/// the smallest of those bounds is still conservative. Subdivision tightens it.
+pub fn segment_gap_upper(
+    from: [f64; 3],
+    to: [f64; 3],
+    mesh: &TriMesh,
+) -> Result<f64, ContactError> {
+    let shell = Shell::of(mesh)?;
+    Ok(shell.tris.iter().fold(f64::INFINITY, |best, tri| {
+        best.min(
+            point_triangle_closest2(from, tri)
+                .0
+                .max(point_triangle_closest2(to, tri).0)
+                .sqrt(),
+        )
+    }))
+}
+
+/// A representable interior subdivision point proven collinear with the
+/// original segment. Rounding must not replace a segment with a kinked path;
+/// an unrepresentable subdivision stays unresolved.
+pub fn segment_midpoint(
+    a: [f64; 3],
+    b: [f64; 3],
+    limits: Limits,
+) -> Result<Option<[f64; 3]>, ContactError> {
+    let mid = [
+        a[0] * 0.5 + b[0] * 0.5,
+        a[1] * 0.5 + b[1] * 0.5,
+        a[2] * 0.5 + b[2] * 0.5,
+    ];
+    if mid == a || mid == b {
+        return Ok(None);
+    }
+    let mut preds = Predicates::new(limits.max_exact_predicates);
+    for (u, v) in [(0, 1), (0, 2), (1, 2)] {
+        let component = |p: [f64; 3], i| p.get(i).copied().ok_or(ContactError::Range);
+        if preds.orient2d(
+            [component(a, u)?, component(a, v)?],
+            [component(b, u)?, component(b, v)?],
+            [component(mid, u)?, component(mid, v)?],
+        )? != 0
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(mid))
+}
+
+// Exact path parameters: comparing cross-products avoids rounding a shared
+// triangle edge's parameter (for example 1/7) differently on its two sides.
+#[derive(Clone)]
+struct SegmentFraction {
+    num: Big,
+    den: Big,
+}
+
+impl SegmentFraction {
+    fn cmp(&self, other: &Self) -> Result<core::cmp::Ordering, ContactError> {
+        let left = self.num.mul(&other.den).map_err(|_| ContactError::Range)?;
+        let right = other.num.mul(&self.den).map_err(|_| ContactError::Range)?;
+        Ok(left.cmp_mag(&right)) // numerators are non-negative, denominators positive
+    }
+}
+
+fn triangle_segment_interval(
+    a: [f64; 3],
+    b: [f64; 3],
+    tri: &Tri,
+    preds: &mut Predicates,
+    zero: &SegmentFraction,
+    one: &SegmentFraction,
+) -> Result<Option<(SegmentFraction, SegmentFraction)>, ContactError> {
+    let [v0, v1, v2] = *tri;
+    if preds.orient3d(v0, v1, v2, a)? != 0 || preds.orient3d(v0, v1, v2, b)? != 0 {
+        return Ok(None);
+    }
+    let Some((axis, _)) = preds.normal_axis(v0, v1, v2)? else {
+        return Err(ContactError::Range);
+    };
+    let exponent = min_exponent(tri.iter().chain([&a, &b]).copied().flatten());
+    let xy = |p| -> Result<[Big; 2], ContactError> {
+        let [x, y] = project(p, axis);
+        Ok([
+            scaled(x, exponent).map_err(|_| ContactError::Range)?,
+            scaled(y, exponent).map_err(|_| ContactError::Range)?,
+        ])
+    };
+    let (v0, v1, v2, a, b) = (xy(v0)?, xy(v1)?, xy(v2)?, xy(a)?, xy(b)?);
+    let orient = |u: &[Big; 2], v: &[Big; 2], p: &[Big; 2]| -> Result<Big, ContactError> {
+        let value = || -> Result<Big, crate::bigint::Overflow> {
+            v[0].sub(&u[0])?
+                .mul(&p[1].sub(&u[1])?)?
+                .sub(&v[1].sub(&u[1])?.mul(&p[0].sub(&u[0])?)?)
+        };
+        value().map_err(|_| ContactError::Range)
+    };
+    let sign = orient(&v0, &v1, &v2)?.sign();
+    let mut lo = zero.clone();
+    let mut hi = one.clone();
+    for (u, v) in [(&v0, &v1), (&v1, &v2), (&v2, &v0)] {
+        let inward = |p| -> Result<Big, ContactError> {
+            let value = orient(u, v, p)?;
+            Ok(if sign < 0 { value.negated() } else { value })
+        };
+        let (d0, d1) = (inward(&a)?, inward(&b)?);
+        if d0.sign() < 0 && d1.sign() < 0 {
+            return Ok(None);
+        }
+        if d0.sign() >= 0 && d1.sign() >= 0 {
+            continue;
+        }
+        let den = d0.sub(&d1).map_err(|_| ContactError::Range)?;
+        let t = if den.sign() < 0 {
+            SegmentFraction {
+                num: d0.negated(),
+                den: den.negated(),
+            }
+        } else {
+            SegmentFraction {
+                num: d0.clone(),
+                den,
+            }
+        };
+        if d0.sign() < 0 {
+            if t.cmp(&lo)?.is_gt() {
+                lo = t;
+            }
+        } else if t.cmp(&hi)?.is_lt() {
+            hi = t;
+        }
+        if lo.cmp(&hi)?.is_gt() {
+            return Ok(None);
+        }
+    }
+    Ok(Some((lo, hi)))
+}
+
+/// Proves surface coverage of a whole segment by the union of its exact,
+/// coplanar triangle intervals. Shared edge parameters are compared as integer
+/// fractions, so a different valid triangulation cannot introduce numeric gaps.
+/// A hole, unresolved predicates or exhausted work never proves contact.
+pub fn segment_on_surface(
+    from: [f64; 3],
+    to: [f64; 3],
+    mesh: &TriMesh,
+    limits: Limits,
+) -> Result<bool, ContactError> {
+    let shell = Shell::of(mesh)?;
+    let unit = Big::from_i64_shifted(1, 0).map_err(|_| ContactError::Range)?;
+    let zero = SegmentFraction {
+        num: Big::ZERO,
+        den: unit.clone(),
+    };
+    let one = SegmentFraction {
+        num: unit.clone(),
+        den: unit,
+    };
+    let mut preds = Predicates::new(limits.max_exact_predicates);
+    let mut intervals = Vec::new();
+    let mut spent = 0u64;
+    for tri in &shell.tris {
+        spent += 1;
+        if spent > limits.max_candidate_pairs.min(4096) {
+            return Ok(false);
+        }
+        if let Some((lo, hi)) = triangle_segment_interval(from, to, tri, &mut preds, &zero, &one)? {
+            if lo.cmp(&zero)?.is_eq() && hi.cmp(&one)?.is_eq() {
+                return Ok(true);
+            }
+            intervals.push((lo, hi));
+        }
+    }
+    let mut covered = zero;
+    loop {
+        let mut next = covered.clone();
+        for (lo, hi) in &intervals {
+            spent += 1;
+            if spent > limits.max_candidate_pairs {
+                return Ok(false);
+            }
+            if !lo.cmp(&covered)?.is_gt() && hi.cmp(&next)?.is_gt() {
+                next = hi.clone();
+            }
+        }
+        if !next.cmp(&covered)?.is_gt() {
+            return Ok(false);
+        }
+        if !next.cmp(&one)?.is_lt() {
+            return Ok(true);
+        }
+        covered = next;
+    }
+}
+
 /// The measured distance from a point to a mesh's triangles and the closest
 /// surface point, in the meshes' coordinate units (millimetres in the
 /// product). Like [`point_gap`], a measurement over the given triangles, not
@@ -1705,6 +1902,25 @@ mod tests {
         );
         // On the surface is not strictly inside.
         assert_eq!(contains(&shell, [0.0, 5.0, 5.0], limits()).unwrap(), None);
+    }
+
+    #[test]
+    fn segment_proofs_cover_triangles_but_never_bridge_a_hole() {
+        let mesh = cube([0.0, 0.0, 0.0], 10.0);
+        let (a, b) = ([1.0, 2.0, 10.0], [8.0, 2.0, 10.0]);
+        // The cap diagonal is crossed at parameter 1/7, which no finite
+        // dyadic subdivision reaches. Flipping that diagonal keeps contact.
+        assert!(segment_on_surface(a, b, &mesh, limits()).unwrap());
+        let flipped = flipped_shell_box([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        assert!(segment_on_surface(a, b, &flipped, limits()).unwrap());
+        let upper = segment_gap_upper([1.0, 1.0, 12.0], [9.0, 1.0, 12.0], &mesh).unwrap();
+        assert!((upper - 2.0).abs() < 1e-9);
+        let mesh = holed_plate();
+        let (a, b) = ([-80.0, 0.0, 20.0], [80.0, 0.0, 20.0]);
+        assert_eq!(point_gap(a, &mesh).unwrap(), 0.0);
+        assert_eq!(point_gap(b, &mesh).unwrap(), 0.0);
+        assert!(!segment_on_surface(a, b, &mesh, limits()).unwrap());
+        assert!(point_gap([0.0, 0.0, 20.0], &mesh).unwrap() > 20.0);
     }
 
     #[test]

@@ -389,10 +389,8 @@ impl<'a> Session<'a> {
                 // of the follow-up check reports the checks as unavailable and leaves the
                 // successful commit result and its exit code alone.
                 if !crate::check_cmd::checks_opted_out() {
-                    fields = crate::check_cmd::insert_checks(
-                        fields,
-                        crate::check_cmd::summary_for_store(self.store),
-                    );
+                    let checks = crate::check_cmd::summary_for_store(self.store, &fields);
+                    fields = crate::check_cmd::insert_checks(fields, checks);
                 }
                 fields
             }
