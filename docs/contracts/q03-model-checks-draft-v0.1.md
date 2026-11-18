@@ -412,10 +412,20 @@ against the two final evaluated meshes with the kernel's exact point-to-triangle
 weld is locally attached when every authored path point lies at the declared contact — within
 the product tolerance of both surfaces, or between the two facing surfaces (section 5.1, #724)
 — and a pathless A06 weld has no placed solid at the joint, so it is never locally attached.
-The local gap of an attached weld is the smallest summed point-to-surface distance of the path
-points: the opening the weld bridges at the declared contact, of any size. Both measurements
-are sample-based like the depth measurement: a surface region no sample reaches can only make
-the true distance smaller. The slice-3 ceiling "a permitted range beyond roughly twice the
+The opening at a path point is the sum of its distances to the two surfaces. The gap
+requirement applies over the **whole polyline**, not its smallest sample: the lower bound
+judges the minimum opening, and the upper bound judges the maximum. A measured point outside
+the acceptance band proves a failure. Passing requires bounds covering every segment;
+unresolved coverage or an exhausted work budget stays `unknown` (`indeterminate`).
+
+**Amendment for #749.** Segment bounds use the distance function's geometry: distance to a
+surface is 1-Lipschitz, so the summed opening is 2-Lipschitz; distance to any one closed triangle
+is convex, so its maximum on a segment is bounded by the larger endpoint distance. Adaptive
+subdivision tightens these conservative bounds, with the same mesh uncertainty and physical
+band of section 7.3. Exact zero needs a surface proof covering the entire path; endpoint
+membership alone cannot prove it across a hole or retreat. A coverage proof that the bounded
+method cannot establish remains unknown, never green. Local attachment still consumes the
+validated points of section 5.1, including any additional points the gap check visits. The slice-3 ceiling "a permitted range beyond roughly twice the
 contact tolerance can never be satisfied by an attached weld" is dropped by #724 (2026-11-16):
 the between-surfaces attachment test spans openings of any size, and the span's agreement
 check (summed distances versus the distance between the nearest surface points) is what the
@@ -552,9 +562,8 @@ mesh approximation and half the contact tolerance together. Then:
   no physical value lies beyond it. A measured gap is never negative, so a permitted-range
   lower edge at or below zero is never tested — only the upper edge decides there. A measured
   zero still carries `δ`, so it passes `[0, max]` only when `max + tolerance` exceeds `δ`;
-- an **exact contact at the weld** is not a measurement (#724): when every path point lies on
-  or inside the closed material of both parts, decided by the exact predicates, the parts meet
-  along the path and the opening is exactly zero, with no physical tolerance band around it.
+- an **exact contact at the weld** is not a measurement (#724): when the exact predicates prove that every segment of the
+  polyline lies on both surfaces, the parts meet along the whole path and the opening is exactly zero, with no physical tolerance band around it.
   It passes any range whose lower edge `min − tolerance` is at or below zero — "contact
   required" `[0, 0]` with no tolerance included — and fails a range that requires an opening.
   A path in a thin opening, however thin, is outside both materials and keeps the measured
@@ -636,7 +645,8 @@ require recorded inputs the model must already contain.
 
 - `check-model` checks a **committed revision**: the head at the moment the check starts,
   named in the reply. No unpinned head is checked implicitly after completion; every status in
-  the reply belongs to the named revision.
+  the reply belongs to the named revision. Geometry, requirements and weld records are all
+  read from that same verified snapshot; none is obtained by reopening the current head.
 - **Drafts are not checked in v0.1.** Batched operations are drafted and have not published a
   revision; reading the saved head would check the wrong model. Draft checks report *not
   performed* with an explicit `unknown` reason (`draft_not_evaluated`). After a successful
@@ -652,7 +662,9 @@ A successful write operating on a model store gains a short `checks` summary: th
 revision, overall status and counts. Non-negotiables:
 
 - **Revision-specific.** The summary checks the resulting revision, not an unpinned head that
-  could have moved since the command completed.
+  could have moved since the command completed. A replay checks its recorded result revision,
+  including after later edits; if that revision is unavailable, checks are unavailable with
+  a reason. The same rule applies to ordinary, session and batch-commit replies.
 - **Budget.** The summary fits the existing `print_json` output budget (1 MiB text,
   65 536 tokens of scratch, `LIMIT_EXCEEDED` fallback in `apps/beamcraft-cli/src/report.rs`):
   counts only, never finding pages.
