@@ -107,11 +107,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The macOS leg is build-time evidence (#153), not a test gate. On pull requests it took
-        # one of the five macOS runners while the macOS test shards waited, so it runs on pushes
-        # to master and on manual runs. The Linux leg still builds the release profile on every
-        # pull request.
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"}]' || '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},{"os":"macos-15","target":"aarch64-apple-darwin"}]') }}
+        # The fork runs no hosted macOS CI (#752): the macOS test evidence is
+        # the recorded local gate on the owner's Mac, hosted arm64 runners
+        # suffer capacity cancellations, and release-cut timing stays with
+        # upstream (#153).
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,7 +122,6 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       # Download outside the measured interval, but never restore compiled objects.
-      # Hosted macOS is useful evidence, not the reference Apple M5 acceptance.
       - run: cargo fetch --locked --target ${{ matrix.target }}
       - name: Measure compiler-cold release build
         run: bash tools/build-timings.sh --target ${{ matrix.target }} --output target/build-timings
