@@ -1483,3 +1483,59 @@ fn a_cut_plane_hides_pixels_without_touching_the_scene() {
             .as_str()
     );
 }
+
+#[test]
+fn a_part_beyond_a_soft_depth_slab_draws_faintly_instead_of_being_cut() {
+    let pin = ViewPin::new(Sha256::digest(b"beyond-depth").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    let drawn = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        (0..96usize)
+            .flat_map(|y| (0..96usize).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let at = y * row as usize + x * 4;
+                !is_background(pixels[at..at + 4].try_into().unwrap())
+            })
+            .count()
+    };
+    // A slab well above the 6 mm plate: the whole plate lies beyond it.
+    let z = scene.summary().origin_mm[2];
+    let slab = Clipping {
+        planes: vec![
+            ClipPlane::new([0.0, 0.0, z + 50.0], [0.0, 0.0, -1.0]).unwrap(),
+            ClipPlane::new([0.0, 0.0, z + 40.0], [0.0, 0.0, 1.0]).unwrap(),
+        ],
+        area: None,
+    };
+    let origin = scene.summary().origin_mm;
+    let whole = drawn(&ClipGpu::none());
+    assert!(whole > 0, "the plate draws without a cut");
+    assert_eq!(
+        drawn(&ClipGpu::of(&slab, origin)),
+        0,
+        "a hard slab cuts it away"
+    );
+    let faint = drawn(&ClipGpu::with_soft(None, &slab, origin));
+    assert!(
+        faint * 2 > whole,
+        "a soft slab keeps the part, faintly: {faint} of {whole}"
+    );
+}

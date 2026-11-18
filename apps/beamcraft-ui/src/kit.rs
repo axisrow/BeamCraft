@@ -220,6 +220,13 @@ pub fn toggle_node(ui: &Ui, id: egui::Id, default_open: bool) {
 /// The type box at the top of a properties panel, as Revit's properties palette shows the type
 /// of what is selected: a framed icon and the kind, nothing the rows below repeat.
 pub fn type_box(ui: &mut Ui, icon: crate::theme::Icon, kind: &str) {
+    type_header(ui, icon, kind, |_| {});
+}
+
+/// The type row every properties panel starts with, in one style: a framed row with the
+/// kind's icon and name, and `extra` (the presets list, a save button) after them. No panel
+/// carries a text heading above it: the icon says what is shown.
+pub fn type_header(ui: &mut Ui, icon: crate::theme::Icon, kind: &str, extra: impl FnOnce(&mut Ui)) {
     let palette = Palette::current(ui);
     egui::Frame::new()
         .stroke(Stroke::new(1.0, palette.rule))
@@ -232,6 +239,7 @@ pub fn type_box(ui: &mut Ui, icon: crate::theme::Icon, kind: &str) {
                 ui.spacing_mut().item_spacing.x = SPACE_S;
                 crate::theme::icon(ui, icon, 22.0, palette.text);
                 ui.add(egui::Label::new(egui::RichText::new(kind).strong().size(13.0)).truncate());
+                extra(ui);
             });
         });
     ui.add_space(SPACE_S);

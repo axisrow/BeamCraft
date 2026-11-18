@@ -54,6 +54,9 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl
 pollster = "=1.0.1"
 # Decode and resize the runtime application icon; PNG only.
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
+# Writes and reads the marker text chunk of the model library picture (`thumbnail.png`);
+# the same version `image` already decodes PNG with.
+png = "=0.18.1"
 # The parser epaint 0.37.0 uses at font init; validates Inter before egui can panic on it.
 # Keep it on epaint's exact version, or the check can accept a file epaint then rejects.
 skrifa = "=0.44.0"

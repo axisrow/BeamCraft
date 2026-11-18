@@ -110,31 +110,6 @@ fn selection_edges(snapshot: &beamcraft_engine::ViewSnapshot, text: &str) -> Vec
         .unwrap_or_default()
 }
 
-/// Where `ray` meets the plane the pointer works on, in millimetres: the view's own plane in a
-/// plan, an elevation or a section, else the work plane `work`, else the ground. With a work
-/// plane set the point is given in its axes, otherwise in model coordinates. `origin` is the
-/// display origin.
-pub(super) fn working_coordinates(
-    camera: &crate::camera::Camera,
-    origin: [f64; 3],
-    work: Option<beamcraft_engine::work_plane::WorkPlane>,
-    ray: &crate::edit::Ray,
-) -> Option<[f64; 3]> {
-    let plane = if camera.is_aligned() {
-        camera.frame(origin).ok().map(|(plane, _)| plane)
-    } else {
-        work
-    };
-    let world = match plane {
-        Some(plane) => plane.ray_point(ray.origin, ray.direction),
-        None => crate::edit::ground_point(ray),
-    }?;
-    match work {
-        Some(work) => work.to_local(world).ok(),
-        None => Some(world),
-    }
-}
-
 /// The centre of an element's bounds in model millimetres: the rotation point while it is
 /// selected.
 pub(super) fn element_centre(
@@ -354,11 +329,14 @@ impl App {
                 None => many.push(id),
             }
         }
-        self.grid_edit = None;
+        self.drop_grid_edit();
         match many.last().cloned() {
             Some(last) => {
                 self.editor.select_id(last);
                 self.edit_note = Some(Ok(format!("{} selected.", many.len())));
+                // The primary element's details load as a click's do, so the panel shows its
+                // properties instead of "details unavailable" and the view's form.
+                self.refresh_selection();
             }
             None => self.editor.deselect(),
         }
@@ -1033,8 +1011,31 @@ impl App {
         } else {
             (orbit, pan)
         };
-        // F8 locks rotation; pan and zoom still work.
+        // F8 locks rotation; pan and zoom still work. The lock is shown on the view while it
+        // holds, and a turn it stops says why, so a locked view never just seems broken.
         let orbit = if self.rotation_locked {
+            if orbit != [0.0; 2] {
+                self.edit_note = Some(Ok("Rotation locked — press F8 to unlock.".into()));
+            }
+            let palette = crate::theme::Palette::current(ui);
+            let text = ui.painter().layout_no_wrap(
+                "Rotation locked · F8".into(),
+                egui::FontId::proportional(11.0),
+                palette.text,
+            );
+            let badge = egui::Rect::from_min_size(
+                body.left_top() + vec2(8.0, 8.0),
+                text.size() + vec2(12.0, 6.0),
+            );
+            ui.painter().rect_filled(badge, 3, palette.head);
+            ui.painter().rect_stroke(
+                badge,
+                3,
+                Stroke::new(1.0, palette.rule),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter()
+                .galley(badge.min + vec2(6.0, 3.0), text, palette.text);
             [0.0; 2]
         } else {
             orbit
@@ -1121,21 +1122,6 @@ impl App {
                 pane.pivot = Some(point);
             }
         }
-        // The working coordinate under the pointer, for the status bar. Only a pane the
-        // pointer is over writes it; the frame stamp lets a stale reading expire when the
-        // pointer leaves every pane.
-        if let Some(pos) = response.hover_pos()
-            && let Some(ndc) = ndc_of(
-                [pos.x, pos.y],
-                [response.rect.min.x, response.rect.min.y],
-                [response.rect.width(), response.rect.height()],
-            )
-            && let Some(ray) = ray_through(&view, ndc, display_origin)
-        {
-            self.pointer_world =
-                working_coordinates(&pane.camera, display_origin, self.tools.plane, &ray)
-                    .map(|point| (ui.ctx().cumulative_pass_nr(), point));
-        }
         // The same clear colours `screenshot-view` answers with (issue 562 item 36): the dark
         // theme sits on the renderer's dark background, the light one on the paper tone.
         let background = if dark {
@@ -1189,10 +1175,8 @@ impl App {
             };
             // The display cut is uniform state: the scene and its snapshot never change.
             // Planes are model millimetres; the uniform is scene-centred.
-            let clip = match &cut {
-                Some(cut) => crate::cut_plane::ClipGpu::of(cut, l.summary.origin_mm),
-                None => crate::cut_plane::ClipGpu::none(),
-            };
+            let clip =
+                crate::views::display_clip_gpu(self.cut.as_ref(), shown, l.summary.origin_mm);
             // One loaded scene, five drawing styles: the mode picks the pipeline and never
             // rewrites the snapshot or its token.
             if pane.mode == RenderMode::SelectedOnly {
@@ -1262,14 +1246,18 @@ impl App {
             // A view that hides the grid kind hides its lines and bubbles too, like it hides
             // beams (issue 569 item 13): `pane.grids` is only the pane's guides switch.
             // The New grid form shows the grid it would create before Create: the editor of
-            // an existing grid has `grid_edit`, a new one does not.
+            // an existing grid has `grid_edit`, a new one does not. Lines already in the model
+            // are left out, so a form matching an existing grid draws no second label.
             if self.bench == workbench::Bench::Grid && self.grid_edit.is_none() {
                 crate::grid::paint_preview(
                     ui,
                     response.rect,
                     &view,
                     l.summary.origin_mm,
-                    &self.grid_form.preview_lines(),
+                    &crate::grid::new_preview_lines(
+                        self.grid_form.preview_lines(),
+                        &self.grid_scene.lines,
+                    ),
                 );
             }
             if pane.grids && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
@@ -1281,6 +1269,13 @@ impl App {
                     l.summary.origin_mm,
                     self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
                     shown,
+                    &self
+                        .tools
+                        .definitions
+                        .levels
+                        .iter()
+                        .map(|level| level.elevation_mm)
+                        .collect::<Vec<_>>(),
                 );
                 crate::levels::paint_sections(
                     ui,
@@ -1399,6 +1394,7 @@ impl App {
         let view = &draw.view;
         let mut picked = None;
         let mut picked_grid = None;
+        let mut picked_level = None;
         // The contour grips (V18) see the pointer before any click: a grip drag is not a
         // selection or a camera move, and its release commits one contour edit. The corner
         // editor's window belongs to the active pane too.
@@ -1460,7 +1456,28 @@ impl App {
                     )
                     .map(|grid| grid.id.clone());
             }
-            if picked_grid.is_none() {
+            // A level drawn edge-on in a section is drawn with the grid guides; clicking its
+            // line or caption opens its properties, as clicking a grid bubble does.
+            if picked_grid.is_none()
+                && !self.beam_mode
+                && !self.plate_mode
+                && self.views.picking.is_none()
+                && self.grid_line.click.is_none()
+                && self.two_point.is_none()
+                && self.grids_shown()
+                && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
+                && let Some(l) = &self.loaded
+            {
+                picked_level = crate::levels::hit_section(
+                    view,
+                    response.rect,
+                    l.summary.origin_mm[2],
+                    self.grid_scene.bounds(&l.summary),
+                    &self.tools.definitions.levels,
+                    pos,
+                );
+            }
+            if picked_grid.is_none() && picked_level.is_none() {
                 picked = Some(ray);
             }
         }
@@ -1582,6 +1599,50 @@ impl App {
             ));
             painter.circle_filled(start, 3.5, theme::BRAND);
         }
+        // Copy, move and bolt points snap like placement does, and show the same marker.
+        if self.picking_point()
+            && let Some(loaded) = self.loaded.as_ref()
+            && let Some(ray) = response.hover_pos().and_then(|pos| {
+                ndc_of(
+                    [pos.x, pos.y],
+                    [response.rect.min.x, response.rect.min.y],
+                    [response.rect.width(), response.rect.height()],
+                )
+                .and_then(|ndc| ray_through(view, ndc, loaded.summary.origin_mm))
+            })
+            && let Ok((point, Some(kind))) = self.creation_hit(ray, false)
+            && let Some(at) =
+                crate::grid::project(point, response.rect, view, loaded.summary.origin_mm)
+        {
+            super::creation_panel::paint_snap_marker(
+                &ui.painter_at(response.rect),
+                at,
+                kind,
+                theme::BRAND,
+            );
+        }
+        // A grid line being drawn shows where its next end snaps.
+        if self.grid_line.click.is_some()
+            && let Some(loaded) = self.loaded.as_ref()
+            && let Some(ray) = response.hover_pos().and_then(|pos| {
+                ndc_of(
+                    [pos.x, pos.y],
+                    [response.rect.min.x, response.rect.min.y],
+                    [response.rect.width(), response.rect.height()],
+                )
+                .and_then(|ndc| ray_through(view, ndc, loaded.summary.origin_mm))
+            })
+            && let Ok((point, Some(kind))) = self.grid_line_hit(ray)
+            && let Some(at) =
+                crate::grid::project(point, response.rect, view, loaded.summary.origin_mm)
+        {
+            super::creation_panel::paint_snap_marker(
+                &ui.painter_at(response.rect),
+                at,
+                kind,
+                theme::BRAND,
+            );
+        }
         if self.views.picking.is_some() {
             let hover = response.hover_pos().and_then(|pos| {
                 ndc_of(
@@ -1596,6 +1657,10 @@ impl App {
         if let Some(id) = picked_grid {
             if !self.other_command_running() {
                 self.select_grid(&id);
+            }
+        } else if let Some(id) = picked_level {
+            if !self.other_command_running() {
+                self.select_level(&id);
             }
         } else if let Some(ray) = picked {
             if self.views.picking.is_some() {
@@ -1629,6 +1694,8 @@ impl App {
                 self.annotation_click(ray);
             } else if self.bench == workbench::Bench::Weld {
                 self.weld_click(ray);
+            } else if self.bench == workbench::Bench::Fit {
+                self.fit_click(ray);
             } else if self.bench == workbench::Bench::Bolt {
                 self.bolt_click(ray);
             } else if !self.other_command_running() {

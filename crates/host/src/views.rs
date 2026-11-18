@@ -158,6 +158,7 @@ pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
                 None => Json::Null,
             },
         ),
+        ("beyond", Json::text(view.beyond.as_str())),
         ("render_mode", Json::text(view.render_mode.as_token())),
         ("grids_visible", Json::Bool(view.grids_visible)),
         ("folder", Json::text(&view.folder)),
@@ -413,6 +414,12 @@ pub fn view_from_json(json: &Json) -> Result<ModelView, CommandError> {
     view.depth = match optional(json, "depth_mm") {
         Some(_) => Some(numbers(json, "depth_mm")?),
         None => None,
+    };
+    // Files written before the setting existed cut, as views did then.
+    view.beyond = match optional(json, "beyond") {
+        Some(_) => beamcraft_engine::views::DepthBeyond::parse(text("beyond")?)
+            .map_err(|_| unread("beyond"))?,
+        None => beamcraft_engine::views::DepthBeyond::Cut,
     };
     view.render_mode =
         RenderMode::parse(text("render_mode")?).ok_or_else(|| unread("render_mode"))?;

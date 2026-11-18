@@ -1099,11 +1099,14 @@ pub enum SnapKind {
     ConstructionCircle,
     /// The nearest point of a construction object's helper plane (T02).
     ConstructionPlane,
+    /// The foot of the perpendicular from the last picked point ([`SnapContext::from`]) on a
+    /// member reference axis or a grid segment.
+    Perpendicular,
 }
 
 impl SnapKind {
     /// Every kind, in rank order: the order the snap panel lists them in.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Vertex,
         Self::AxisEnd,
         Self::Axis,
@@ -1119,6 +1122,7 @@ impl SnapKind {
         Self::ConstructionCenter,
         Self::ConstructionCircle,
         Self::ConstructionPlane,
+        Self::Perpendicular,
     ];
 
     /// The wire token.
@@ -1139,6 +1143,7 @@ impl SnapKind {
             Self::ConstructionCenter => "construction_center",
             Self::ConstructionCircle => "construction_circle",
             Self::ConstructionPlane => "construction_plane",
+            Self::Perpendicular => "perpendicular",
         }
     }
 
@@ -1160,6 +1165,7 @@ impl SnapKind {
             "construction_center" => Some(Self::ConstructionCenter),
             "construction_circle" => Some(Self::ConstructionCircle),
             "construction_plane" => Some(Self::ConstructionPlane),
+            "perpendicular" => Some(Self::Perpendicular),
             _ => None,
         }
     }
@@ -1181,6 +1187,7 @@ impl SnapKind {
             Self::ConstructionCenter => 12,
             Self::ConstructionCircle => 13,
             Self::ConstructionPlane => 14,
+            Self::Perpendicular => 15,
         }
     }
 
@@ -1321,6 +1328,9 @@ pub struct SnapContext<'a> {
     pub sources: SnapSources,
     /// Permit arbitrary points on lines; does not enable endpoints, midpoints or intersections.
     pub nearest: bool,
+    /// The last picked point in world millimetres: the start of [`SnapKind::Perpendicular`].
+    /// Without it no perpendicular candidate is offered.
+    pub from: Option<[f64; 3]>,
 }
 impl Default for SnapContext<'_> {
     fn default() -> Self {
@@ -1332,6 +1342,7 @@ impl Default for SnapContext<'_> {
             cursor: None,
             sources: SnapSources::default(),
             nearest: true,
+            from: None,
         }
     }
 }
@@ -1950,9 +1961,87 @@ pub fn snap_with_context(
             }
         }
     }
+    if query.kinds.contains(&SnapKind::Perpendicular)
+        && let Some(from) = context.from
+    {
+        perpendicular_candidates(&mut result, query, context, from, band)?;
+    }
     result.truncated |= keep_best(&mut result.candidates, max, snap_order);
     clean_snap_points(&mut result);
     Ok(result)
+}
+
+/// The foot of the perpendicular from `from` on `[a, b]`, with its parameter along the segment,
+/// when it falls inside the segment.
+fn perpendicular_foot(from: V3, a: V3, b: V3) -> Option<(V3, f64)> {
+    let d = sub(b, a);
+    let length = dot(d, d);
+    if !(length > 0.0 && length.is_finite()) {
+        return None;
+    }
+    let t = dot(sub(from, a), d) / length;
+    (0.0..=1.0).contains(&t).then(|| (add(a, scale(d, t)), t))
+}
+
+/// Perpendicular candidates from `from` on every member reference axis segment and every grid
+/// segment whose foot lies within the query band: a beam square to a beam or to a grid line.
+fn perpendicular_candidates(
+    result: &mut SnapResult,
+    query: &SnapQuery,
+    context: &SnapContext<'_>,
+    from: V3,
+    band: f64,
+) -> Result<(), ViewError> {
+    if !from.iter().all(|v| v.is_finite()) {
+        return Err(input());
+    }
+    let push = |result: &mut SnapResult, element_id, grid, foot, t| {
+        if let Some(distance) = snap_distance(query.point_mm, foot, band, context) {
+            result.candidates.push(SnapCandidate {
+                grid,
+                element_id,
+                kind: SnapKind::Perpendicular,
+                feature_id: None,
+                axis_parameter: Some(t),
+                point_world_mm: foot,
+                distance_mm: distance,
+            });
+        }
+    };
+    if context.allows(SnapKind::Perpendicular, SnapOrigin::Reference) {
+        for axis in context.member_axes {
+            for pair in axis.points_mm.windows(2) {
+                let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else {
+                    continue;
+                };
+                if let Some((foot, t)) = perpendicular_foot(from, *a, *b) {
+                    push(result, axis.element_id, None, foot, t);
+                }
+            }
+        }
+    }
+    if context.allows(SnapKind::Perpendicular, SnapOrigin::Grid) {
+        use crate::grid_query::{local_to_world, segments};
+        for grid in context.grids {
+            for line in segments(grid).map_err(|_| input())? {
+                // Grid guides are vertical planes: the foot is taken in plan at the height of
+                // the last point, as a beam drawn square to a grid line expects.
+                let [ax, ay] = local_to_world(grid, line.start);
+                let [bx, by] = local_to_world(grid, line.end);
+                let z = from[2];
+                if let Some((foot, t)) = perpendicular_foot(from, [ax, ay, z], [bx, by, z]) {
+                    let identity = GridSnapIdentity {
+                        axis_id: line.axis_id,
+                        other_axis_id: None,
+                        label: line.label.clone(),
+                        other_label: None,
+                    };
+                    push(result, grid.id, Some(identity), foot, t);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2431,6 +2520,81 @@ mod tests {
             .code(),
             ViewCode::PickInputInvalid
         );
+    }
+
+    #[test]
+    fn perpendicular_snaps_to_the_foot_from_the_last_point_on_a_grid_line() {
+        use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
+        let id = |n: u8| ElementId::parse(&format!("01990000-0000-7000-8000-{n:012x}")).unwrap();
+        let grids = [Grid {
+            id: id(1),
+            name: "G".into(),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+            u: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: id(2),
+                label: "1".into(),
+                start_mm: [0.0, 0.0],
+                end_mm: [0.0, 4000.0],
+            }]),
+            v: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: id(3),
+                label: "A".into(),
+                start_mm: [-1000.0, 5000.0],
+                end_mm: [1000.0, 5000.0],
+            }]),
+        }];
+        let s = snapshot(1);
+        let query = SnapQuery {
+            point_mm: [10.0, 2020.0, 0.0],
+            radius_mm: 50.0,
+            kinds: vec![SnapKind::Perpendicular],
+            max_hits: 4,
+        };
+        let context = |from| SnapContext {
+            grids: &grids,
+            from,
+            ..Default::default()
+        };
+        let result = snap_with_context(&s, &query, &context(Some([3000.0, 2000.0, 0.0]))).unwrap();
+        assert_eq!(result.candidates.len(), 1, "{:?}", result.candidates);
+        let hit = &result.candidates[0];
+        assert_eq!(hit.kind, SnapKind::Perpendicular);
+        assert_eq!(hit.point_world_mm, [0.0, 2000.0, 0.0]);
+        assert_eq!(hit.axis_parameter, Some(0.5));
+        assert_eq!(hit.grid.as_ref().map(|g| g.label.as_str()), Some("1"));
+        // Without a last point, with the foot off the segment or out of the band: nothing.
+        for from in [
+            None,
+            Some([3000.0, 6000.0, 0.0]),
+            Some([3000.0, 3000.0, 0.0]),
+        ] {
+            let result = snap_with_context(&s, &query, &context(from)).unwrap();
+            assert!(
+                result.candidates.is_empty(),
+                "{from:?}: {:?}",
+                result.candidates
+            );
+        }
+        // The grid gate closes it like every grid snap.
+        let closed = SnapContext {
+            sources: SnapSources {
+                grids: false,
+                ..SnapSources::default()
+            },
+            ..context(Some([3000.0, 2000.0, 0.0]))
+        };
+        assert!(
+            snap_with_context(&s, &query, &closed)
+                .unwrap()
+                .candidates
+                .is_empty()
+        );
+        assert_eq!(
+            SnapKind::parse("perpendicular"),
+            Some(SnapKind::Perpendicular)
+        );
+        assert_eq!(SnapKind::Perpendicular.as_str(), "perpendicular");
     }
 
     #[test]

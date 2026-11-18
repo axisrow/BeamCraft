@@ -82,9 +82,11 @@ fn a_display_cut_hides_the_pick_like_the_picture() {
             .unwrap()
             .is_some()
     };
-    // The top-face hit sits above the mid plane. Keeping the upper half keeps the hit;
-    // keeping the lower half hides it, for the view pick and the free pick alike (issue 569
-    // item 2): a click never selects what the cut hides.
+    // The top-face hit sits above the mid plane. Keeping the upper half keeps the hit.
+    // Keeping the lower half hides the top face but leaves the plate's section on the plane,
+    // which the picture shows, so the click selects the plate there; a cut that keeps
+    // nothing of the plate selects nothing, for the view pick and the free pick alike (issue
+    // 569 item 2): a click never selects what the cut hides.
     let mid = (bounds.min[2] + bz) / 2.0;
     let keep_above = Clipping {
         planes: vec![ClipPlane::new([0.0, 0.0, mid], [0.0, 0.0, 1.0]).unwrap()],
@@ -94,10 +96,28 @@ fn a_display_cut_hides_the_pick_like_the_picture() {
         planes: vec![ClipPlane::new([0.0, 0.0, mid], [0.0, 0.0, -1.0]).unwrap()],
         area: None,
     };
+    let above_all = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, bz + 10.0], [0.0, 0.0, 1.0]).unwrap()],
+        area: None,
+    };
     assert!(visible(None) && visible(Some(&keep_above)));
-    assert!(!visible(Some(&keep_below)));
+    assert!(visible(Some(&keep_below)) && kept(Some(&keep_below)));
+    let section = views::pick_kept(
+        &snapshot,
+        ray,
+        down,
+        SelectionFilter::ALL,
+        Some(&keep_below),
+        false,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        (section.point_world_mm[2] - mid).abs() < 1e-6,
+        "the hit lies on the section"
+    );
+    assert!(!visible(Some(&above_all)) && !kept(Some(&above_all)));
     assert!(kept(None) && kept(Some(&keep_above)));
-    assert!(!kept(Some(&keep_below)));
 }
 
 #[test]
@@ -129,6 +149,16 @@ fn a_visible_pick_obeys_depth_and_hidden_kinds() {
             .is_none(),
         "the plate lies outside the thin slab"
     );
+    // A slab through the plate's thickness: the click straight down meets the top face
+    // above the slab and the bottom face below it, both hidden, and selects the section the
+    // slab draws between them (a column clicked in a plan).
+    let mid = (bounds.min[2] + bz) / 2.0;
+    v.plane = WorkPlane::parallel("xy", mid).unwrap();
+    v.depth = Some([0.5, 0.5]);
+    let hit = views::pick_visible(&snapshot, &v, ray, down, SelectionFilter::ALL, false)
+        .unwrap()
+        .expect("the cut section is picked");
+    assert!((hit.point_world_mm[2] - (mid + 0.5)).abs() < 1e-6);
     assert_eq!(snapshot.token(), token, "views never change the snapshot");
 }
 

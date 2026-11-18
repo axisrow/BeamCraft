@@ -441,15 +441,57 @@ enum Reply {
     Recent(Result<Vec<ProjectView>, ToolError>),
 }
 
+/// What the preview worker read for a model.
+enum Read {
+    /// The model's `thumbnail.png`.
+    Picture(egui::ColorImage),
+    /// No picture yet: the model's geometry, projected.
+    Model(crate::preview::ModelPreview),
+}
+
+/// What the library shows for a model.
+enum Preview {
+    /// The model's `thumbnail.png`, saved when it was last left or put there by a person.
+    Picture(egui::TextureHandle),
+    /// The model's geometry, projected, for a model with no picture yet.
+    Model(crate::preview::ModelPreview),
+}
+
+impl Preview {
+    /// Whether there is nothing to picture: an empty model without a picture.
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Picture(_) => false,
+            Self::Model(model) => model.is_empty(),
+        }
+    }
+
+    /// Paints the picture, letterboxed in `rect`, or the projected model filling it.
+    fn paint(&self, painter: &egui::Painter, rect: egui::Rect, palette: Palette) {
+        match self {
+            Self::Picture(texture) => {
+                let painter = painter.with_clip_rect(rect);
+                painter.image(
+                    texture.id(),
+                    crate::thumbnail::fit(rect, texture.size()),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            Self::Model(model) => model.paint(painter, rect, palette),
+        }
+    }
+}
+
 struct PreviewJob {
     path: String,
-    reply: Receiver<Result<crate::preview::ModelPreview, String>>,
+    reply: Receiver<Result<Read, String>>,
     discard: bool,
 }
 
 /// The start window and the start page.
 pub struct StartPage {
-    previews: std::collections::BTreeMap<String, Result<crate::preview::ModelPreview, String>>,
+    previews: std::collections::BTreeMap<String, Result<Preview, String>>,
     preview_job: Option<PreviewJob>,
     cli: PathBuf,
     config_dir: Option<PathBuf>,
@@ -792,7 +834,15 @@ impl StartPage {
             self.previews.pop_first();
         }
         if !job.discard {
-            self.previews.insert(job.path.clone(), result);
+            let preview = result.map(|read| match read {
+                Read::Picture(image) => Preview::Picture(ctx.load_texture(
+                    format!("model-thumbnail:{}", job.path),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                )),
+                Read::Model(model) => Preview::Model(model),
+            });
+            self.previews.insert(job.path.clone(), preview);
         }
         self.preview_job = None;
     }
@@ -808,9 +858,15 @@ impl StartPage {
         match std::thread::Builder::new()
             .name("model-library-preview".into())
             .spawn(move || {
-                let result = crate::source::load(&cli, &store, &stats)
-                    .and_then(|snapshot| crate::preview::ModelPreview::from_snapshot(&snapshot))
-                    .map_err(|error| error.to_string());
+                // The saved picture first: reading and projecting the geometry is only for a
+                // model that has none yet.
+                let result = match crate::thumbnail::load(&store) {
+                    Some(picture) => picture.map(Read::Picture),
+                    None => crate::source::load(&cli, &store, &stats)
+                        .and_then(|snapshot| crate::preview::ModelPreview::from_snapshot(&snapshot))
+                        .map(Read::Model)
+                        .map_err(|error| error.to_string()),
+                };
                 let _ = tx.send(result);
             }) {
             Ok(_) => {
@@ -1368,8 +1424,8 @@ impl StartPage {
                         );
                         painter.rect_filled(preview, 3, palette.head);
                         match self.previews.get(&project.path) {
-                            Some(Ok(model)) if !model.is_empty() => {
-                                model.paint(painter, preview, palette)
+                            Some(Ok(shown)) if !shown.is_empty() => {
+                                shown.paint(painter, preview, palette)
                             }
                             // An empty model has no picture: it shows the same placeholder as a
                             // model whose preview is not read, never a bare box.
@@ -1543,7 +1599,14 @@ impl StartPage {
                             ui.cursor().top()
                         };
                         match self.previews.get(&project.path) {
-                            Some(Ok(model)) => {
+                            Some(Ok(Preview::Picture(_))) => {
+                                ui.label(
+                                    egui::RichText::new("Picture of the last view · thumbnail.png")
+                                        .small()
+                                        .color(palette.muted),
+                                );
+                            }
+                            Some(Ok(Preview::Model(model))) => {
                                 ui.label(
                                     egui::RichText::new(format!(
                                         "{} element{} · mm",
@@ -1857,7 +1920,6 @@ mod tests {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label("BeamCraft");
-                                theme::window_controls_with_maximize(ui, false);
                             });
                         });
                     page.ui(ui);
@@ -2194,7 +2256,6 @@ mod tests {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label("BeamCraft");
-                                theme::window_controls_with_maximize(ui, false);
                             });
                         });
                     page.ui(ui);

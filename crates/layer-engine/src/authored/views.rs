@@ -32,6 +32,7 @@ pub const VIEWS_SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:view:favorite=bool;bim:view:default=bool;bim:view:workAreaMm=double3[](exactly 2 entries,min then max,optional,finite,abs<=1e9);\n",
     "bim:view:rotationRad=double[](exactly 2,finite);bim:view:colorRgb=double3(optional,0..=1 each);bim:view:opacity=double(0..=1)\n",
     "bim:view:representation=token(full|simplified,optional,default full);bim:view:colourSet=string(1..=64 bytes,no controls,optional);\n",
+    "bim:view:beyondDepth=token(cut|transparent,optional,default cut)\n",
     "bim:view:folders=string[](on the views scope,exactly the folders no view uses,sorted unique,each at most 512 bytes,\n",
     "at most 8 nonempty segments without controls,outer spaces or dot names,at most 512 entries,optional)\n",
     "bim:view:filterOverrides=string[](on the camera,<=16 entries,each 1..=512 bytes,no controls,in order,optional);\n",
@@ -191,6 +192,8 @@ pub struct SavedView {
     /// Display representation token of the view (V07), at most 64 bytes; `full` is the
     /// default. An unknown token stays a token, never a refusal, like the display mode.
     pub representation: String,
+    /// What the depth limit does beyond it, `cut` or `transparent`; `cut` is the default.
+    pub beyond_depth: String,
     /// The saved colour set (V17) the view colours by, by name; `None` colours by the model.
     pub colour_set: Option<String>,
     /// The view's filter overrides in order, each one opaque bounded text the caller encodes
@@ -227,6 +230,7 @@ impl SavedView {
             color_rgb: None,
             opacity: 1.0,
             representation: "full".to_owned(),
+            beyond_depth: "cut".to_owned(),
             colour_set: None,
             filter_overrides: Vec::new(),
             stamp: None,
@@ -318,6 +322,9 @@ impl SavedView {
         if self.representation.is_empty() || self.representation.len() > 64 {
             return Err(invalid());
         }
+        if !matches!(self.beyond_depth.as_str(), "cut" | "transparent") {
+            return Err(invalid());
+        }
         if let Some(set) = &self.colour_set
             && (set.is_empty() || set.len() > 64 || set.chars().any(char::is_control))
         {
@@ -357,6 +364,7 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("bim:view:colorRgb", "double3"),
     ("bim:view:opacity", "double"),
     ("bim:view:representation", "token"),
+    ("bim:view:beyondDepth", "token"),
     ("bim:view:colourSet", "string"),
     ("bim:view:filterOverrides", "string[]"),
     ("bim:view:author", "string"),
@@ -534,6 +542,16 @@ fn author(data: &mut sdf::Data, view: &SavedView) -> Result<(), Diagnostic> {
         "token",
         sdf::Value::token(view.representation.clone()),
     )?;
+    // Only a non-default value is written, so a view saved without the setting reads the same.
+    if view.beyond_depth != "cut" {
+        edit::attr(
+            data,
+            &p,
+            "bim:view:beyondDepth",
+            "token",
+            sdf::Value::token(view.beyond_depth.clone()),
+        )?;
+    }
     if let Some(set) = &view.colour_set {
         edit::attr(
             data,
@@ -829,6 +847,16 @@ pub fn read(p: &Prim) -> Result<SavedView, Diagnostic> {
                 text(p, "bim:view:representation", "token")?.to_owned()
             } else {
                 "full".to_owned()
+            }
+        },
+        beyond_depth: {
+            if p.properties
+                .iter()
+                .any(|v| v.name == "bim:view:beyondDepth")
+            {
+                text(p, "bim:view:beyondDepth", "token")?.to_owned()
+            } else {
+                "cut".to_owned()
             }
         },
         colour_set: {

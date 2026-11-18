@@ -131,6 +131,11 @@ impl Appearance {
     /// Start-screen title bar with optional maximize for a resizable library.
     pub fn titlebar(&mut self, ui: &mut egui::Ui, enabled: bool, maximize: bool) {
         self.poll(ui.ctx());
+        // Off macOS the system title bar names and moves the window, so the strip is drawn only
+        // when it carries something: the welcome theme choice or a settings error.
+        if !cfg!(target_os = "macos") && maximize && self.error.is_none() {
+            return;
+        }
         let palette = Palette::current(ui);
         egui::Panel::top("application-appearance")
             .exact_size(36.0)
@@ -143,9 +148,11 @@ impl Appearance {
                 crate::theme::titlebar_drag_with_maximize(ui, maximize);
                 ui.horizontal_centered(|ui| {
                     crate::theme::native_controls_inset(ui);
-                    ui.label(egui::RichText::new("BeamCraft").size(12.0));
+                    // Elsewhere the system's own title bar already names the window.
+                    if cfg!(target_os = "macos") {
+                        ui.label(egui::RichText::new("BeamCraft").size(12.0));
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        crate::theme::window_controls_with_maximize(ui, maximize);
                         if !maximize {
                             self.selector(ui, enabled);
                         } else {
@@ -282,11 +289,16 @@ mod tests {
             }
         }
         output.drop_without_applying_deltas();
-        let title = title.expect("the window title is drawn");
         assert!(
             texts.iter().any(|(text, _)| text == "Settings error"),
             "the short error word is shown: {texts:?}"
         );
+        // Only macOS draws the name in the header; elsewhere the system's title bar shows it.
+        assert_eq!(title.is_some(), cfg!(target_os = "macos"), "{texts:?}");
+        let Some(title) = title else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
         for (text, bounds) in &texts {
             if text == "BeamCraft" {
                 continue;

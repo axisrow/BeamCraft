@@ -468,3 +468,49 @@ fn grid_intersections_meet_inclined_plane_and_snapped_contour_publishes_exact_pl
         20_000_000.
     );
 }
+
+#[test]
+fn perpendicular_snaps_from_the_last_point_to_a_grid_line() {
+    let f = StoreFixture::new("grid-perpendicular");
+    ok(
+        &f,
+        "create-grid",
+        &[
+            "--name",
+            "Square",
+            "--u-expression",
+            "0 1000 2000",
+            "--v-expression",
+            "0 800 1200",
+            "--u-span",
+            "-100,2100",
+            "--v-span",
+            "-100,3100",
+        ],
+    );
+    let args = |from: Option<&'static str>| {
+        let mut args = vec![
+            "--point",
+            "4,1503,300",
+            "--radius",
+            "20",
+            "--kinds",
+            "perpendicular",
+        ];
+        if let Some(from) = from {
+            args.extend(["--from", from]);
+        }
+        args
+    };
+    let hit = ok(&f, "snap", &args(Some("3000,1500,300")));
+    let candidates = list(&hit, "candidates");
+    assert!(
+        candidates
+            .iter()
+            .any(|h| point(h) == [0., 1500., 300.] && text(h, "kind") == "perpendicular"),
+        "{hit:?}"
+    );
+    // No last point, no perpendicular.
+    let none = ok(&f, "snap", &args(None));
+    assert!(list(&none, "candidates").is_empty(), "{none:?}");
+}

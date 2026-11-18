@@ -141,6 +141,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--grid-snaps",
             "--construction-snaps",
             "--nearest",
+            "--from",
         ],
         _ => return Err(invalid("unknown command")),
     };
@@ -291,6 +292,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         construction: switch("--construction-snaps")?,
     };
     let nearest = switch("--nearest")?;
+    // The last picked point: the start of a perpendicular snap.
+    let snap_from = given("--from").map(|_| point("--from")).transpose()?;
     let snap_cursor = if *command == "snap" {
         match (given("--origin"), given("--direction")) {
             (None, None) if given("--aperture").is_none() && given("--cursor-radius").is_none() => {
@@ -496,6 +499,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                     cursor: snap_cursor,
                     sources: snap_sources,
                     nearest,
+                    from: snap_from,
                 },
             )?;
             let mut fields = header("snapped");

@@ -252,6 +252,7 @@ pub(super) fn snap_marker(painter: &Painter, rect: Rect, kind: SnapKind, color: 
         SnapKind::Center => Glyph::Center,
         SnapKind::GridIntersection => Glyph::Intersection,
         SnapKind::Axis | SnapKind::Edge | SnapKind::GridLine => Glyph::OnLine,
+        SnapKind::Perpendicular => Glyph::Perpendicular,
         _ => Glyph::Existing(Icon::End),
     };
     paint(painter, rect, glyph, color, color);
@@ -290,6 +291,7 @@ fn snap_kinds(label: &str) -> &'static [SnapKind] {
         "Snap axis centers" => &[SnapKind::Center],
         "Snap midpoints" => &[SnapKind::Midpoint],
         "Snap nearest" => &[SnapKind::Axis, SnapKind::Edge, SnapKind::GridLine],
+        "Snap perpendicular" => &[SnapKind::Perpendicular],
         "Snap construction objects" => &[
             SnapKind::ConstructionPoint,
             SnapKind::ConstructionEnd,
@@ -354,7 +356,11 @@ pub(super) fn snaps(ui: &mut Ui, selection: &mut Selection) {
                 "Orthogonal constraint" => selection.orthogonal,
                 _ => !kinds.is_empty() && kinds.iter().all(|kind| selection.snap_on(*kind)),
             };
-            let clicked = button(ui, label, *glyph, active, source || !kinds.is_empty()).clicked();
+            // The window neither loads nor draws construction objects yet, and only what is
+            // seen may be snapped to: the switch waits, disabled, like the reserved kinds.
+            let waiting = *label == "Snap construction objects";
+            let enabled = !waiting && (source || !kinds.is_empty());
+            let clicked = button(ui, label, *glyph, active && enabled, enabled).clicked();
             if clicked {
                 match *label {
                     "Snap grids" => selection.snap_grids = !active,
@@ -409,6 +415,12 @@ mod tests {
                     .count(),
                 1
             );
+        }
+        // Perpendicular is a real engine snap; extensions, tangents and parallel stay reserved
+        // (disabled) until the engine resolves them.
+        assert_eq!(snap_kinds("Snap perpendicular"), &[SnapKind::Perpendicular]);
+        for reserved in ["Snap extensions", "Snap tangents", "Snap parallel"] {
+            assert!(snap_kinds(reserved).is_empty(), "{reserved}");
         }
         for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
             ctx.set_theme(preference);

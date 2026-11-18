@@ -133,6 +133,16 @@ impl Camera {
         if derived_anchor(&view.plane) && cast.iter().all(|x| x.is_finite() && x.abs() <= 1e7) {
             camera.target = cast;
         }
+        // A 3D view (a ground plane with the camera tilted off it, as Tekla keeps one) opens
+        // as the free orbit camera it was saved from, not one locked on a plane, so it turns
+        // and Ctrl+P looks down at its plan. Heading and tilt map onto yaw and pitch.
+        let [turn, tilt] = view.rotation_rad;
+        if tilt.abs() > 1e-9 && view.plane.normal()[2].abs() > 0.999 {
+            camera.basis = None;
+            camera.yaw =
+                ((turn - std::f64::consts::FRAC_PI_2) as f32).rem_euclid(std::f32::consts::TAU);
+            camera.pitch = ((std::f64::consts::FRAC_PI_2 - tilt) as f32).clamp(-1.52, 1.52);
+        }
         Ok(camera)
     }
     /// An orthographic camera looking straight at `plane` with `span` millimetres of visible
@@ -193,6 +203,19 @@ impl Camera {
         let span = (2.0 * f64::from(self.distance) * f64::from(HALF_FOV.tan())).clamp(1.0, 2e7);
         Ok((plane, span))
     }
+    /// The 3D camera of a plane view (Ctrl+P, as in Tekla): the same target, distance and
+    /// projection, free of the view plane and turned to the default 3D direction, so it orbits.
+    /// A camera that already orbits is returned as it is.
+    pub fn orbiting(&self) -> Self {
+        if self.basis.is_none() {
+            return *self;
+        }
+        let mut camera = *self;
+        camera.basis = None;
+        camera.yaw = -0.8;
+        camera.pitch = 0.85;
+        camera
+    }
     /// Whether the camera is aligned with a view plane rather than orbiting by yaw and pitch.
     pub fn is_aligned(&self) -> bool {
         self.basis.is_some()
@@ -230,11 +253,12 @@ impl Camera {
         // A view plane (a plan, an elevation or a section) never orbits: it stays on its plane
         // with its X to the right and its Y up, as a plan does in Tekla and Revit, and is turned
         // only by the view's own Rotation setting. Pan and zoom still work. The 3D view orbits
-        // by yaw about the world Z and pitch from the ground, and stops just short of the top
-        // so its turntable keeps a heading.
+        // by yaw about the world Z and pitch, above or below the ground so the underside of a
+        // plate can be seen, and stops just short of straight up or down so its turntable
+        // keeps a heading.
         if self.basis.is_none() {
             self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-            self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+            self.pitch = (self.pitch + oy).clamp(-1.52, 1.52);
         }
         self.distance = (self.distance * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let view = self.view(1.0)?;
@@ -276,7 +300,7 @@ impl Camera {
         let local = [dot(offset, r), dot(offset, u), dot(offset, b)];
         let [ox, oy] = orbit;
         self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        self.pitch = (self.pitch + oy).clamp(-1.52, 1.52);
         let [r2, u2, b2] = frame(self)?;
         let moved = sum(
             sum(scaled(r2, local[0]), scaled(u2, local[1])),
@@ -476,6 +500,34 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn the_3d_camera_orbits_below_the_ground_to_see_an_underside() {
+        let mut camera = Camera::new([0.0; 3], 1000.0, 1.0).unwrap();
+        camera.navigate([0.0, -3.0], [0.0, 0.0], 0.0).unwrap();
+        let [.., back_z, _] = camera.view(1.0).unwrap().back;
+        assert!(back_z < -0.99, "the eye is under the ground: {back_z}");
+        camera.orbit_about([0.0; 3], [0.0, 3.0]).unwrap();
+        let [.., back_z, _] = camera.view(1.0).unwrap().back;
+        assert!(back_z > 0.99, "and back over the top: {back_z}");
+    }
+
+    #[test]
+    fn a_plane_camera_switched_to_3d_orbits() {
+        let plane = WorkPlane::default();
+        let aligned = Camera::aligned_to(plane, [0.0; 3], 10_000.0, 50_000.0).unwrap();
+        let mut stuck = aligned;
+        let before = stuck.view(1.0).unwrap();
+        stuck.navigate([0.5, 0.2], [0.0; 2], 0.0).unwrap();
+        assert_eq!(stuck.view(1.0).unwrap().right, before.right);
+        let mut free = aligned.orbiting();
+        assert!(!free.is_aligned());
+        assert_eq!(free.target, aligned.target);
+        assert_eq!(free.distance, aligned.distance);
+        let start = free.view(1.0).unwrap();
+        free.navigate([0.5, 0.2], [0.0; 2], 0.0).unwrap();
+        assert_ne!(free.view(1.0).unwrap().right, start.right);
+    }
+
     #[test]
     fn projection_and_basis() {
         let c = Camera::new([0.0; 3], 100.0, 2.0).unwrap();

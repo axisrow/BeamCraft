@@ -262,6 +262,35 @@ pub fn section_span(
     (left < right).then_some((left, right))
 }
 
+/// The level whose section line (or its caption at the right end) lies under `pos`, the nearest
+/// within a few points; `None` in a view that shows no level edge-on. The same rows and span as
+/// [`paint_sections`], so a level is clickable exactly where it is drawn.
+pub fn hit_section(
+    view: &View,
+    rect: egui::Rect,
+    origin_z: f64,
+    extent: Option<([f32; 3], [f32; 3])>,
+    levels: &[LevelChoice],
+    pos: egui::Pos2,
+) -> Option<String> {
+    const REACH: f32 = 5.0;
+    let (left, right) = section_span(view, rect, extent)?;
+    if pos.x < left - REACH || pos.x > right + REACH {
+        return None;
+    }
+    levels
+        .iter()
+        .filter_map(|level| {
+            let row = section_row(view, rect, origin_z, level.elevation_mm)?;
+            // The caption sits just above the line's right end.
+            let caption = pos.x > right - 160.0 && pos.y < row && pos.y > row - 18.0;
+            let gap = (pos.y - row).abs();
+            (gap <= REACH || caption).then_some((gap, level))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, level)| level.id.clone())
+}
+
 /// The caption of a level's line: its name, cut to fit, and its elevation.
 fn caption(level: &LevelChoice) -> String {
     let name: String = level.name.chars().take(MAX_CAPTION_CHARS).collect();
@@ -434,6 +463,41 @@ mod tests {
             .view(1.0)
             .unwrap();
         assert_eq!(section_row(&orbit, rect, 0.0, 0.0), None, "a 3D view");
+    }
+
+    #[test]
+    fn a_click_on_a_level_line_in_a_section_picks_that_level() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
+        let plane = WorkPlane::parallel("xz", 0.0).unwrap();
+        let view = Camera::aligned_to(plane, [0.0; 3], 1000.0, 1000.0)
+            .unwrap()
+            .view(1.0)
+            .unwrap();
+        let level = |id: &str, elevation_mm| LevelChoice {
+            id: id.into(),
+            name: id.into(),
+            elevation_mm,
+            elements: 0,
+        };
+        let levels = [level("low", 0.0), level("high", 250.0)];
+        let row = section_row(&view, rect, 0.0, 250.0).unwrap();
+        let hit = |pos| hit_section(&view, rect, 0.0, None, &levels, pos);
+        assert_eq!(hit(egui::pos2(200.0, row + 2.0)).as_deref(), Some("high"));
+        assert_eq!(hit(egui::pos2(200.0, row + 40.0)), None, "between levels");
+        // A plan shows no level edge-on, so nothing is picked.
+        let plan = Camera::aligned_to(
+            WorkPlane::parallel("xy", 0.0).unwrap(),
+            [0.0; 3],
+            1000.0,
+            1000.0,
+        )
+        .unwrap()
+        .view(1.0)
+        .unwrap();
+        assert_eq!(
+            hit_section(&plan, rect, 0.0, None, &levels, egui::pos2(200.0, 200.0)),
+            None
+        );
     }
 
     #[test]

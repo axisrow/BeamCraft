@@ -13,6 +13,7 @@ mod bolt_panel;
 mod contour_grips;
 mod creation_panel;
 mod export_panel;
+mod fit_panel;
 mod grid_panel;
 mod level_panel;
 mod member_grips;
@@ -161,11 +162,6 @@ pub struct App {
     snap_hover: Option<beamcraft_engine::query::pick::SnapKind>,
     /// Where the pointer resolves while placing a beam or column, snapped when a snap applies.
     member_cursor: Option<[f64; 3]>,
-    /// The working coordinate under the pointer, in millimetres, with the frame it was read on:
-    /// where the pointer meets the view's plane (a plan or a section), else the work plane,
-    /// else the ground. Shown at the bottom right like Tekla's coordinate readout, in the work
-    /// plane's own axes when one is set. Display only, never an edit.
-    pointer_world: Option<(u64, [f64; 3])>,
     distance_input: String,
     distance_aim: Option<[f64; 3]>,
     plate_input: [String; 2],
@@ -240,10 +236,14 @@ pub struct App {
     grid_note: Option<Result<String, String>>,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
+    /// Frame the view once the running grid command lands: a first grid in an empty model.
+    grid_fit_after: bool,
     /// D06 annotations: placement tool, listed rows and their jobs.
     annotation: annotation_panel::Panel,
     /// The V10 Weld bench: the picked pair, the form and its commit job.
     weld: weld_panel::Panel,
+    /// The Fit end bench: the picked part and plate, and the running fit.
+    fit: fit_panel::Panel,
     /// The V19 Bolt bench: the picked parts and points, the form and its jobs.
     bolt: bolt_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
@@ -1136,8 +1136,10 @@ impl App {
             grid_job: None,
             level_panel: level_panel::LevelPanel::default(),
             grid_note: None,
+            grid_fit_after: false,
             annotation: annotation_panel::Panel::empty(),
             weld: weld_panel::Panel::empty(),
+            fit: fit_panel::Panel::empty(),
             bolt: bolt_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
@@ -1168,7 +1170,6 @@ impl App {
             plate_hover: None,
             snap_hover: None,
             member_cursor: None,
-            pointer_world: None,
             distance_input: String::new(),
             distance_aim: None,
             plate_input: ["0".into(), "0".into()],
@@ -1251,6 +1252,23 @@ impl App {
         app.reload();
         app.refresh_status();
         Ok(app)
+    }
+
+    /// Where the library picture of this model comes from when it is left: the model folder and
+    /// the active view's image rect, in points. `None` for a received IFC file, which has no
+    /// model folder to write into, and before the model has loaded.
+    pub(crate) fn thumbnail_source(&self) -> Option<(PathBuf, egui::Rect)> {
+        if self.source.read_only() || self.loaded.is_none() {
+            return None;
+        }
+        let body = self.views.active_pane()?.body;
+        (body.width() >= 8.0 && body.height() >= 8.0).then(|| (self.source.store.clone(), body))
+    }
+
+    /// Shows the views again in place of the menu page, so the picture taken when the model is
+    /// left from the menu (back to the library, another model) is of the model, not the menu.
+    pub(crate) fn show_views_for_thumbnail(&mut self) {
+        self.menu_open = false;
     }
 
     /// The source of the model `open_request` asks for: this window's CLI, samples, author,
@@ -1687,7 +1705,7 @@ impl App {
     /// Starts a click selection on a worker: the engine's `pick` along the ray, then the details
     /// of the element it hit, from one lookup ([`command::select`]) on the snapshot on screen.
     fn start_select(&mut self, ray: crate::edit::Ray) {
-        self.grid_edit = None;
+        self.drop_grid_edit();
         if self.select_job.is_some() {
             return;
         }
@@ -2255,6 +2273,7 @@ impl App {
             || self.annotation.list_job.is_some()
             || self.annotation.commit_job.is_some()
             || self.weld.commit_job.is_some()
+            || self.fit.commit_job.is_some()
             || self.bolt.commit_job.is_some()
             || self.bolt.entries_job.is_some()
             || self.bolt.groups_job.is_some()
@@ -2872,6 +2891,7 @@ impl App {
     /// half-space count, so a refusal and a success are both readable afterwards (issue 569
     /// item 21).
     fn cut_panel(&mut self, ui: &mut egui::Ui) {
+        crate::kit::type_box(ui, crate::theme::Icon::CutPlane, "Cut plane");
         ui.label(
             "The cut plane hides part of the model in this window only. The model, its \
              revisions and every measurement stay unchanged.",
@@ -2918,6 +2938,7 @@ impl App {
     /// Everything here is display state: the overlay is never written to the model, and a set
     /// lives in the user's colour-sets file, not in the store.
     fn colour_panel(&mut self, ui: &mut egui::Ui) {
+        crate::kit::type_box(ui, crate::theme::Icon::Palette, "Colour");
         ui.label(
             "Colour the model by a saved representation set. Colours are display only: the \
              model, its revisions and every measurement stay unchanged, and the set lives in \
@@ -3165,6 +3186,7 @@ impl App {
         self.other_command_running_pre_colour()
             || self.annotation.commit_job.is_some()
             || self.weld.commit_job.is_some()
+            || self.fit.commit_job.is_some()
             || self.bolt.commit_job.is_some()
     }
 
@@ -3266,6 +3288,12 @@ impl App {
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
+        let (icon, kind) = match self.bench {
+            workbench::Bench::Copy => (crate::theme::Icon::Copy, "Copy"),
+            workbench::Bench::Delete => (crate::theme::Icon::Delete, "Delete"),
+            _ => (crate::theme::Icon::Move, "Move"),
+        };
+        crate::kit::type_box(ui, icon, kind);
         ui.label("Click an element in the view to select it. Esc clears the selection.");
         match self.editor.selected() {
             Some(info) => {
@@ -3912,6 +3940,7 @@ impl eframe::App for App {
         self.poll_levels();
         self.poll_annotations();
         self.poll_weld();
+        self.poll_fit();
         self.poll_bolt();
         self.poll_contour();
         self.poll_edit();
@@ -3944,7 +3973,7 @@ impl eframe::App for App {
                 self.editor.deselect();
                 self.props.clear();
                 self.set_bench(workbench::Bench::Select);
-                self.grid_edit = None;
+                self.drop_grid_edit();
             }
         }
         // Another process committed to the store: refresh, exactly as the `R` key does.
@@ -4258,6 +4287,7 @@ pub(crate) mod tests {
             workbench::Bench::Copy,
             workbench::Bench::Delete,
             workbench::Bench::Weld,
+            workbench::Bench::Fit,
             workbench::Bench::Bolt,
             workbench::Bench::Grid,
             workbench::Bench::Levels,
@@ -8549,7 +8579,8 @@ pub(crate) mod tests {
         assert!(!form.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Show grids")));
         draw(click(position(&form, "Cancel")));
         let cancelled = draw(Vec::new());
-        position(&cancelled, "Properties");
+        // Back on the selection's properties: no form of the grid tool is left.
+        assert!(!cancelled.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Create grid")));
         assert_eq!(app.bench, super::workbench::Bench::Select);
         assert!(app.grid_job.is_none());
         assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
@@ -8640,17 +8671,25 @@ pub(crate) mod tests {
         draw(&mut app, click(rects[29].center())); // grid source
         assert!(!app.selection.snap_grids);
         assert!(!app.selection.snap_nearest);
-        draw(&mut app, click(rects[30].center())); // construction source (T02)
-        assert!(!app.selection.snap_construction);
+        // The construction source (T02) waits, disabled: the window does not show
+        // construction objects yet, and only what is seen may be snapped to.
+        draw(&mut app, click(rects[30].center()));
+        assert!(app.selection.snap_construction);
         draw(&mut app, click(rects[32].center())); // reference master
         draw(&mut app, click(rects[33].center())); // physical master
-        assert!(
-            !app.selection.snap_construction
-                && !app.selection.snap_reference
-                && !app.selection.snap_geometry
-        );
+        assert!(!app.selection.snap_reference && !app.selection.snap_geometry);
         draw(&mut app, click(snap.unwrap())); // global snap back on
-        assert!(app.selection.snap_kinds().is_empty());
+        // Only the waiting construction kinds remain, and no construction object reaches the
+        // window's snap context.
+        assert!(app.selection.snap_kinds().iter().all(|kind| matches!(
+            kind,
+            SnapKind::ConstructionPoint
+                | SnapKind::ConstructionEnd
+                | SnapKind::ConstructionLine
+                | SnapKind::ConstructionCenter
+                | SnapKind::ConstructionCircle
+                | SnapKind::ConstructionPlane
+        )));
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
     }
 
@@ -8790,6 +8829,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_new_grid_never_inherits_the_limits_of_the_grid_selected_before() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(1));
+        let id = "01990000-0000-7000-8000-000000000001";
+        let mut big = crate::grid::GridForm::default();
+        big.u.expression = "0 8*6000".into();
+        big.v.span = ["2000".into(), "50000".into()];
+        app.grid_scene = crate::grid::GridScene {
+            grids: vec![crate::grid::GridProperties {
+                id: id.into(),
+                form: big.clone(),
+                editable: true,
+                lines: 0..0,
+            }],
+            ..Default::default()
+        };
+        app.select_grid(id);
+        assert_eq!(app.grid_form, big, "the selected grid fills the form");
+        // A click on empty space ends the selection, then the Grid tool opens for a new grid.
+        app.start_select(crate::edit::Ray {
+            origin: [0.0, 0.0, 1e6],
+            direction: [0.0, 0.0, -1.0],
+        });
+        app.set_bench(super::workbench::Bench::Grid);
+        assert!(app.grid_edit.is_none());
+        assert_eq!(app.grid_form, crate::grid::GridForm::default());
+    }
+
+    #[test]
     fn selected_grid_properties_reset_and_reject_stale_edits_without_writing() {
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(1));
@@ -8868,8 +8936,19 @@ pub(crate) mod tests {
         draw(&mut app, Vec::new());
         app.grid_form.name = "Unapplied name".into();
         let edited = draw(&mut app, Vec::new());
-        position(&edited, "Grid properties");
-        for removed in ["Fit grid extents", "Reload properties", "Show grids"] {
+        // The grid's own type row heads its panel.
+        position(&edited, "Grid");
+        // An existing grid is deleted from its panel too, not only with the Delete key.
+        position(&edited, "Delete grid");
+        // A regular grid opens in its own tools: no switch to the drawn-grid line tools, which
+        // the engine refuses on a regular grid.
+        for removed in [
+            "Fit grid extents",
+            "Reload properties",
+            "Show grids",
+            "Line tools",
+            "Drawn grid",
+        ] {
             assert!(!edited.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == removed)));
         }
         draw(&mut app, click(position(&edited, "Cancel")));
@@ -9581,6 +9660,87 @@ pub(crate) mod tests {
             );
         }
         output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn a_plan_switched_to_3d_with_ctrl_p_orbits_under_ctrl_middle_drag() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        // Ctrl+middle drag is the mouse mapping; macOS starts on the trackpad one.
+        app.preset = Preset::Mouse;
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan 0", WorkPlane::default(), 20_000.0))
+            .unwrap();
+        app.activate_view(Some(id));
+        assert!(app.views.active_pane().unwrap().camera.is_aligned());
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.toggle_view_plane();
+        assert!(!app.views.active_pane().unwrap().camera.is_aligned());
+        let body = app.views.active_pane().unwrap().body;
+        let start = body.center();
+        let before = app
+            .views
+            .active_pane()
+            .unwrap()
+            .camera
+            .view(1.0)
+            .unwrap()
+            .right;
+        let ctrl = egui::Modifiers::CTRL;
+        let press = |pressed, pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Middle,
+            pressed,
+            modifiers: ctrl,
+        };
+        let mut frames = vec![vec![
+            egui::Event::ModifiersChanged(ctrl),
+            egui::Event::PointerMoved(start),
+            press(true, start),
+        ]];
+        for step in 1..=6 {
+            frames.push(vec![egui::Event::PointerMoved(
+                start + egui::vec2(20.0 * step as f32, 0.0),
+            )]);
+        }
+        frames.push(vec![press(false, start + egui::vec2(120.0, 0.0))]);
+        for events in frames {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.ribbon(ui);
+                    app.project_browser(ui);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |ui| app.work_area(ui, false, false));
+                },
+            );
+            output.drop_without_applying_deltas();
+        }
+        let pane = app.views.active_pane().unwrap();
+        assert!(
+            !pane.camera.is_aligned(),
+            "the 3D camera was reset to the plane"
+        );
+        assert_ne!(
+            pane.camera.view(1.0).unwrap().right,
+            before,
+            "the view did not turn"
+        );
     }
 
     #[test]
@@ -12149,6 +12309,187 @@ mod navigation_tests {
             tooltips, 1,
             "one tooltip with the full path, drew {tooltips}"
         );
+    }
+
+    #[test]
+    fn every_create_view_menu_entry_makes_its_view_on_a_real_model() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let cli = super::tests::workspace_cli();
+        assert!(cli.is_file(), "build beamcraft-cli before native tests");
+        let root = std::env::temp_dir().join(format!(
+            "bc-every-view-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.to_str().unwrap().to_owned();
+        let config = root.join("config");
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .arg(command)
+                .args(["--store", &store])
+                .args(args)
+                .env("BEAMCRAFT_CONFIG_DIR", &config)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{command}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        };
+        run(
+            "create-grid",
+            &[
+                "--name",
+                "G",
+                "--u-expression",
+                "0 6000",
+                "--u-labels",
+                "1 2",
+                "--v-expression",
+                "0 5000",
+                "--v-labels",
+                "A B",
+            ],
+        );
+        run("create-level", &["--name", "Ground", "--elevation", "0"]);
+        run("create-level", &["--name", "Roof", "--elevation", "4000"]);
+        run(
+            "create-plate",
+            &[
+                "--contour",
+                "0,0;2000,0;2000,1000;0,1000",
+                "--thickness",
+                "20",
+                "--name",
+                "P",
+            ],
+        );
+        // Assembly views need an assembly; the window has no command that makes one yet.
+        let assembly = "01990000-0000-7000-8000-00000000a001";
+        let plate_id = "01990000-0000-7000-8000-00000000a002";
+        run("create-assembly", &["--name", "A1", "--new-id", assembly]);
+        run(
+            "create-plate",
+            &[
+                "--contour",
+                "3000,0;3500,0;3500,500;3000,500",
+                "--thickness",
+                "10",
+                "--new-id",
+                plate_id,
+            ],
+        );
+        run(
+            "attach-to-assembly",
+            &["--id", plate_id, "--assembly-id", assembly],
+        );
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reloaded = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
+        deliver(&mut app, reloaded);
+        let plate = {
+            let loaded = app.loaded.as_ref().unwrap();
+            loaded.snapshot.elements().first().unwrap().id.to_string()
+        };
+        assert!(
+            !app.grid_scene.query_grids.is_empty(),
+            "the grid reached the window"
+        );
+        let down = |x: f64, y: f64| crate::edit::Ray {
+            origin: [x, y, 5000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        for (construction, label) in Construction::ALL {
+            let before = app.views.book.len();
+            // Each entry starts from the free 3D view, where the picks below aim straight down;
+            // the view made by the entry before stays open in its own tab.
+            app.activate_view(None);
+            app.begin_view(construction);
+            match construction {
+                Construction::Level => app.views.form.level = "Roof".into(),
+                Construction::GridAxes => app.views.form.axis = "1".into(),
+                _ => {}
+            }
+            if !matches!(construction, Construction::Level | Construction::GridAxes) {
+                app.views.form.name = label.into();
+            }
+            if matches!(construction, Construction::Part | Construction::Assembly) {
+                app.editor.select(crate::edit::ElementInfo {
+                    id: if construction == Construction::Assembly {
+                        plate_id.to_owned()
+                    } else {
+                        plate.clone()
+                    },
+                    kind: "plate".into(),
+                    name: "P".into(),
+                    translation_mm: [0.0; 3],
+                    contour: None,
+                });
+            }
+            let clicks: &[(f64, f64)] = match construction {
+                Construction::TwoPoints => &[(100.0, 100.0), (1900.0, 100.0)],
+                Construction::ThreePoints => &[(100.0, 100.0), (1900.0, 100.0), (100.0, 900.0)],
+                Construction::Surface => &[(500.0, 500.0)],
+                Construction::SurfaceEdge => &[(500.0, 500.0), (100.0, 100.0), (1900.0, 100.0)],
+                _ => &[],
+            };
+            for (x, y) in clicks {
+                app.view_click(down(*x, *y));
+            }
+            app.submit_view();
+            for _ in 0..600 {
+                if app.views.job.is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                app.poll_view_job();
+            }
+            assert!(
+                matches!(app.views.note, Some(Ok(_))),
+                "{label}: {:?}",
+                app.views.note
+            );
+            assert!(app.views.book.len() > before, "{label}: no view was added");
+        }
+        // Plans for all levels: one plan per level of the project, from the menu's first entry.
+        app.tools.definitions.levels = ["Ground", "Roof"]
+            .iter()
+            .zip([0.0, 4000.0])
+            .map(|(name, elevation_mm)| crate::tools::LevelChoice {
+                id: (*name).into(),
+                name: (*name).into(),
+                elevation_mm,
+                elements: 0,
+            })
+            .collect();
+        let before = app.views.book.len();
+        app.activate_view(None);
+        app.plans_for_all_levels();
+        for _ in 0..600 {
+            if app.views.job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            app.poll_view_job();
+        }
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        assert_eq!(app.views.book.len(), before + 2, "a plan for each level");
     }
 
     #[test]

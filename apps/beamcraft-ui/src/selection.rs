@@ -125,6 +125,8 @@ impl Selection {
                 | SnapKind::ConstructionCircle
                 | SnapKind::ConstructionPlane => self.snap_construction,
                 SnapKind::Midpoint => self.snap_reference || self.snap_geometry,
+                // Member axes and grid lines: both are reference geometry.
+                SnapKind::Perpendicular => self.snap_reference,
             })
             .collect()
     }

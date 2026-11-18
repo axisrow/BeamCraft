@@ -379,7 +379,7 @@ impl App {
     /// The inspector panel of the Annotations bench.
     pub(super) fn annotation_panel(&mut self, ui: &mut egui::Ui) {
         let palette = Palette::current(ui);
-        ui.heading("Annotations");
+        crate::kit::type_box(ui, crate::theme::Icon::Callout, "Annotations");
         ui.label("Dimensions, marks and leaders bound to features. A lost feature stays unresolved: an address is never re-bound.");
         ui.add_space(6.0);
         ui.horizontal(|ui| {

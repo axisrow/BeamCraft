@@ -68,6 +68,22 @@ impl LevelPanel {
 }
 
 impl App {
+    /// A click on a level's line in a section: the Levels panel opens on that level.
+    pub(super) fn select_level(&mut self, id: &str) {
+        let Some(level) = self
+            .tools
+            .definitions
+            .levels
+            .iter()
+            .find(|level| level.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        self.set_bench(super::workbench::Bench::Levels);
+        self.level_panel.select(&level);
+    }
+
     fn selected_level(&self) -> Option<LevelChoice> {
         let id = self.level_panel.selected.as_ref()?;
         self.tools

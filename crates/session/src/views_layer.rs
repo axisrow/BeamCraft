@@ -124,6 +124,7 @@ fn to_saved(view: &ModelView) -> Result<SavedView, CommandError> {
     saved.color_rgb = view.color;
     saved.opacity = view.opacity;
     saved.representation = view.representation.as_token().to_owned();
+    saved.beyond_depth = view.beyond.as_str().to_owned();
     saved.colour_set = view.colour_set.clone();
     saved.filter_overrides = view.overrides.iter().map(FilterOverride::to_spec).collect();
     if let Some(provenance) = &view.provenance {
@@ -184,6 +185,13 @@ fn to_view(saved: SavedView) -> Result<ModelView, CommandError> {
             refused(
                 ErrorCode::UnsupportedVersion,
                 "the stored representation is not one of the engine's levels",
+            )
+        })?;
+    view.beyond =
+        beamcraft_engine::views::DepthBeyond::parse(&saved.beyond_depth).map_err(|_| {
+            refused(
+                ErrorCode::UnsupportedVersion,
+                "the stored beyond-depth setting is not cut or transparent",
             )
         })?;
     view.colour_set = saved.colour_set;

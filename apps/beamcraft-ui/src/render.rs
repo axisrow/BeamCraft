@@ -65,9 +65,6 @@ impl Gpu {
             match adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("BeamCraft viewport"),
-                    // The wireframe render mode draws triangle edges: a native desktop feature
-                    // (Metal, DX12, and Vulkan with `fillModeNonSolid`), requested explicitly.
-                    required_features: wgpu::Features::POLYGON_MODE_LINE,
                     ..Default::default()
                 })
                 .await
@@ -102,6 +99,101 @@ struct GpuMesh {
     instances: wgpu::Buffer,
     vertex_count: u32,
     instance_count: u32,
+    /// The feature edges the wireframe draws, as a line list; `None` for a mesh with none.
+    edges: Option<wgpu::Buffer>,
+    edge_count: u32,
+}
+
+/// A facet angle above this draws as an edge: a box's corners, a hole's rim and a plate's
+/// outline do, while the facets of a tessellated cylinder (a bolt, a round hole's wall) and
+/// the diagonals that split a flat face do not, as a wireframe in Tekla shows a part.
+const FEATURE_ANGLE_COS: f32 = 0.906; // cos 25 degrees
+
+/// The feature edges of a non-indexed triangle list (`VERTEX_BYTES` per vertex: position, then
+/// normal, as `f32`s), as line-list vertex bytes in the same layout. An edge is drawn when one
+/// triangle owns it (an open border), more than two share it, or its two triangles meet at
+/// more than the feature angle. Coincident corners are welded to a micrometre first, since the
+/// tessellation repeats a corner per triangle. Malformed input yields no edges.
+pub(crate) fn feature_edges(vertices: &[u8]) -> Vec<u8> {
+    type Key = [i64; 3];
+    /// An edge's two ends as first met, and the normals of the triangles that share it.
+    type Sides = ([f32; 3], [f32; 3], Vec<[f32; 3]>);
+    let float = |bytes: &[u8]| {
+        <[u8; 4]>::try_from(bytes)
+            .ok()
+            .map(f32::from_le_bytes)
+            .filter(|x| x.is_finite())
+    };
+    let positions: Vec<[f32; 3]> = vertices
+        .as_chunks::<VERTEX_BYTES>()
+        .0
+        .iter()
+        .filter_map(|v| {
+            let mut position = v.as_chunks::<4>().0.iter().take(3).map(|b| float(b));
+            Some([position.next()??, position.next()??, position.next()??])
+        })
+        .collect();
+    if positions.len() * VERTEX_BYTES != vertices.len() {
+        return Vec::new();
+    }
+    let key = |p: [f32; 3]| p.map(|c| (f64::from(c) * 1000.0).round() as i64);
+    let mut edges: BTreeMap<(Key, Key), Sides> = BTreeMap::new();
+    for &[a, b, c] in positions.as_chunks::<3>().0 {
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if !(length.is_finite() && length > 0.0) {
+            continue;
+        }
+        let n = n.map(|x| x / length);
+        for (p, q) in [(a, b), (b, c), (c, a)] {
+            let (kp, kq) = (key(p), key(q));
+            if kp == kq {
+                continue;
+            }
+            let (lo, hi, from, to) = if kp < kq {
+                (kp, kq, p, q)
+            } else {
+                (kq, kp, q, p)
+            };
+            edges
+                .entry((lo, hi))
+                .or_insert_with(|| (from, to, Vec::new()))
+                .2
+                .push(n);
+        }
+    }
+    let mut out = Vec::new();
+    for (from, to, normals) in edges.into_values() {
+        let feature = match normals.as_slice() {
+            [n, m] => n[0] * m[0] + n[1] * m[1] + n[2] * m[2] < FEATURE_ANGLE_COS,
+            _ => true,
+        };
+        if !feature {
+            continue;
+        }
+        // The lines are lit like the faces they bound: the mean of their normals.
+        let sum = normals
+            .iter()
+            .fold([0.0f32; 3], |s, n| [s[0] + n[0], s[1] + n[1], s[2] + n[2]]);
+        let length = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
+        let normal = if length > 1e-6 {
+            sum.map(|x| x / length)
+        } else {
+            normals.first().copied().unwrap_or([0.0, 0.0, 1.0])
+        };
+        for p in [from, to] {
+            for x in p.into_iter().chain(normal) {
+                out.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+    }
+    out
 }
 
 /// The scene on the device: per distinct mesh one vertex buffer and one instance buffer.
@@ -203,11 +295,15 @@ impl Uploaded {
                 return Err(Error::Input("a resident mesh is not on the device"));
             }
             check(mesh, reused.is_none(), limit)?;
-            let vertices = match reused {
-                Some(gpu) => gpu.vertices.clone(),
+            let (vertices, edges, edge_count) = match reused {
+                Some(gpu) => (gpu.vertices.clone(), gpu.edges.clone(), gpu.edge_count),
                 None => {
                     bytes = bytes.saturating_add(mesh.vertices.len() as u64);
-                    buffer(device, queue, &mesh.vertices)
+                    let lines = feature_edges(&mesh.vertices);
+                    let count = u32::try_from(lines.len() / VERTEX_BYTES)
+                        .map_err(|_| Error::Input("adapter buffer limit"))?;
+                    let edges = (!lines.is_empty()).then(|| buffer(device, queue, &lines));
+                    (buffer(device, queue, &mesh.vertices), edges, count)
                 }
             };
             bytes = bytes.saturating_add(mesh.instances.len() as u64);
@@ -217,6 +313,8 @@ impl Uploaded {
                 instances: buffer(device, queue, &mesh.instances),
                 vertex_count: mesh.vertex_count,
                 instance_count: mesh.instance_count,
+                edges,
+                edge_count,
             });
         }
         Ok(Self {
@@ -338,6 +436,8 @@ struct Pipelines {
     grey: wgpu::RenderPipeline,
     /// The ghost preview: the same vertices, a distinct fragment colour.
     ghost: wgpu::RenderPipeline,
+    /// The faint pass beyond a view's depth slab: blended, depth-tested, no depth writes.
+    beyond: wgpu::RenderPipeline,
 }
 
 fn pipeline(
@@ -451,7 +551,7 @@ fn pipeline(
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &instance_attributes,
     });
-    let pipeline = |label, fragment, polygon_mode, blend, depth_write, cull| {
+    let pipeline = |label, fragment, topology, blend, depth_write, cull| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -468,7 +568,7 @@ fn pipeline(
                 // The wireframe keeps the hardware cull: its line fragments carry no reliable
                 // facing.
                 cull_mode: cull,
-                polygon_mode,
+                topology,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -498,29 +598,29 @@ fn pipeline(
     };
     let alpha = wgpu::BlendState::ALPHA_BLENDING;
     let no_cull: Option<wgpu::Face> = None;
-    let back_cull = Some(wgpu::Face::Back);
     let pipelines = Pipelines {
         shaded: pipeline(
             "BeamCraft shaded",
             "shade",
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             None,
             true,
             no_cull,
         ),
-        // `Line` draws every triangle edge; native backends only, which is all this app targets.
+        // The meshes' feature edges as a line list (see `feature_edges`), hidden ones too, so
+        // a wireframe shows what lies under a plate.
         wireframe: pipeline(
             "BeamCraft wireframe",
             "shade",
-            wgpu::PolygonMode::Line,
+            wgpu::PrimitiveTopology::LineList,
             None,
             true,
-            back_cull,
+            no_cull,
         ),
         transparent: pipeline(
             "BeamCraft transparent",
             "shade_transparent",
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             Some(alpha),
             false,
             no_cull,
@@ -528,7 +628,7 @@ fn pipeline(
         grey: pipeline(
             "BeamCraft grey",
             "shade_grey",
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             None,
             true,
             no_cull,
@@ -536,14 +636,22 @@ fn pipeline(
         ghost: pipeline(
             "BeamCraft ghost",
             "shade_ghost",
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             None,
             true,
             no_cull,
         ),
+        beyond: pipeline(
+            "BeamCraft beyond the depth",
+            "shade_beyond",
+            wgpu::PrimitiveTopology::TriangleList,
+            Some(alpha),
+            false,
+            no_cull,
+        ),
     };
     finish_scopes(scopes)?;
-    stats.pipeline_builds.add(5);
+    stats.pipeline_builds.add(6);
     Ok((pipelines, camera, clip, bind))
 }
 
@@ -778,9 +886,27 @@ impl Renderer {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &self.bind, &[]);
                 for mesh in &uploaded.meshes {
-                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    let (vertices, count) = if mode == RenderMode::Wireframe {
+                        match &mesh.edges {
+                            Some(edges) => (edges, mesh.edge_count),
+                            None => continue,
+                        }
+                    } else {
+                        (&mesh.vertices, mesh.vertex_count)
+                    };
+                    pass.set_vertex_buffer(0, vertices.slice(..));
                     pass.set_vertex_buffer(1, mesh.instances.slice(..));
-                    pass.draw(0..mesh.vertex_count, 0..mesh.instance_count);
+                    pass.draw(0..count, 0..mesh.instance_count);
+                }
+                // A view that shows the parts beyond its depth draws them faintly over the
+                // opaque pass; the wireframe has no faces to draw them with.
+                if clip.soft > 0 && mode != RenderMode::Wireframe {
+                    pass.set_pipeline(&self.pipeline.beyond);
+                    for mesh in &uploaded.meshes {
+                        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                        pass.set_vertex_buffer(1, mesh.instances.slice(..));
+                        pass.draw(0..mesh.vertex_count, 0..mesh.instance_count);
+                    }
                 }
             }
             self.paint_ghost(&mut pass);
@@ -912,6 +1038,70 @@ impl Renderer {
 
 #[cfg(test)]
 mod tests {
+    /// The bytes of a non-indexed triangle list, every normal zero (the edges do not read it).
+    fn triangles(points: &[[f32; 3]]) -> Vec<u8> {
+        points
+            .iter()
+            .flat_map(|p| p.iter().chain(&[0.0f32; 3]).flat_map(|x| x.to_le_bytes()))
+            .collect()
+    }
+
+    fn edge_count(points: &[[f32; 3]]) -> usize {
+        super::feature_edges(&triangles(points)).len() / crate::scene::VERTEX_BYTES / 2
+    }
+
+    #[test]
+    fn the_wireframe_draws_a_box_s_twelve_edges_and_no_face_diagonals() {
+        // Eight corners, each face two outward triangles.
+        let c = |i: usize| -> [f32; 3] {
+            [
+                if i & 1 == 0 { 0.0 } else { 100.0 },
+                if i & 2 == 0 { 0.0 } else { 50.0 },
+                if i & 4 == 0 { 0.0 } else { 20.0 },
+            ]
+        };
+        let quads = [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ];
+        let points: Vec<[f32; 3]> = quads
+            .iter()
+            .flat_map(|[a, b, d, e]| [c(*a), c(*b), c(*d), c(*a), c(*d), c(*e)])
+            .collect();
+        assert_eq!(edge_count(&points), 12);
+    }
+
+    #[test]
+    fn a_tessellated_cylinder_shows_its_rims_but_not_its_facets() {
+        // An open 32-sided tube: the facets meet at 11.25 degrees, the rims are borders.
+        let n = 32;
+        let at = |i: usize, z: f32| {
+            let a = std::f32::consts::TAU * (i % n) as f32 / n as f32;
+            [10.0 * a.cos(), 10.0 * a.sin(), z]
+        };
+        let points: Vec<[f32; 3]> = (0..n)
+            .flat_map(|i| {
+                [
+                    at(i, 0.0),
+                    at(i + 1, 0.0),
+                    at(i + 1, 30.0),
+                    at(i, 0.0),
+                    at(i + 1, 30.0),
+                    at(i, 30.0),
+                ]
+            })
+            .collect();
+        assert_eq!(edge_count(&points), 2 * n, "only the two rims");
+        assert!(
+            super::feature_edges(&[1, 2, 3]).is_empty(),
+            "malformed bytes"
+        );
+    }
+
     use super::*;
 
     fn required_adapter(result: Result<Gpu, Error>) -> Gpu {

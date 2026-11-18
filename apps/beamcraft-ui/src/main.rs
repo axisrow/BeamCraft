@@ -564,29 +564,25 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
-    // The wireframe render mode draws triangle edges: a native desktop feature (Metal, DX12,
-    // and Vulkan with `fillModeNonSolid`), requested explicitly like the renderer's own
-    // headless device does.
+    // The wireframe draws the meshes' feature edges as plain lines, so no optional device
+    // feature is needed.
     setup.device_descriptor = std::sync::Arc::new(|_adapter| wgpu::DeviceDescriptor {
         label: Some("BeamCraft viewport"),
-        required_features: wgpu::Features::POLYGON_MODE_LINE,
         ..Default::default()
     });
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size(size)
         .with_title("BeamCraft")
         .with_icon(load_icon());
-    // macOS keeps the native frame and its traffic lights over a transparent title bar, with
-    // our header drawn under them; elsewhere the window is frameless and draws its own controls.
-    let viewport = if beamcraft_ui::theme::NATIVE_WINDOW_CONTROLS {
-        viewport
-            .with_decorations(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-    } else {
-        viewport.with_decorations(false)
-    };
+    // The window controls are always the operating system's own. macOS keeps its traffic
+    // lights over a transparent title bar, with our header drawn under them; Windows and Linux
+    // keep their native title bar and its controls above our header.
+    let viewport = viewport.with_decorations(true);
+    #[cfg(target_os = "macos")]
+    let viewport = viewport
+        .with_fullsize_content_view(true)
+        .with_titlebar_shown(false)
+        .with_title_shown(false);
     // The Wayland app ID and X11 window class match the desktop entry `install-linux.sh`
     // registers, so the running window groups with its launcher and shows its icon.
     #[cfg(target_os = "linux")]

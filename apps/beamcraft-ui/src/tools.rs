@@ -86,6 +86,9 @@ impl fmt::Display for FormError {
 pub struct PlateForm {
     /// Optional ordered local XY contour from interactive placement; empty uses a rectangle.
     pub contour: String,
+    /// Placement by size: one click sets the centre of a `width` x `length` rectangle,
+    /// instead of picking every corner.
+    pub by_size: bool,
     /// `--width`.
     pub width: String,
     /// `--length`.
@@ -1107,7 +1110,24 @@ impl Tools {
         if let Some(kind) = self.pending_preset.take() {
             self.use_preset(kind, None);
         }
+        self.fill_empty_choices();
         problem
+    }
+
+    /// A tool never opens on an empty profile or material while the model offers some: an
+    /// unset choice takes the first one listed (the store's own first, then the environment's),
+    /// so a column or beam can be placed at once and changed afterwards.
+    fn fill_empty_choices(&mut self) {
+        let first = |list: &[Choice]| list.first().map(|c| c.digest.clone());
+        if self.member.profile.is_none() {
+            self.member.profile = first(&self.definitions.profiles);
+        }
+        if self.member.material.is_none() {
+            self.member.material = first(&self.definitions.materials);
+        }
+        if self.plate.material.is_none() {
+            self.plate.material = first(&self.definitions.materials);
+        }
     }
 
     /// The presets of `kind` the environment offers, the default first.
@@ -1677,6 +1697,41 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_opens_on_the_first_listed_profile_and_material_without_a_preset() {
+        let choice = |digest: &str| Choice {
+            digest: digest.into(),
+            label: digest.into(),
+            rect_mm: None,
+        };
+        let mut tools = Tools::default();
+        let listed = Definitions {
+            profiles: vec![choice("p1"), choice("p2")],
+            materials: vec![choice("m1"), choice("m2")],
+            ..Definitions::default()
+        };
+        assert_eq!(tools.apply_definitions(Ok(listed)), None);
+        assert_eq!(tools.member.profile.as_deref(), Some("p1"));
+        assert_eq!(tools.member.material.as_deref(), Some("m1"));
+        assert_eq!(tools.plate.material.as_deref(), Some("m1"));
+        // A choice the user made stays.
+        tools.member.profile = Some("p2".into());
+        let listed = Definitions {
+            profiles: vec![choice("p1"), choice("p2")],
+            materials: vec![choice("m1")],
+            ..Definitions::default()
+        };
+        assert_eq!(tools.apply_definitions(Ok(listed)), None);
+        assert_eq!(tools.member.profile.as_deref(), Some("p2"));
+        // Nothing listed: nothing chosen.
+        assert!(
+            tools
+                .apply_definitions(Ok(Definitions::default()))
+                .is_none()
+        );
+        assert_eq!(tools.member.profile, None);
+    }
+
+    #[test]
     fn a_failed_definitions_refresh_is_reported_and_clears_stale_choices() {
         let choice = |digest: &str| Choice {
             digest: digest.into(),
@@ -1695,7 +1750,8 @@ mod tests {
         assert_eq!(tools.apply_definitions(Ok(listed)), None);
         assert_eq!(tools.member.profile.as_deref(), Some("p"));
         assert_eq!(tools.member.material.as_deref(), Some("m"));
-        assert_eq!(tools.plate.material, None);
+        // A stale choice is dropped, and the empty field takes the first listed one.
+        assert_eq!(tools.plate.material.as_deref(), Some("m"));
         let failure = ToolError {
             code: "CLI_FAILED".into(),
             message: "boom".into(),

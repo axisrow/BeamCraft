@@ -6,12 +6,15 @@
 use crate::tools::FormError;
 use beamcraft_engine::view_clipping::{ClipPlane, Clipping, MAX_EFFECTIVE, WorkArea};
 
-/// The clip uniform layout: a plane count, then up to [`MAX_EFFECTIVE`] half-spaces as
-/// `(normal.xyz, -normal·point)` in display f32. Zero planes cut nothing.
+/// The clip uniform layout: a plane count and the soft count, then up to [`MAX_EFFECTIVE`]
+/// half-spaces as `(normal.xyz, -normal·point)` in display f32. Zero planes cut nothing. The
+/// last `soft` planes are a depth slab whose far side draws faintly instead of being cut.
 #[derive(Debug, Clone, Copy)]
 pub struct ClipGpu {
     /// Half-space count the shader iterates; the rest of the array is ignored.
     pub count: u32,
+    /// How many of the last planes are soft: beyond them a part draws faintly, not cut.
+    pub soft: u32,
     planes: [[f32; 4]; MAX_EFFECTIVE],
 }
 impl ClipGpu {
@@ -21,6 +24,7 @@ impl ClipGpu {
     pub fn none() -> Self {
         Self {
             count: 0,
+            soft: 0,
             planes: [[0.0; 4]; MAX_EFFECTIVE],
         }
     }
@@ -34,7 +38,25 @@ impl ClipGpu {
             Err(_) => return Self::none(),
         };
         let mut gpu = Self::none();
-        for (plane, slot) in planes.iter().zip(gpu.planes.iter_mut()) {
+        gpu.push(&planes, origin_mm);
+        gpu
+    }
+
+    /// `hard` cuts as [`Self::of`] does; the planes of `soft` (a view's depth slab) follow as
+    /// soft planes, beyond which a part draws faintly. Planes over the budget are left out.
+    pub fn with_soft(hard: Option<&Clipping>, soft: &Clipping, origin_mm: [f64; 3]) -> Self {
+        let mut gpu = hard.map_or_else(Self::none, |clip| Self::of(clip, origin_mm));
+        let before = gpu.count;
+        if let Ok(planes) = soft.effective() {
+            gpu.push(&planes, origin_mm);
+        }
+        gpu.soft = gpu.count - before;
+        gpu
+    }
+
+    fn push(&mut self, planes: &[ClipPlane], origin_mm: [f64; 3]) {
+        let free = self.planes.iter_mut().skip(self.count as usize);
+        for (plane, slot) in planes.iter().zip(free) {
             let [nx, ny, nz] = plane.normal.map(|v| v as f32);
             let mut point = [0.0f32; 3];
             for ((at, p), o) in point.iter_mut().zip(plane.point_mm).zip(origin_mm) {
@@ -42,14 +64,14 @@ impl ClipGpu {
             }
             let [px, py, pz] = point;
             *slot = [nx, ny, nz, -(nx * px + ny * py + nz * pz)];
-            gpu.count += 1;
+            self.count += 1;
         }
-        gpu
     }
     /// The uniform bytes for [`crate::render::Renderer::draw`].
     pub fn bytes(self) -> [u8; Self::BYTES] {
         let mut out = [0u8; Self::BYTES];
         out[..4].copy_from_slice(&self.count.to_le_bytes());
+        out[4..8].copy_from_slice(&self.soft.to_le_bytes());
         // Each plane is four f32 slots; the slots run on from the 16-byte header.
         let slots = out[16..].as_chunks_mut::<4>().0;
         for (plane, group) in self.planes.iter().zip(slots.as_chunks_mut::<4>().0) {

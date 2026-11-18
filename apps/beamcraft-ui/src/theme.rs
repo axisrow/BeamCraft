@@ -292,19 +292,15 @@ pub fn icon_text_button(
     response
 }
 
-/// Whether the operating system draws the window controls. On macOS the window keeps its native
-/// frame with a transparent title bar under our own header, so the traffic lights are the
-/// system's own (with their fullscreen, zoom and window-tiling menus); elsewhere the frameless
-/// window draws its controls itself, at the right as Windows and most Linux desktops do.
-pub const NATIVE_WINDOW_CONTROLS: bool = cfg!(target_os = "macos");
-
-/// The width the system's window controls take at the left of a title bar, in points; zero
-/// where the window draws its own controls.
-pub const NATIVE_CONTROLS_INSET: f32 = if NATIVE_WINDOW_CONTROLS { 72.0 } else { 0.0 };
+/// The width the system's window controls take at the left of a title bar, in points. On macOS
+/// the window keeps its native frame with a transparent title bar under our own header, so the
+/// traffic lights sit over the start of the header row; elsewhere the system draws its own title
+/// bar with its own controls above the header, and nothing is reserved.
+pub const NATIVE_CONTROLS_INSET: f32 = if cfg!(target_os = "macos") { 72.0 } else { 0.0 };
 
 /// Reserves the room the system's window controls take at the start of a title bar row.
 pub fn native_controls_inset(ui: &mut Ui) {
-    if NATIVE_WINDOW_CONTROLS {
+    if NATIVE_CONTROLS_INSET > 0.0 {
         ui.add_space(NATIVE_CONTROLS_INSET);
     }
 }
@@ -313,13 +309,18 @@ pub fn native_controls_inset(ui: &mut Ui) {
 /// Windows and Linux tabs do.
 pub const TAB_CLOSE_LEADING: bool = cfg!(target_os = "macos");
 
-/// Native title-bar dragging and double-click maximization, without an extra OS title bar.
+/// Dragging and double-click maximization of the header row on macOS, where the header is
+/// drawn under the transparent native title bar. Elsewhere the system's own title bar moves the
+/// window and the header row is an ordinary toolbar.
 pub fn titlebar_drag(ui: &mut Ui) {
     titlebar_drag_with_maximize(ui, true);
 }
 
-/// Draggable title bar that cannot maximize a fixed-size welcome window.
+/// [`titlebar_drag`] that cannot maximize a fixed-size welcome window.
 pub fn titlebar_drag_with_maximize(ui: &mut Ui, maximize: bool) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
     let response = ui.interact(
         ui.max_rect(),
         ui.scope_id().with("title-drag"),
@@ -332,107 +333,6 @@ pub fn titlebar_drag_with_maximize(ui: &mut Ui, maximize: bool) {
         let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-    }
-}
-
-/// Window controls, laid out right-to-left like a native desktop title bar.
-pub fn window_controls(ui: &mut Ui) {
-    window_controls_with_maximize(ui, true);
-}
-
-/// Equal-sized window controls, omitting maximize for the fixed-size welcome window. Nothing is
-/// drawn where the operating system draws the controls ([`NATIVE_WINDOW_CONTROLS`]).
-pub fn window_controls_with_maximize(ui: &mut Ui, maximize: bool) {
-    if NATIVE_WINDOW_CONTROLS {
-        return;
-    }
-    let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
-    let size = vec2(if maximize { 40.0 } else { 28.0 }, 28.0);
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.spacing_mut().interact_size = size;
-        for (tip, command) in [
-            ("Close", egui::ViewportCommand::Close),
-            (
-                if maximized { "Restore" } else { "Maximize" },
-                egui::ViewportCommand::Maximized(!maximized),
-            ),
-            ("Minimize", egui::ViewportCommand::Minimized(true)),
-        ] {
-            if matches!(command, egui::ViewportCommand::Maximized(_)) && !maximize {
-                continue;
-            }
-            window_control(ui, tip, command, size);
-        }
-    });
-}
-
-fn window_control(ui: &mut Ui, label: &str, command: egui::ViewportCommand, size: Vec2) {
-    let response = ui.add_sized(size, egui::Button::new("").frame(false));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-    let palette = Palette::current(ui);
-    let highlighted = response.hovered() || response.is_pointer_button_down_on();
-    let close = matches!(command, egui::ViewportCommand::Close);
-    let fill = if highlighted && close {
-        Color32::from_rgb(0xC4, 0x2B, 0x36)
-    } else if highlighted || response.has_focus() {
-        palette.select
-    } else {
-        palette.head
-    };
-    let painter = ui.painter();
-    painter.rect_filled(response.rect, 2, fill);
-    if response.has_focus() {
-        painter.rect_stroke(
-            response.rect.shrink(1.0),
-            2,
-            Stroke::new(1.0, palette.control),
-            egui::StrokeKind::Inside,
-        );
-    }
-    let color = if highlighted && close {
-        Color32::WHITE
-    } else {
-        palette.muted
-    };
-    let stroke = Stroke::new(1.0, color);
-    let icon = Rect::from_center_size(response.rect.center(), Vec2::splat(10.0));
-    match &command {
-        egui::ViewportCommand::Close => {
-            painter.line_segment([icon.left_top(), icon.right_bottom()], stroke);
-            painter.line_segment([icon.right_top(), icon.left_bottom()], stroke);
-        }
-        egui::ViewportCommand::Minimized(_) => {
-            painter.line_segment([icon.left_center(), icon.right_center()], stroke);
-        }
-        egui::ViewportCommand::Maximized(true) => {
-            painter.rect_stroke(icon, 0, stroke, egui::StrokeKind::Inside);
-        }
-        egui::ViewportCommand::Maximized(false) => {
-            painter.add(egui::Shape::line(
-                vec![
-                    icon.left_top() + vec2(2.0, 2.0),
-                    icon.left_top() + vec2(2.0, 0.0),
-                    icon.right_top(),
-                    icon.right_bottom() - vec2(0.0, 2.0),
-                    icon.right_bottom() - vec2(2.0, 2.0),
-                ],
-                stroke,
-            ));
-            painter.rect_stroke(
-                Rect::from_min_max(
-                    icon.left_top() + vec2(0.0, 2.0),
-                    icon.right_bottom() - vec2(2.0, 0.0),
-                ),
-                0,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-        }
-        _ => {}
-    }
-    if response.on_hover_text(label).clicked() {
-        ui.ctx().send_viewport_cmd(command);
     }
 }
 
@@ -1403,97 +1303,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
     use super::*;
-
-    #[cfg(not(target_os = "macos"))]
-    fn controls_frame(
-        ctx: &egui::Context,
-        maximize: bool,
-        maximized: bool,
-        events: Vec<egui::Event>,
-    ) -> egui::FullOutput {
-        let mut input = egui::RawInput {
-            events,
-            ..Default::default()
-        };
-        input
-            .viewports
-            .entry(egui::ViewportId::ROOT)
-            .or_default()
-            .maximized = Some(maximized);
-        ctx.run_ui(input, |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                window_controls_with_maximize(ui, maximize);
-            });
-        })
-    }
-
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn window_controls_have_equal_hit_areas_and_send_native_commands() {
-        for theme in [Theme::Light, Theme::Dark] {
-            for maximize in [false, true] {
-                for maximized in [false, true] {
-                    let ctx = egui::Context::default();
-                    install(&ctx);
-                    ctx.set_theme(theme);
-                    let output = controls_frame(&ctx, maximize, maximized, vec![]);
-                    let size = vec2(if maximize { 40.0 } else { 28.0 }, 28.0);
-                    let rects: Vec<_> = output
-                        .shapes
-                        .iter()
-                        .filter_map(|shape| match &shape.shape {
-                            egui::Shape::Rect(rect)
-                                if rect.rect.size() == size
-                                    && rect.fill == Palette::of(theme).head =>
-                            {
-                                Some(rect.rect)
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    output.drop_without_applying_deltas();
-                    assert_eq!(rects.len(), if maximize { 3 } else { 2 });
-                    for pair in rects.windows(2) {
-                        assert_eq!(pair[0].left(), pair[1].right());
-                        assert_eq!(pair[0].center().y, pair[1].center().y);
-                    }
-                    for (index, rect) in rects.iter().enumerate() {
-                        let pointer = |pressed| egui::Event::PointerButton {
-                            pos: rect.center(),
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        };
-                        let output = controls_frame(
-                            &ctx,
-                            maximize,
-                            maximized,
-                            vec![egui::Event::PointerMoved(rect.center()), pointer(true)],
-                        );
-                        let close_highlight = output.shapes.iter().any(|shape| matches!(
-                            &shape.shape, egui::Shape::Rect(shape)
-                            if shape.rect == *rect && shape.fill == Color32::from_rgb(0xC4, 0x2B, 0x36)
-                        ));
-                        output.drop_without_applying_deltas();
-                        assert_eq!(close_highlight, index == 0);
-                        let output =
-                            controls_frame(&ctx, maximize, maximized, vec![pointer(false)]);
-                        let expected = match index {
-                            0 => egui::ViewportCommand::Close,
-                            1 if maximize => egui::ViewportCommand::Maximized(!maximized),
-                            _ => egui::ViewportCommand::Minimized(true),
-                        };
-                        let sent = output
-                            .viewport_output
-                            .values()
-                            .any(|viewport| viewport.commands.contains(&expected));
-                        output.drop_without_applying_deltas();
-                        assert!(sent, "missing command: {expected:?}");
-                    }
-                }
-            }
-        }
-    }
 
     fn luminance(c: Color32) -> f64 {
         let lin = |v: u8| {

@@ -59,6 +59,7 @@ pub mod source;
 pub mod start;
 pub mod stats;
 pub mod theme;
+pub mod thumbnail;
 pub mod tools;
 pub mod view_overlay;
 pub mod views;

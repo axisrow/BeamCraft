@@ -122,6 +122,38 @@ impl Projection {
     }
 }
 
+/// What a view with a depth limit shows of the parts beyond it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DepthBeyond {
+    /// Cut away at the depth limit: only what lies inside the slab is drawn.
+    #[default]
+    Cut,
+    /// Drawn faintly: a part crossing the limit stays whole, its part inside the slab in full.
+    Transparent,
+}
+
+impl DepthBeyond {
+    /// The stable wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cut => "cut",
+            Self::Transparent => "transparent",
+        }
+    }
+
+    /// Parses an exact token.
+    pub fn parse(text: &str) -> Result<Self, CommandError> {
+        match text {
+            "cut" => Ok(Self::Cut),
+            "transparent" => Ok(Self::Transparent),
+            _ => Err(invalid(
+                "views.beyond",
+                "beyond the depth is cut or transparent",
+            )),
+        }
+    }
+}
+
 /// Admits a browser folder path: at most eight nonempty, unpadded `/`-separated segments, no
 /// `.` or `..`, no control characters. The empty path is the root. It is never a filesystem path.
 pub fn validate_folder(folder: &str) -> Result<(), CommandError> {
@@ -235,6 +267,8 @@ pub struct ModelView {
     /// Visible distance `[above, below]` the plane; `above` is towards the viewer. `None` shows
     /// everything in front of and behind the plane.
     pub depth: Option<[f64; 2]>,
+    /// What the depth limit does to the parts beyond it.
+    pub beyond: DepthBeyond,
     /// Display mode of this view.
     pub render_mode: RenderMode,
     /// Whether grid guides are displayed.
@@ -283,6 +317,7 @@ impl ModelView {
             projection: Projection::Orthographic,
             span_mm,
             depth: None,
+            beyond: DepthBeyond::Cut,
             render_mode: RenderMode::Shaded,
             grids_visible: true,
             folder: String::new(),
@@ -325,6 +360,7 @@ impl ModelView {
         self.projection = source.projection;
         self.span_mm = source.span_mm;
         self.depth = source.depth;
+        self.beyond = source.beyond;
         self.render_mode = source.render_mode;
         self.grids_visible = source.grids_visible;
         self.hidden_kinds = source.hidden_kinds;
@@ -1461,21 +1497,37 @@ pub fn pick_visible_except(
     query.max_hits = MAX_HITS;
     query.selection = selection;
     query.include_reference = include_reference;
-    // A display pick of a received file catches both sides: the file's triangle winding is
-    // the writer's, and a viewer of a foreign file clicks the side it sees.
-    if include_reference {
-        query.include_backfaces = true;
-    }
+    // Both sides are asked for: a body the view cuts open is entered and left through faces
+    // the view hides, and only the pair of them shows the section between (see `section_hit`).
+    query.include_backfaces = true;
     let hits = pick(snapshot, &PickQuery::Ray(query))
         .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
-    if let Some(hit) = hits.hits.into_iter().find(|hit| {
-        kept_by(&planes, hit.point_world_mm)
-            && view.contains(hit.point_world_mm)
-            && !hidden.contains(&hit.element_id)
+    let shown = |hit: &Hit| {
+        !hidden.contains(&hit.element_id)
             && snapshot
                 .element(&hit.element_id)
                 .is_some_and(|e| view.shows_kind(e.kind))
-    }) {
+    };
+    // A display pick of a received file catches both sides: the file's triangle winding is
+    // the writer's, and a viewer of a foreign file clicks the side it sees.
+    let face = hits.hits.iter().find(|hit| {
+        (include_reference || !hit.back_facing)
+            && kept_by(&planes, hit.point_world_mm)
+            && view.contains(hit.point_world_mm)
+            && shown(hit)
+    });
+    let mut all = planes.clone();
+    all.extend(
+        view.clipping()
+            .and_then(|c| c.effective())
+            .unwrap_or_default(),
+    );
+    let section = if view.opacity == 0.0 {
+        None
+    } else {
+        section_hit(&hits.hits, origin, direction, &all, &shown)
+    };
+    if let Some(hit) = nearer(face.cloned(), section) {
         return Ok(Some(hit));
     }
     if hits.truncated {
@@ -1508,17 +1560,21 @@ pub fn pick_kept(
     query.max_hits = MAX_HITS;
     query.selection = selection;
     query.include_reference = include_reference;
-    // A display pick of a received file catches both sides: the file's triangle winding is
-    // the writer's, and a viewer of a foreign file clicks the side it sees.
-    if include_reference {
-        query.include_backfaces = true;
-    }
+    // Both sides, for the section a cut opens (see `section_hit`).
+    query.include_backfaces = true;
     let hits = pick(snapshot, &PickQuery::Ray(query))
         .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
-    let hit = hits
+    // A display pick of a received file catches both sides: the file's triangle winding is
+    // the writer's, and a viewer of a foreign file clicks the side it sees.
+    let face = hits
         .hits
-        .into_iter()
-        .find(|hit| kept_by(&planes, hit.point_world_mm));
+        .iter()
+        .find(|hit| (include_reference || !hit.back_facing) && kept_by(&planes, hit.point_world_mm))
+        .cloned();
+    let hit = nearer(
+        face,
+        section_hit(&hits.hits, origin, direction, &planes, &|_: &Hit| true),
+    );
     if hit.is_none() && hits.truncated {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
@@ -1527,6 +1583,77 @@ pub fn pick_kept(
         ));
     }
     Ok(hit)
+}
+
+/// The nearer of a face hit and a section hit along the ray.
+fn nearer(face: Option<Hit>, section: Option<Hit>) -> Option<Hit> {
+    match (face, section) {
+        (Some(f), Some(s)) => Some(if s.t_mm < f.t_mm { s } else { f }),
+        (f, s) => f.or(s),
+    }
+}
+
+/// The section a cut opens, where the ray runs inside a body: between a face it enters by and
+/// the next face of that body it leaves by, the stretch the `planes` keep is the cut face the
+/// picture shows. A click straight down on a column cut by a plan's depth meets its top face
+/// above the slab and its foot below, both hidden, and selected nothing although the section
+/// is drawn. The first point of the nearest such stretch is the hit, on its entering face's
+/// element; `None` without planes, where nothing is cut open.
+fn section_hit(
+    hits: &[Hit],
+    origin: [f64; 3],
+    direction: [f64; 3],
+    planes: &[ClipPlane],
+    shown: &dyn Fn(&Hit) -> bool,
+) -> Option<Hit> {
+    let length = direction.iter().map(|v| v * v).sum::<f64>().sqrt();
+    if planes.is_empty() || !length.is_finite() || length <= 0.0 {
+        return None;
+    }
+    let unit = direction.map(|v| v / length);
+    let at = |t: f64| -> [f64; 3] {
+        let [ox, oy, oz] = origin;
+        let [ux, uy, uz] = unit;
+        [ox + ux * t, oy + uy * t, oz + uz * t]
+    };
+    let mut best: Option<Hit> = None;
+    for (i, enter) in hits.iter().enumerate() {
+        let Some(t0) = enter.t_mm else { continue };
+        if enter.back_facing || !shown(enter) {
+            continue;
+        }
+        let Some(t1) = hits
+            .iter()
+            .skip(i + 1)
+            .filter(|h| h.element_id == enter.element_id)
+            .find_map(|h| if h.back_facing { h.t_mm } else { None })
+        else {
+            continue;
+        };
+        // The kept part of [t0, t1]: each plane's distance is linear along the ray.
+        let (mut lo, mut hi) = (t0, t1);
+        for plane in planes {
+            let d0 = plane.distance(at(0.0));
+            let slope = plane.distance(at(1.0)) - d0;
+            if slope.abs() < 1e-12 {
+                if d0 < 0.0 {
+                    hi = lo - 1.0;
+                }
+            } else if slope > 0.0 {
+                lo = lo.max(-d0 / slope);
+            } else {
+                hi = hi.min(-d0 / slope);
+            }
+        }
+        if lo <= hi && best.as_ref().is_none_or(|b| b.t_mm.is_none_or(|t| lo < t)) {
+            let mut hit = enter.clone();
+            hit.t_mm = Some(lo);
+            hit.point_world_mm = at(lo);
+            hit.normal_world = None;
+            best = Some(hit);
+        }
+    }
+    best
 }
 
 /// The half-spaces `cut` keeps, empty for `None` or an invalid record (which cuts nothing).

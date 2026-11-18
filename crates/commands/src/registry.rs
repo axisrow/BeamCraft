@@ -2109,6 +2109,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--projection", "orthographic|perspective"),
             opt("--span", "MM"),
             opt("--depth", "none|ABOVE,BELOW"),
+            opt("--beyond", "cut|transparent"),
             opt("--rotation", "Z_DEG,X_DEG"),
             opt(
                 "--render-mode",
@@ -2160,6 +2161,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--projection", "orthographic|perspective"),
             opt("--span", "MM"),
             opt("--depth", "none|ABOVE,BELOW"),
+            opt("--beyond", "cut|transparent"),
             opt("--rotation", "Z_DEG,X_DEG"),
             opt(
                 "--render-mode",
@@ -2498,6 +2500,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--construction-snaps", "true|false"),
             opt("--grids", "UUID,..."),
             opt("--nearest", "true|false"),
+            opt("--from", "X,Y,Z"),
         ],
     ),
     entry(

@@ -250,6 +250,7 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "png",
  "pollster",
  "rfd",
  "session",

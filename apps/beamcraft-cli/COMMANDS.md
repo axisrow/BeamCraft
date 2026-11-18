@@ -1254,7 +1254,7 @@ save-view --file FILE [--name TEXT] [--new-id UUID] [--author TEXT] [--comment T
     [--u-prefix TEXT] [--v-prefix TEXT] [--level NAME|ID] [--levels first|last|all] [--element ID]
     [--assembly ID] [--side front|back|top|bottom|end|3d|four] [--ray-origin X,Y,Z]
     [--ray-direction X,Y,Z] [--edge X,Y,Z;X,Y,Z] [--projection orthographic|perspective]
-    [--span MM] [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
+    [--span MM] [--depth none|ABOVE,BELOW] [--beyond cut|transparent] [--rotation Z_DEG,X_DEG]
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
     [--opacity 0..1] [--representation full|simplified] [--colour-set none|NAME] [--folder PATH]
@@ -1272,7 +1272,7 @@ update-view --file FILE --view ID|NAME [--name TEXT] [--store ROOT] [--target X,
     [--three-points X,Y,Z;X,Y,Z;X,Y,Z] [--grid SELECTOR] [--axis LABEL|ID] [--level NAME|ID]
     [--element ID] [--assembly ID] [--side front|back|top|bottom|end|3d] [--ray-origin X,Y,Z]
     [--ray-direction X,Y,Z] [--edge X,Y,Z;X,Y,Z] [--projection orthographic|perspective]
-    [--span MM] [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
+    [--span MM] [--depth none|ABOVE,BELOW] [--beyond cut|transparent] [--rotation Z_DEG,X_DEG]
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
     [--opacity 0..1] [--representation full|simplified] [--colour-set none|NAME] [--folder PATH]
@@ -1484,7 +1484,7 @@ snap --store ROOT --point X,Y,Z [--radius MM] [--kinds KIND,...] [--max-hits N]
     [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z] [--direction X,Y,Z] [--aperture F]
     [--cursor-radius MM] [--reference-snaps true|false] [--geometry-snaps true|false]
     [--grid-snaps true|false] [--construction-snaps true|false] [--grids UUID,...]
-    [--nearest true|false]
+    [--nearest true|false] [--from X,Y,Z]
 ```
 
 ### lookup-feature

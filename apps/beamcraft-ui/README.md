@@ -52,12 +52,16 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   navigation sidebar, a compact model table and selected-model details with an icon-labeled Open
   action. Recent models has no duplicate header Open/New actions or search. Search (Ctrl+K)
   is available only in All models and never filters Recent models.
-  Double-click or Enter opens a model. Selected models get a real geometry thumbnail
-  from the CLI snapshot on a single background worker, cached for up to 20 models.
-  Thumbnails have an 8,192-triangle budget; failures and larger models show an explicit message
+  Double-click or Enter opens a model. A model shows its `thumbnail.png`: the window saves the
+  active view there whenever the model is left (window closed, another model opened, back to the
+  library), so the library reads no geometry for it. A `thumbnail.png` a person put there (one
+  without BeamCraft's PNG text marker) is shown and never replaced. A model with no picture yet
+  gets a geometry thumbnail from the CLI snapshot on a single background worker, cached for up to
+  20 models, with an 8,192-triangle budget; failures and larger models show an explicit message
   and Retry, not a fabricated or incomplete preview. Uninspected rows retain generic symbols.
-- The model workspace has a custom draggable title bar, window controls (on macOS the system's own
-  traffic lights over a transparent title bar; elsewhere drawn at the right), a project/save-state
+- The window controls are always the operating system's own: on macOS the traffic lights over a
+  transparent title bar with a draggable header under them; on Windows and Linux the native title
+  bar above the header. The model workspace has a project/save-state
   header and Publish for personal workspaces; Menu, Steel, Edit, View
   and Manage ribbon tabs; resizable project-browser and inspector panes; the native 3D viewport;
   and the compact selection/snap toolbar and status line. Views are listed in the browser.

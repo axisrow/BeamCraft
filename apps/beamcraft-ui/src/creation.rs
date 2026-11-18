@@ -7,6 +7,37 @@ use crate::tools::FormError;
 use beamcraft_engine::work_plane::WorkPlane;
 use beamcraft_model::limits::{CONTOUR_POINT_CAP, COORDINATE_CAP_MM};
 
+/// The four corners of a `width` x `length` rectangle centred on `centre` in `plane`: width
+/// along the plane's X, length along its Y, counter-clockwise seen from the plane's normal.
+/// Both sizes are typed millimetres; anything but a positive finite size is refused.
+pub fn rectangle_corners(
+    centre: [f64; 3],
+    plane: &WorkPlane,
+    width: &str,
+    length: &str,
+) -> Result<[[f64; 3]; 4], FormError> {
+    let size = |field: &'static str, text: &str| {
+        text.trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && *v > 0.0 && *v <= COORDINATE_CAP_MM)
+            .ok_or_else(|| FormError {
+                field,
+                message: "enter a positive size in millimetres".into(),
+            })
+    };
+    let (w, l) = (size("Width", width)? / 2.0, size("Length", length)? / 2.0);
+    let (x, y) = (plane.x(), plane.y());
+    let corner = |a: f64, b: f64| -> [f64; 3] {
+        std::array::from_fn(|i| {
+            centre.get(i).copied().unwrap_or(0.0)
+                + a * x.get(i).copied().unwrap_or(0.0)
+                + b * y.get(i).copied().unwrap_or(0.0)
+        })
+    };
+    Ok([corner(-w, -l), corner(w, -l), corner(w, l), corner(-w, l)])
+}
+
 /// Unpublished world points of one plate contour, in the picked order.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ContourDraft {
@@ -132,6 +163,35 @@ impl ContourDraft {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+
+    #[test]
+    fn a_plate_by_size_is_centred_on_the_click_in_the_plane() {
+        let plane = WorkPlane::default();
+        let corners =
+            super::rectangle_corners([100.0, 200.0, 300.0], &plane, "400", " 200 ").unwrap();
+        assert_eq!(
+            corners,
+            [
+                [-100.0, 100.0, 300.0],
+                [300.0, 100.0, 300.0],
+                [300.0, 300.0, 300.0],
+                [-100.0, 300.0, 300.0],
+            ]
+        );
+        for bad in ["", "0", "-5", "NaN", "1e12", "abc"] {
+            assert!(
+                super::rectangle_corners([0.0; 3], &plane, bad, "100").is_err(),
+                "{bad}"
+            );
+            assert_eq!(
+                super::rectangle_corners([0.0; 3], &plane, "100", bad)
+                    .unwrap_err()
+                    .field,
+                "Length"
+            );
+        }
+    }
+
     use super::*;
     #[test]
     fn first_marker_closes_in_pixels_at_different_scales_without_vertex_snaps() {

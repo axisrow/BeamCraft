@@ -614,3 +614,28 @@ fn the_views_file_is_a_camera_prim_layer_and_a_json_sidecar_migrates() {
     // Views never write the model, in either file form.
     assert_eq!(v.ok("open-revision", &[]), head);
 }
+
+#[test]
+fn a_view_keeps_what_its_depth_does_beyond_in_json_and_usd_files() {
+    for file in ["views.json", "model.views.usda"] {
+        let mut v = Views::new();
+        v.file = v.f.root.join(file).to_str().unwrap().to_owned();
+        let beyond = |v: &Views| {
+            let reply = v.view("list-views", &[]);
+            text(&list(&reply, "views")[0], "beyond")
+        };
+        v.view(
+            "save-view",
+            &["--name", "Slab", "--parallel", "xy", "--depth", "500,500"],
+        );
+        assert_eq!(beyond(&v), "cut", "{file}: a view cuts by default");
+        v.view(
+            "update-view",
+            &["--view", "Slab", "--beyond", "transparent"],
+        );
+        assert_eq!(beyond(&v), "transparent", "{file}");
+        v.refuse("update-view", &["--view", "Slab", "--beyond", "ghost"]);
+        v.view("update-view", &["--view", "Slab", "--beyond", "cut"]);
+        assert_eq!(beyond(&v), "cut", "{file}");
+    }
+}

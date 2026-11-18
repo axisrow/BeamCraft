@@ -172,6 +172,7 @@ const PROPERTY_OPTIONS: &[&str] = &[
     "--projection",
     "--span",
     "--depth",
+    "--beyond",
     "--rotation",
     "--render-mode",
     "--grids",
@@ -1012,6 +1013,10 @@ fn apply_properties(
     }
     if let Some(text) = get("--opacity") {
         view.opacity = number(text)?;
+    }
+    if let Some(text) = get("--beyond") {
+        view.beyond = beamcraft_engine::views::DepthBeyond::parse(text)
+            .map_err(|_| invalid("beyond is cut or transparent"))?;
     }
     if let Some(text) = get("--representation") {
         view.representation =

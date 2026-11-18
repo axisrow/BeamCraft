@@ -185,7 +185,11 @@ fn native_selector_saves_and_reloads_all_preferences() {
         })
         .collect();
     output.drop_without_applying_deltas();
-    assert!(labels.iter().any(|label| label == "BeamCraft"));
+    // Only macOS draws the name in the header; elsewhere the system title bar shows it.
+    assert_eq!(
+        labels.iter().any(|label| label == "BeamCraft"),
+        cfg!(target_os = "macos")
+    );
     assert!(
         !labels
             .iter()

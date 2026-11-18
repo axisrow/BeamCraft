@@ -232,6 +232,7 @@ fn merge_fields(ours: &ModelView, base: &ModelView, theirs: &ModelView) -> Model
         projection,
         span_mm,
         depth,
+        beyond,
         render_mode,
         grids_visible,
         folder,
@@ -254,6 +255,7 @@ fn merge_fields(ours: &ModelView, base: &ModelView, theirs: &ModelView) -> Model
     carry(&mut merged.projection, projection, &base.projection);
     carry(&mut merged.span_mm, span_mm, &base.span_mm);
     carry(&mut merged.depth, depth, &base.depth);
+    carry(&mut merged.beyond, beyond, &base.beyond);
     carry(&mut merged.render_mode, render_mode, &base.render_mode);
     carry(
         &mut merged.grids_visible,
@@ -675,6 +677,8 @@ pub struct Form {
     pub depth_on: bool,
     /// Depth towards the viewer and behind the plane, mm.
     pub depth: [String; 2],
+    /// What the depth limit does to the parts beyond it.
+    pub beyond: beamcraft_engine::views::DepthBeyond,
     /// Camera rotation about the view Z and X, degrees.
     pub rotation: [String; 2],
     /// Render mode.
@@ -719,6 +723,7 @@ impl Default for Form {
             projection: Projection::Orthographic,
             span: format!("{}", beamcraft_engine::views::DEFAULT_SPAN_MM),
             depth_on: false,
+            beyond: beamcraft_engine::views::DepthBeyond::Cut,
             depth: ["1000".into(), "1000".into()],
             rotation: ["0".into(), "0".into()],
             mode: RenderMode::Shaded,
@@ -767,6 +772,7 @@ impl Form {
         self.projection = view.projection;
         self.span = format!("{}", view.span_mm.round().max(1.0));
         self.depth_on = view.depth.is_some();
+        self.beyond = view.beyond;
         if let Some([above, below]) = view.depth {
             self.depth = [format!("{above}"), format!("{below}")];
         }
@@ -825,6 +831,7 @@ impl Form {
         } else {
             None
         };
+        view.beyond = self.beyond;
         view.rotation_rad = [
             number(&self.rotation[0], "the rotation about Z")?.to_radians(),
             number(&self.rotation[1], "the rotation about X")?.to_radians(),
@@ -896,6 +903,7 @@ impl Form {
         );
         carry(&self.span, &baseline.span, &mut target.span);
         carry(&self.depth_on, &baseline.depth_on, &mut target.depth_on);
+        carry(&self.beyond, &baseline.beyond, &mut target.beyond);
         for ((edited, baseline), target) in self
             .depth
             .iter()
@@ -1417,6 +1425,33 @@ pub fn display_clip(
     }
     let clip = beamcraft_engine::view_clipping::Clipping { planes, area };
     (!clip.planes.is_empty() || clip.area.is_some()).then_some(clip)
+}
+
+/// The clip uniform of a pane: the display cut and the view's own clipping, as
+/// [`display_clip`] joins them. A view that draws the parts beyond its depth faintly keeps its
+/// slab as soft planes instead, so the renderer can draw what lies beyond.
+pub fn display_clip_gpu(
+    cut: Option<&beamcraft_engine::view_clipping::Clipping>,
+    view: Option<&ModelView>,
+    origin_mm: [f64; 3],
+) -> crate::cut_plane::ClipGpu {
+    use beamcraft_engine::views::DepthBeyond;
+    let soft = view.filter(|v| v.beyond == DepthBeyond::Transparent && v.depth.is_some());
+    match soft {
+        Some(v) => {
+            let mut without = v.clone();
+            without.depth = None;
+            let hard = display_clip(cut, Some(&without));
+            let slab = beamcraft_engine::view_clipping::Clipping {
+                planes: v.clipping().map(|c| c.planes).unwrap_or_default(),
+                area: None,
+            };
+            crate::cut_plane::ClipGpu::with_soft(hard.as_ref(), &slab, origin_mm)
+        }
+        None => display_clip(cut, view).map_or_else(crate::cut_plane::ClipGpu::none, |clip| {
+            crate::cut_plane::ClipGpu::of(&clip, origin_mm)
+        }),
+    }
 }
 
 /// The element kinds the object-visibility list offers: every registered kind.
