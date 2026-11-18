@@ -28,10 +28,10 @@
 use std::collections::BTreeMap;
 
 use crate::bigint::Big;
-use crate::exact::{PredError, Predicates, min_exponent, scaled};
+use crate::exact::{PredError, Predicates, min_exponent, project, scaled};
 use crate::intersect::{
     Pierce, Side, Tri, classify_point, coplanar_area_overlap, segment_pierces_triangle,
-    triangle_contains_point, triangles_meet,
+    triangles_meet,
 };
 use crate::spatial::{Aabb, BoxIndex, IndexError};
 use crate::topology::Limits;
@@ -1088,9 +1088,99 @@ pub fn segment_midpoint(
     Ok(Some(mid))
 }
 
-/// Proves that a whole segment lies on the mesh surface, using exact closed
-/// triangle membership and convexity. Subdivision can cover several triangles;
-/// a hole, unresolved predicates or exhausted work never proves contact.
+// Exact path parameters: comparing cross-products avoids rounding a shared
+// triangle edge's parameter (for example 1/7) differently on its two sides.
+#[derive(Clone)]
+struct SegmentFraction {
+    num: Big,
+    den: Big,
+}
+
+impl SegmentFraction {
+    fn cmp(&self, other: &Self) -> Result<core::cmp::Ordering, ContactError> {
+        let left = self.num.mul(&other.den).map_err(|_| ContactError::Range)?;
+        let right = other.num.mul(&self.den).map_err(|_| ContactError::Range)?;
+        Ok(left.cmp_mag(&right)) // numerators are non-negative, denominators positive
+    }
+}
+
+fn triangle_segment_interval(
+    a: [f64; 3],
+    b: [f64; 3],
+    tri: &Tri,
+    preds: &mut Predicates,
+    zero: &SegmentFraction,
+    one: &SegmentFraction,
+) -> Result<Option<(SegmentFraction, SegmentFraction)>, ContactError> {
+    let [v0, v1, v2] = *tri;
+    if preds.orient3d(v0, v1, v2, a)? != 0 || preds.orient3d(v0, v1, v2, b)? != 0 {
+        return Ok(None);
+    }
+    let Some((axis, _)) = preds.normal_axis(v0, v1, v2)? else {
+        return Err(ContactError::Range);
+    };
+    let exponent = min_exponent(tri.iter().chain([&a, &b]).copied().flatten());
+    let xy = |p| -> Result<[Big; 2], ContactError> {
+        let [x, y] = project(p, axis);
+        Ok([
+            scaled(x, exponent).map_err(|_| ContactError::Range)?,
+            scaled(y, exponent).map_err(|_| ContactError::Range)?,
+        ])
+    };
+    let (v0, v1, v2, a, b) = (xy(v0)?, xy(v1)?, xy(v2)?, xy(a)?, xy(b)?);
+    let orient = |u: &[Big; 2], v: &[Big; 2], p: &[Big; 2]| -> Result<Big, ContactError> {
+        let value = || -> Result<Big, crate::bigint::Overflow> {
+            v[0].sub(&u[0])?
+                .mul(&p[1].sub(&u[1])?)?
+                .sub(&v[1].sub(&u[1])?.mul(&p[0].sub(&u[0])?)?)
+        };
+        value().map_err(|_| ContactError::Range)
+    };
+    let sign = orient(&v0, &v1, &v2)?.sign();
+    let mut lo = zero.clone();
+    let mut hi = one.clone();
+    for (u, v) in [(&v0, &v1), (&v1, &v2), (&v2, &v0)] {
+        let inward = |p| -> Result<Big, ContactError> {
+            let value = orient(u, v, p)?;
+            Ok(if sign < 0 { value.negated() } else { value })
+        };
+        let (d0, d1) = (inward(&a)?, inward(&b)?);
+        if d0.sign() < 0 && d1.sign() < 0 {
+            return Ok(None);
+        }
+        if d0.sign() >= 0 && d1.sign() >= 0 {
+            continue;
+        }
+        let den = d0.sub(&d1).map_err(|_| ContactError::Range)?;
+        let t = if den.sign() < 0 {
+            SegmentFraction {
+                num: d0.negated(),
+                den: den.negated(),
+            }
+        } else {
+            SegmentFraction {
+                num: d0.clone(),
+                den,
+            }
+        };
+        if d0.sign() < 0 {
+            if t.cmp(&lo)?.is_gt() {
+                lo = t;
+            }
+        } else if t.cmp(&hi)?.is_lt() {
+            hi = t;
+        }
+        if lo.cmp(&hi)?.is_gt() {
+            return Ok(None);
+        }
+    }
+    Ok(Some((lo, hi)))
+}
+
+/// Proves surface coverage of a whole segment by the union of its exact,
+/// coplanar triangle intervals. Shared edge parameters are compared as integer
+/// fractions, so a different valid triangulation cannot introduce numeric gaps.
+/// A hole, unresolved predicates or exhausted work never proves contact.
 pub fn segment_on_surface(
     from: [f64; 3],
     to: [f64; 3],
@@ -1098,36 +1188,50 @@ pub fn segment_on_surface(
     limits: Limits,
 ) -> Result<bool, ContactError> {
     let shell = Shell::of(mesh)?;
+    let unit = Big::from_i64_shifted(1, 0).map_err(|_| ContactError::Range)?;
+    let zero = SegmentFraction {
+        num: Big::ZERO,
+        den: unit.clone(),
+    };
+    let one = SegmentFraction {
+        num: unit.clone(),
+        den: unit,
+    };
     let mut preds = Predicates::new(limits.max_exact_predicates);
-    let mut pending = vec![(from, to, 0u8)];
+    let mut intervals = Vec::new();
     let mut spent = 0u64;
-    while let Some((a, b, depth)) = pending.pop() {
-        let mut covered = false;
-        for tri in &shell.tris {
+    for tri in &shell.tris {
+        spent += 1;
+        if spent > limits.max_candidate_pairs.min(4096) {
+            return Ok(false);
+        }
+        if let Some((lo, hi)) = triangle_segment_interval(from, to, tri, &mut preds, &zero, &one)? {
+            if lo.cmp(&zero)?.is_eq() && hi.cmp(&one)?.is_eq() {
+                return Ok(true);
+            }
+            intervals.push((lo, hi));
+        }
+    }
+    let mut covered = zero;
+    loop {
+        let mut next = covered.clone();
+        for (lo, hi) in &intervals {
             spent += 1;
-            if spent > limits.max_candidate_pairs.min(4096) {
+            if spent > limits.max_candidate_pairs {
                 return Ok(false);
             }
-            if triangle_contains_point(&mut preds, tri, a)?
-                && triangle_contains_point(&mut preds, tri, b)?
-            {
-                covered = true;
-                break;
+            if !lo.cmp(&covered)?.is_gt() && hi.cmp(&next)?.is_gt() {
+                next = hi.clone();
             }
         }
-        if covered {
-            continue;
-        }
-        if depth >= 32 {
+        if !next.cmp(&covered)?.is_gt() {
             return Ok(false);
         }
-        let Some(mid) = segment_midpoint(a, b, limits)? else {
-            return Ok(false);
-        };
-        pending.push((mid, b, depth + 1));
-        pending.push((a, mid, depth + 1));
+        if !next.cmp(&one)?.is_lt() {
+            return Ok(true);
+        }
+        covered = next;
     }
-    Ok(true)
 }
 
 /// The measured distance from a point to a mesh's triangles and the closest
@@ -1803,8 +1907,12 @@ mod tests {
     #[test]
     fn segment_proofs_cover_triangles_but_never_bridge_a_hole() {
         let mesh = cube([0.0, 0.0, 0.0], 10.0);
-        let (a, b) = ([1.0, 2.0, 10.0], [9.0, 2.0, 10.0]);
+        let (a, b) = ([1.0, 2.0, 10.0], [8.0, 2.0, 10.0]);
+        // The cap diagonal is crossed at parameter 1/7, which no finite
+        // dyadic subdivision reaches. Flipping that diagonal keeps contact.
         assert!(segment_on_surface(a, b, &mesh, limits()).unwrap());
+        let flipped = flipped_shell_box([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        assert!(segment_on_surface(a, b, &flipped, limits()).unwrap());
         let upper = segment_gap_upper([1.0, 1.0, 12.0], [9.0, 1.0, 12.0], &mesh).unwrap();
         assert!((upper - 2.0).abs() < 1e-9);
         let mesh = holed_plate();
