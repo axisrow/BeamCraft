@@ -1042,6 +1042,147 @@ fn an_add_hole_plate_exports_its_hole_count_and_no_gross_quantities() {
 }
 
 #[test]
+fn a_cut_or_holed_member_publishes_net_only_and_an_intact_one_keeps_its_gross() {
+    // Issue 556 item 4: the exporter never read a member's operation records, so a cut or
+    // holed member published gross quantities equal to net, against IFCX-QTY-004, which gives
+    // the gross only to an element without operations.
+    let f = Fixture::new();
+    let material = text(
+        at(
+            &f.ok(
+                "define-material",
+                &[
+                    "--project-id",
+                    PROJECT,
+                    "--density",
+                    "7850",
+                    "--name",
+                    "S355",
+                    "--grade",
+                    "S355",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &["--project-id", PROJECT, "--width", "200", "--height", "300"],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let member = |name: &str| {
+        text(
+            at(
+                &f.ok(
+                    "create-member",
+                    &[
+                        "--kind",
+                        "beam",
+                        "--start",
+                        "0,0,0",
+                        "--end",
+                        "6000,0,0",
+                        "--profile-digest",
+                        &profile,
+                        "--material-digest",
+                        &material,
+                        "--name",
+                        name,
+                    ],
+                ),
+                &["member"],
+            ),
+            "element_id",
+        )
+    };
+    let intact = member("B1");
+    let cut = member("B2");
+    let holed = member("B3");
+    f.ok(
+        "cut-by-plane",
+        &[
+            "--id",
+            &cut,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d1",
+            "--point",
+            "250,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &holed,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d2",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "100",
+        ],
+    );
+    let report = f.export(&f.path("a.ifc"), &[]);
+    assert_eq!(text(&report, "outcome"), "exported");
+    let file = f.parsed("a.ifc");
+    file.check().unwrap();
+    let quantities_of = |id: &str| -> BTreeMap<String, f64> {
+        let beams = file.all("IFCBEAM");
+        let product = beams
+            .iter()
+            .find(|p| property_values(&file, p)["ElementId"] == Value::Str(id.to_owned()))
+            .unwrap();
+        // The HoleCount property is a plate's alone; a member never carries it.
+        assert!(
+            !property_values(&file, product).contains_key("HoleCount"),
+            "a member has no HoleCount property"
+        );
+        quantity_values(&file, product)
+    };
+    // The intact member keeps the gross quantities, equal to the net ones (IFCX-QTY-004).
+    let intact_q = quantities_of(&intact);
+    assert!((intact_q["NetVolume"] - 0.36).abs() < 1e-9);
+    assert!((intact_q["GrossVolume"] - intact_q["NetVolume"]).abs() < 1e-12);
+    assert!((intact_q["NetWeight"] - 2826.0).abs() < 1e-9);
+    assert!((intact_q["GrossWeight"] - intact_q["NetWeight"]).abs() < 1e-12);
+    // The cut member (A03 record) publishes the net only: gross is omitted, never net again.
+    let cut_q = quantities_of(&cut);
+    assert!((cut_q["NetVolume"] - 0.015).abs() < 1e-9);
+    assert!((cut_q["NetWeight"] - 117.75).abs() < 1e-9);
+    assert!(
+        !cut_q.contains_key("GrossVolume"),
+        "a cut member has no gross volume"
+    );
+    assert!(
+        !cut_q.contains_key("GrossWeight"),
+        "a cut member has no gross weight"
+    );
+    // The holed member (A04.2 record) likewise.
+    let holed_q = quantities_of(&holed);
+    assert!((holed_q["NetVolume"] - 0.3584311966305422).abs() < 1e-9);
+    assert!(
+        !holed_q.contains_key("GrossVolume"),
+        "a holed member has no gross volume"
+    );
+    assert!(
+        !holed_q.contains_key("GrossWeight"),
+        "a holed member has no gross weight"
+    );
+}
+
+#[test]
 fn a_stale_quantity_is_left_out_and_listed() {
     let f = Fixture::new();
     let s = f.scene();
