@@ -94,7 +94,11 @@ upgrades them); no new A05 group can be authored.
   same ceiling runs against the shank's section-plane projection.
 - A member with a roll, a non-coordinate member axis, a curved path or a polybeam refuses
   `generate` with `UNSUPPORTED_GEOMETRY` — exactly the cases the member-hole replay
-  refuses a stored record with; every other straight member is served.
+  refuses a stored record with; every other straight member is served. The hand-placed
+  half of the same kernel slice (`add-hole --axis-point ...` on a member, A04.2) rides
+  that replay and refuses the same member cases, so the generated and the hand-placed
+  records of one member live on one record list in ordinal order (G14.1 complete on
+  both halves).
 - The record's extent covers only the stack the fastener crosses; a bearing whose axis
   finds no member material within the fastener's far seat (an existing larger opening,
   free fall past the outline) writes no record for that fastener.

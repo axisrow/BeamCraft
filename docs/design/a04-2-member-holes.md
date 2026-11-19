@@ -13,16 +13,18 @@ the `steel:mhole:*` attribute set plus its own `steel:mhole:nextOrdinal`/
 `retiredOperationIds` history (a third record family next to `steel:cut:*` and
 `steel:hole:*`); the canonical instance group replays as one atomic unit, as for cuts.
 
-Replay cuts each record with the kernel's certified through-hole operation, mapped into
-the hole frame by an exact signed axis permutation (the member frame `u,v,w` of F06
-section 1 to the hole frame x `+Z_m`, y `axis_direction x +Z_m`, z the direction), so an
-axis-aligned straight rectangle-profile member is cut with bit-exact coordinates today:
-geometry, volume and undo run end to end through the CLI, a hole that no longer fits
-refuses with a typed diagnostic, and removal restores the gross volume.
+The replay cuts each record with the kernel's certified section-aware member-hole
+operation (G14.1, with the directed cutters of G14.2), mapped into the hole frame by an
+exact signed axis permutation, so a member whose frame axes are the coordinate axes is
+cut with bit-exact coordinates. Straight members of every profile family are served —
+the rectangle and the A07.1 sections, faceted, sloped and curved walls included — with
+any section-plane hole direction and a `through` or a `range` extent (a range ending
+inside a wall is the kernel's blind refusal). Geometry, volume and undo run end to end
+through the CLI, a hole that no longer fits refuses with a typed diagnostic, and removal
+restores the gross volume.
 
-Everything else is an explicit `UNSUPPORTED_GEOMETRY` refusal naming the kernel slice
-G14.1 that lifts it: section profiles (I-beams, hollow walls), polybeam and curved paths,
-a frame that is not axis-aligned (including effective roll), and ranged cutters. The
-slice accepts only `through` round holes along the section directions `(+-1,0,0)` /
-`(0,+-1,0)`; a polygon generator on a member, a direction with an axial component and a
-member that cannot serve a stored record all refuse and change nothing.
+Everything else refuses with `UNSUPPORTED_GEOMETRY` and writes nothing: a curved member
+or polybeam, a frame that is not the coordinate axes (a roll or a skew), a direction
+with an axial component, a polygon generator on a member, and a record that does not
+fit strictly inside a wall face, clear of its edges and the other holes. The replay
+runs in ordinal order, so a refusal keeps the member's last valid state.
