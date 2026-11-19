@@ -20,7 +20,7 @@ use crate::support::{self, at, list, text};
 
 use beamcraft_json::{Json, Limits};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const ACTOR: &str = "0199e7a0-0000-7000-8000-000000000070";
@@ -148,8 +148,10 @@ impl Fixture {
     }
 }
 
-fn lost_of(listed: &Json) -> String {
-    text(at(listed, &["environment_lost"]), "path")
+/// The reported path of the lost copy, kept as a path so comparisons are
+/// separator-agnostic: a Windows run reports backslashes.
+fn lost_of(listed: &Json) -> PathBuf {
+    PathBuf::from(text(at(listed, &["environment_lost"]), "path"))
 }
 
 #[test]
@@ -188,7 +190,7 @@ fn the_three_copy_states_are_told_apart_in_the_library_replies() {
     assert!(
         lost_of(&listed).ends_with("environment/environment.usda"),
         "{}",
-        lost_of(&listed)
+        lost_of(&listed).display()
     );
     assert_eq!(
         text(at(&listed, &["environment_lost"]), "message"),
