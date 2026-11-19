@@ -10,8 +10,9 @@
 use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
 use crate::report::report;
 use beamcraft_commands::library::{
-    FirmFileRefused, LAYER_LIBRARY, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry,
-    Shadowed, Source, add_entry, load_fastener, open_lookup, project_library_chain,
+    EnvironmentCopyLost, FirmFileRefused, LAYER_LIBRARY, LibraryEntry, LibraryInfo, Lookup,
+    NewLibrary, RejectedEntry, Shadowed, Source, add_entry, load_fastener, open_lookup,
+    project_library_chain,
 };
 use beamcraft_json::Json;
 use session::environment::EnvironmentInfo;
@@ -141,6 +142,13 @@ fn firm_refused_json(refused: &[FirmFileRefused]) -> Json {
     )
 }
 
+fn environment_lost_json(lost: &EnvironmentCopyLost) -> Json {
+    Json::object([
+        ("path", Json::text(lost.path.clone())),
+        ("message", Json::text(lost.message)),
+    ])
+}
+
 const PROFILE_OPTIONS: &[&str] = &[
     "--width",
     "--height",
@@ -241,6 +249,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             chain.lookup,
             chain.environment,
             chain.firm_refused,
+            chain.environment_lost.as_ref(),
         );
     }
     // A14.1: a fastener library is a single file, no environment yet (O-B2); the same listing
@@ -274,17 +283,19 @@ fn run(args: &[OsString]) -> Run<Json> {
         )?;
         (opened.lookup, opened.environment, opened.firm_refused)
     };
-    finish(command, &options, lookup, environment, firm_refused)
+    finish(command, &options, lookup, environment, firm_refused, None)
 }
 
 /// The reply of `list-library` and `show-library` over the lookup that was built: the entry
-/// view, the shadowed designations with their layers, and the firm files that did not read.
+/// view, the shadowed designations with their layers, the firm files that did not read, and the
+/// project's lost environment copy when the chain reports one.
 fn finish(
     command: &&str,
     options: &BTreeMap<&str, &str>,
     lookup: Lookup,
     environment: Option<EnvironmentInfo>,
     firm_refused: Vec<FirmFileRefused>,
+    environment_lost: Option<&EnvironmentCopyLost>,
 ) -> Run<Json> {
     if *command == "show-library" {
         let designation = options
@@ -292,25 +303,31 @@ fn finish(
             .ok_or_else(|| invalid("--designation is required"))?;
         let (source, entry) = lookup.find(designation)?;
         let shadows = shadow_json(lookup.shadowed_for(designation));
-        if firm_refused.is_empty() {
-            return Ok(Json::object([
-                ("outcome", Json::text("library_entry")),
-                ("library", info_json(&source.library.info)),
-                ("library_path", Json::text(source.path.clone())),
-                ("entry", entry_json(entry, &source.library.info.id)?),
-                ("shadowed", shadows),
-            ]));
+        let mut object = BTreeMap::from([
+            ("outcome".to_owned(), Json::text("library_entry")),
+            ("library".to_owned(), info_json(&source.library.info)),
+            ("library_path".to_owned(), Json::text(source.path.clone())),
+            (
+                "entry".to_owned(),
+                entry_json(entry, &source.library.info.id)?,
+            ),
+            ("shadowed".to_owned(), shadows),
+        ]);
+        if !firm_refused.is_empty() {
+            object.insert("firm_refused".to_owned(), firm_refused_json(&firm_refused));
         }
-        return Ok(Json::object([
-            ("outcome", Json::text("library_entry")),
-            ("library", info_json(&source.library.info)),
-            ("library_path", Json::text(source.path.clone())),
-            ("entry", entry_json(entry, &source.library.info.id)?),
-            ("shadowed", shadows),
-            ("firm_refused", firm_refused_json(&firm_refused)),
-        ]));
+        if let Some(lost) = environment_lost {
+            object.insert("environment_lost".to_owned(), environment_lost_json(lost));
+        }
+        return Ok(Json::Object(object));
     }
-    list(options, &lookup, environment.as_ref(), &firm_refused)
+    list(
+        options,
+        &lookup,
+        environment.as_ref(),
+        &firm_refused,
+        environment_lost,
+    )
 }
 
 fn list(
@@ -318,6 +335,7 @@ fn list(
     lookup: &Lookup,
     environment: Option<&EnvironmentInfo>,
     firm_refused: &[FirmFileRefused],
+    environment_lost: Option<&EnvironmentCopyLost>,
 ) -> Run<Json> {
     let family = options.get("--family");
     let filter = options.get("--filter").map(|f| f.to_ascii_lowercase());
@@ -422,6 +440,9 @@ fn list(
         }
         if let Some(environment) = environment {
             object.insert("environment".to_owned(), environment_json(environment));
+        }
+        if let Some(lost) = environment_lost {
+            object.insert("environment_lost".to_owned(), environment_lost_json(lost));
         }
         if !firm_refused.is_empty() {
             object.insert("firm_refused".to_owned(), firm_refused_json(firm_refused));
