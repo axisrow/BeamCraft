@@ -309,7 +309,7 @@ fn apply_cut(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances, history, hole_history) = {
+    let (plates, members, definitions, instances, history, hole_history, member_hole_history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -332,8 +332,10 @@ fn apply_cut(
             decoded.instances,
             decoded.cut_history,
             decoded.hole_history,
+            decoded.member_hole_history,
         )
     };
+    let _ = &member_hole_history;
     let head_plate = plates.iter().find(|r| r.authored.id == command.target_id);
     let head_member = members.iter().find(|r| r.authored.id == command.target_id);
     let head_element = match (head_plate, head_member) {
@@ -1220,33 +1222,58 @@ pub fn a13_record(
             }
         }
         A13Command::Part(c) => {
+            // The record counter follows the target kind, exactly as the polygon arm does.
+            let next_ordinal = if member_of(c.target_id).is_some() {
+                member_hole_history
+                    .get(&c.target_id)
+                    .map_or(0, |h| h.next_ordinal)
+            } else {
+                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal)
+            };
             let outcome = steel::engine::fabricate::cut_by_part(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
                 plate_of(c.tool_id).as_ref(),
                 &used_contains,
-                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
+                next_ordinal,
             )?;
-            let steel::engine::fabricate::AuthoredPart::Plate(authored) = outcome.authored.clone()
-            else {
-                return Err(integrity("a part cut canonical is not a plate"));
+            let element = match &outcome.authored {
+                steel::engine::fabricate::AuthoredPart::Plate(authored) => {
+                    let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
+                    changes.push(steel_layer::hole_records(
+                        authored.id.to_string(),
+                        authored.hole_records.clone(),
+                    ));
+                    element
+                }
+                steel::engine::fabricate::AuthoredPart::Member(authored) => {
+                    let element = evaluate_state(AuthoredState::Member(authored.clone()))?;
+                    changes.push(steel_layer::member_holes(
+                        authored.id.to_string(),
+                        authored.hole_records.clone(),
+                    ));
+                    element
+                }
             };
-            let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
             footprint = outcome
                 .footprint
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
-            changes.push(steel_layer::hole_records(
-                authored.id.to_string(),
-                authored.hole_records.clone(),
-            ));
+            ordinal = None;
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
+            let member_target = member_of(c.target_id).is_some();
             let others: Vec<CutElement> = group
                 .iter()
                 .filter(|id| **id != c.target_id)
-                .map(|id| shared_with_holes(&plates, *id, &element))
+                .map(|id| {
+                    if member_target {
+                        shared_with_member_holes(&members, *id, &element)
+                    } else {
+                        shared_with_holes(&plates, *id, &element)
+                    }
+                })
                 .collect::<Result<_, _>>()?;
             elements.push(element);
             for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {

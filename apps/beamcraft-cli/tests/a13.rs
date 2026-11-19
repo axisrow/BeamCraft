@@ -1406,3 +1406,202 @@ fn a_member_polygon_cut_slots_a_chs_and_undoes() {
     let (_, redone) = f.run_in(&draft, "inspect-elements", &[]);
     assert!((first_member_volume(&redone) - net).abs() <= 0.001);
 }
+
+#[test]
+fn a_part_cut_slots_a_member_at_the_brace_angle_and_refuses_the_axial_tool() {
+    let f = Fixture::new();
+    // A square hollow section member along element X (200 x 200 x 10, exact walls), the
+    // gross 7600 mm2 x 3000 mm.
+    let profile = f.ok(
+        "define-profile",
+        &[
+            "--family", "rhs", "--h", "200", "--b", "200", "--t", "10", "--r", "0",
+        ],
+    );
+    let digest = text(at(&profile, &["definition"]), "digest");
+    let created = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "3000,0,0",
+            "--profile-digest",
+            &digest,
+            "--new-id",
+            "01b00000-0000-7000-8000-0000000000e1",
+        ],
+    );
+    let member = text(at(&created, &["member"]), "element_id");
+    let gross = num(&created, &["member", "quantities", "volume", "mm3"]);
+    assert!((gross - 22_800_000.0).abs() <= 1e-6, "{gross}");
+    // The knife plate: a 40 x 40 contour with a 500 mm band, its normal leaning along the
+    // member at 45 degrees (element (sqrt2/2, sqrt2/2, 0)), centred on the member axis at
+    // mid-length. In the member frame the cut direction is (sqrt2/2, 0, sqrt2/2): it
+    // crosses the two u-walls and runs parallel to the v-walls.
+    let tool_created = f.tool_plate(&[
+        "--width",
+        "40",
+        "--length",
+        "40",
+        "--thickness",
+        "500",
+        "--translation",
+        "1500,0,28.284271247461902",
+        "--orientation-xyzw",
+        "-0.5,0.5,0,0.7071067811865476",
+        "--new-id",
+        "01b00000-0000-7000-8000-0000000000e2",
+    ]);
+    let tool = text(at(&tool_created, &["plate"]), "element_id");
+    let cut = f.ok(
+        "cut-by-part",
+        &["--id", &member, "--operation-id", OP_A, "--tool", &tool],
+    );
+    // The net is the certified removed column: two wall crossings of
+    // `A x t / |n . d|` = `1600 x 10 x sqrt2` each.
+    let net = f.volume_of(&cut, "element");
+    let expected = 22_800_000.0 - 32_000.0 * 2.0f64.sqrt();
+    assert!((net - expected).abs() <= 1e-6, "{net} vs {expected}");
+    // The record rides the member's own hole vocabulary as a part cut.
+    let authored = f.authored_text(&cut);
+    assert!(
+        authored.contains("steel:mhole:kinds = [\"part_cut\"]"),
+        "{authored}"
+    );
+    // A fresh process reopens and re-verifies.
+    let inspected = f.inspected();
+    let members = at(&inspected, &["members"]).array().unwrap();
+    let reopened = members
+        .iter()
+        .find(|m| text(m, "element_id") == member)
+        .unwrap();
+    let reopened_volume = num(reopened, &["quantities", "volume", "mm3"]);
+    assert!(
+        (reopened_volume - expected).abs() <= 1e-6,
+        "{reopened_volume}"
+    );
+    // The purely axial tool (its normal along the member axis) is the unsupported geometry.
+    let axial = f.tool_plate(&[
+        "--width",
+        "40",
+        "--length",
+        "40",
+        "--thickness",
+        "500",
+        "--translation",
+        "-176.7766952966369,-176.7766952966369,1500",
+        "--orientation-xyzw",
+        "0,0.7071067811865476,0,0.7071067811865476",
+        "--new-id",
+        "01b00000-0000-7000-8000-0000000000e3",
+    ]);
+    let axial = text(at(&axial, &["plate"]), "element_id");
+    let kind = f.rejected(
+        "cut-by-part",
+        &["--id", &member, "--operation-id", OP_B, "--tool", &axial],
+    );
+    assert_eq!(kind, "UNSUPPORTED_GEOMETRY");
+    // The undo takes a fresh member's slot back: the head member already carries the
+    // oblique slot, and a body cut obliquely once serves no further member-hole replay
+    // (the documented kernel limit), so the draft cuts its own member and undoes that.
+    let draft = f.draft();
+    let fresh = f.ok_in(
+        &draft,
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "3000,0,0",
+            "--profile-digest",
+            &digest,
+            "--new-id",
+            "01b00000-0000-7000-8000-0000000000e6",
+        ],
+    );
+    let fresh_member = text(at(&fresh, &["member"]), "element_id");
+    f.ok_in(
+        &draft,
+        "cut-by-part",
+        &[
+            "--id",
+            &fresh_member,
+            "--operation-id",
+            OP_B,
+            "--tool",
+            &tool,
+        ],
+    );
+    f.history(&draft, "undo-workspace");
+    let (_, undone) = f.run_in(&draft, "inspect-elements", &[]);
+    let members = at(&undone, &["members"]).array().unwrap();
+    let restored = members
+        .iter()
+        .find(|m| text(m, "element_id") == fresh_member)
+        .unwrap();
+    let restored_volume = num(restored, &["quantities", "volume", "mm3"]);
+    assert!((restored_volume - gross).abs() <= 1e-6, "{restored_volume}");
+}
+
+#[test]
+fn an_oblique_part_cut_leans_against_a_plate_and_keeps_the_volume() {
+    let f = Fixture::new();
+    let created = f.plate(&[]);
+    let element = text(at(&created, &["plate"]), "element_id");
+    // A tool leaning 45 degrees against the plate: its normal (sqrt2/2, 0, sqrt2/2), the
+    // band still passing both faces, the mapped openings inside the outline.
+    let tool_created = f.tool_plate(&[
+        "--width",
+        "100",
+        "--length",
+        "100",
+        "--thickness",
+        "30",
+        "--translation",
+        "454.0380592228744,200,29.748737341529165",
+        "--orientation-xyzw",
+        "0,0.3826834323650898,0,0.9238795325112867",
+        "--new-id",
+        "01b00000-0000-7000-8000-0000000000e4",
+    ]);
+    let tool = text(at(&tool_created, &["plate"]), "element_id");
+    let cut = f.ok(
+        "cut-by-part",
+        &["--id", &element, "--operation-id", OP_A, "--tool", &tool],
+    );
+    // The tilted prism's horizontal section is the mapped outline at every height: it
+    // removes `area x thickness` where the area is the along-axis projection's, stretched
+    // by the lean.
+    let net = f.volume_of(&cut, "element");
+    let expected = 5_000_000.0 - 100_000.0 * 2.0f64.sqrt();
+    assert!((net - expected).abs() <= 1e-6, "{net}");
+    // The record stores the leaning axis and the part_cut kind.
+    let authored = f.authored_text(&cut);
+    assert!(
+        authored.contains("steel:hole:kinds = [\"part_cut\"]"),
+        "{authored}"
+    );
+    assert!(authored.contains("steel:hole:axisDirections"), "{authored}");
+    // A steep tool lying in the plate's plane never crosses a face.
+    let flat = f.tool_plate(&[
+        "--width",
+        "100",
+        "--length",
+        "100",
+        "--thickness",
+        "30",
+        "--translation",
+        "400,200,5",
+        "--orientation-xyzw",
+        "0,1,0,0",
+        "--new-id",
+        "01b00000-0000-7000-8000-0000000000e5",
+    ]);
+    let flat = text(at(&flat, &["plate"]), "element_id");
+    let kind = f.rejected(
+        "cut-by-part",
+        &["--id", &element, "--operation-id", OP_B, "--tool", &flat],
+    );
+    assert_eq!(kind, "UNSUPPORTED_GEOMETRY");
+}

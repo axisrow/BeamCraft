@@ -58,8 +58,9 @@ impl AuthoredPart {
 /// Everything one accepted `CutByPolygon` or `CutByPart` produces for the adapter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolygonCutOutcome {
-    /// The target's authored state with the record appended: a plate's through-cut record for
-    /// the plate form, a member's polygon-cut record for the member form.
+    /// The target's authored state with the record appended: a plate's through-cut record
+    /// for the plate form, a member's record (a polygon cut or a part cut) for the member
+    /// form.
     pub authored: AuthoredPart,
     /// The ordinal the record took in the shared through-cut counter.
     pub ordinal: usize,
@@ -161,12 +162,15 @@ fn append_plane_record(
 /// Admits a through-cut polygon on a plate: the shared record identity, the `MAX_HOLES`
 /// capacity of the element, the admitted persistent next ordinal of the shared through-cut
 /// counter and the declared footprint (the shape rewrite plus the read of a tool element when
-/// there is one).
+/// there is one). `axis` is the record's prism axis in the plate frame; the vertical kinds
+/// carry `(0, 0, 1)`.
+#[allow(clippy::too_many_arguments)]
 fn admit_through_polygon(
     head: &AuthoredPlate,
     operation_id: OpId,
     polygon: Vec<[f64; 2]>,
     kind: HoleKind,
+    axis: [f64; 3],
     tool_id: Option<ElementId>,
     operation_used: &dyn Fn(&OpId) -> bool,
     next_ordinal: u16,
@@ -222,12 +226,12 @@ fn admit_through_polygon(
         ordinal: usize::from(next_ordinal),
         polygon_mm: polygon,
         kind,
+        axis_direction_mm: axis,
         owner: None,
     });
     Ok((next, usize::from(next_ordinal), footprint))
 }
 
-/// Applies `CutByPolygon` to the plate's authored state in memory: the polygon is appended as a
 /// Applies `CutByPolygon`: the plate form cuts a plate with the prism of the polygon in its
 /// local XY; the member form (the member frame fields present) cuts a member with the prism of
 /// the polygon in the member-hole frame along a section-plane direction — an owned record of
@@ -253,6 +257,7 @@ pub fn cut_by_polygon(
                 command.operation_id,
                 command.polygon()?,
                 HoleKind::PolygonCut,
+                [0.0, 0.0, 1.0],
                 None,
                 operation_used,
                 next_ordinal,
@@ -347,10 +352,13 @@ fn found_plate<'a>(
     })
 }
 
-/// Applies `CutByPart`: the tool plate's prism, mapped into the target's local frame, becomes a
-/// through-cut record. The tool must lie parallel to the target (a relative rotation about the
-/// target normal) and its mapped prism must reach past both target faces; everything else is
-/// the kernel's replay decision.
+/// Applies `CutByPart`: the tool plate's prism, mapped into the target's frame, becomes a
+/// through-cut record. A plate target takes a `part_cut` record whose prism axis is the
+/// mapped tool normal — any relative rotation is derived, and the mapped prism must reach
+/// past both target faces. A member target takes a member `part_cut` record derived the
+/// same way, its prism axis allowed to lean along the member (epic #556 slice 2); a purely
+/// axial tool is refused. Everything else is the kernel's replay decision, and a refusal
+/// changes nothing.
 pub fn cut_by_part(
     command: &CutByPart,
     plate: Option<&AuthoredPlate>,
@@ -360,7 +368,6 @@ pub fn cut_by_part(
     next_ordinal: u16,
 ) -> Result<PolygonCutOutcome, CommandError> {
     command.validate_arguments()?;
-    let head = found_plate(plate, member, command.target_id)?;
     let tool = tool
         .filter(|tool| tool.id == command.tool_id)
         .ok_or_else(|| {
@@ -370,14 +377,18 @@ pub fn cut_by_part(
                 "the tool is not a plate in the head revision",
             )
         })?;
-    if tool.id == head.id {
+    if tool.id == command.target_id {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "tool_id",
             "a plate cannot cut with itself",
         ));
     }
-    let (polygon, crosses) = tool_cavity(head, tool)?;
+    if let Some(head) = member.filter(|head| head.id == command.target_id) {
+        return cut_member_by_part(command, head, tool, operation_used, next_ordinal);
+    }
+    let head = found_plate(plate, member, command.target_id)?;
+    let (polygon, axis, crosses) = tool_prism(head, tool)?;
     if !crosses {
         return Err(CommandError::new(
             ErrorCode::UnsupportedGeometry,
@@ -389,7 +400,8 @@ pub fn cut_by_part(
         head,
         command.operation_id,
         polygon,
-        HoleKind::PolygonCut,
+        HoleKind::PartCut,
+        axis,
         Some(command.tool_id),
         operation_used,
         next_ordinal,
@@ -402,33 +414,126 @@ pub fn cut_by_part(
     })
 }
 
-/// The tool plate's outline mapped into the target's local XY (clockwise, as the through-cut
-/// admission requires) and whether its mapped prism reaches past both target faces. A tool
-/// whose relative rotation is not about the target normal is refused.
-fn tool_cavity(
-    target: &AuthoredPlate,
+/// The member path of [`cut_by_part`]: the tool plate's prism mapped into the member frame
+/// becomes an owned member `part_cut` record. The stored hole frame generalizes the A04.2
+/// convention: its x is the member axis projected onto the plane perpendicular to the cut
+/// direction and its y completes the right-handed frame, which reduces to
+/// `(Z_m, axis_direction x Z_m)` for a section-plane direction. The derivation resolves
+/// once at admission; moving the tool afterwards never updates the cut.
+fn cut_member_by_part(
+    command: &CutByPart,
+    head: &AuthoredMember,
     tool: &AuthoredPlate,
-) -> Result<(Vec<[f64; 2]>, bool), CommandError> {
-    let relative = quat_multiply(
-        quat_conjugate(target.placement.orientation_xyzw),
-        tool.placement.orientation_xyzw,
+    operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
+) -> Result<PolygonCutOutcome, CommandError> {
+    if operation_used(&command.operation_id) {
+        return Err(CommandError::new(
+            ErrorCode::DuplicateId,
+            "operation_id",
+            "operation id already names a record of the project",
+        ));
+    }
+    if head.hole_records.len() >= MAX_HOLES {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "hole",
+            "more than 64 holes on one member",
+        )
+        .with_rule("DV-LIM-001"));
+    }
+    let ordinal =
+        crate::engine::member_hole::admit_ordinal(&head.hole_records, usize::from(next_ordinal))?;
+    // The member frame the replay serves: the same construction over the member's axis
+    // points, so the stored record means the same geometry on both sides. The section
+    // extents only feed validation; the axes come from the axis points and the roll.
+    let (Some(start), Some(end)) = (head.axis_points_mm.first(), head.axis_points_mm.get(1)) else {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "axis_points_mm",
+            "member frame could not be built",
+        ));
+    };
+    let frame = beamcraft_geom::frame::MemberFrame::new(
+        beamcraft_geom::Point3::new(start[0], start[1], start[2]),
+        beamcraft_geom::Point3::new(end[0], end[1], end[2]),
+        1.0,
+        1.0,
+        head.roll_rad,
+    )
+    .map_err(|_| {
+        CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "axis_points_mm",
+            "member frame could not be built",
+        )
+    })?
+    .frame();
+    let axis = |v: &beamcraft_geom::Vec3| [v.x(), v.y(), v.z()];
+    let basis = [axis(&frame.x()), axis(&frame.y()), axis(&frame.z())];
+    let origin = start;
+    let dot = |u: [f64; 3], v: [f64; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    // The tool normal in element coordinates, then in the member frame.
+    let normal = rotate_vector([0.0, 0.0, 1.0], tool.placement.orientation_xyzw);
+    let (du, dv, dw) = (
+        dot(normal, basis[0]),
+        dot(normal, basis[1]),
+        dot(normal, basis[2]),
     );
-    let axis = rotate_vector([0.0, 0.0, 1.0], relative);
-    if !(axis[0].abs() <= 1e-6 && axis[1].abs() <= 1e-6) {
+    if (du * du + dv * dv).sqrt() <= 1e-9 {
         return Err(CommandError::new(
             ErrorCode::UnsupportedGeometry,
             "tool_id",
-            "the tool must be parallel to the target plate",
+            "the tool maps to a purely axial cutter",
         ));
     }
-    let flipped = axis[2] < 0.0;
+    // The axis point is the tool's own origin, resolved through the frame origin into the
+    // member frame exactly as the replay resolves it back.
+    let resolve = |p: [f64; 3]| -> [f64; 3] {
+        let element = [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
+        [
+            dot(element, basis[0]),
+            dot(element, basis[1]),
+            dot(element, basis[2]),
+        ]
+    };
+    let axis_point_mm = resolve(tool.placement.translation_mm);
+    // The hole frame in element coordinates: the member axis's projection onto the plane
+    // perpendicular to the cut direction, and the direction cross it. Degenerate for a
+    // purely axial direction, refused above.
+    let x_hat = {
+        let z = basis[2];
+        let along = dot(z, normal);
+        let p = [
+            z[0] - along * normal[0],
+            z[1] - along * normal[1],
+            z[2] - along * normal[2],
+        ];
+        let norm = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+        if !(norm.is_finite() && norm > 1e-12) {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "tool_id",
+                "the tool maps to a purely axial cutter",
+            ));
+        }
+        [p[0] / norm, p[1] / norm, p[2] / norm]
+    };
+    let y_hat = [
+        normal[1] * x_hat[2] - normal[2] * x_hat[1],
+        normal[2] * x_hat[0] - normal[0] * x_hat[2],
+        normal[0] * x_hat[1] - normal[1] * x_hat[0],
+    ];
+    // The tool's contour mapped into the hole frame, relative to the axis point (the
+    // replay resolves the axis point back and adds these very offsets).
+    let p0 = tool.placement.translation_mm;
     let mut polygon: Vec<[f64; 2]> = tool
         .contour_points_mm
         .iter()
         .map(|[x, y, _]| {
             let world = local_to_world([*x, *y, 0.0], &tool.placement);
-            let local = world_to_local(world, &target.placement);
-            [local[0], local[1]]
+            let rel = [world[0] - p0[0], world[1] - p0[1], world[2] - p0[2]];
+            [dot(rel, x_hat), dot(rel, y_hat)]
         })
         .collect();
     if polygon.len() > CONTOUR_POINT_CAP {
@@ -439,23 +544,145 @@ fn tool_cavity(
         )
         .with_rule("DV-LIM-001"));
     }
-    // The tool contour is counter-clockwise; the target's cutters are clockwise. A relative
-    // rotation with a positive normal component preserves the XY orientation, so the mapped
-    // polygon must be reversed; a flipped one is already clockwise.
-    if !flipped {
+    // The tool contour is counter-clockwise in its own frame; the mapped winding follows
+    // the relative orientation, and the record needs clockwise.
+    let mut area2 = 0.0f64;
+    for (p, q) in polygon.iter().zip(polygon.iter().cycle().skip(1)) {
+        area2 += p[0] * q[1] - q[0] * p[1];
+    }
+    if !area2.is_finite() {
+        return Err(CommandError::new(
+            ErrorCode::NonFiniteNumber,
+            "tool_id",
+            "value is not finite",
+        )
+        .with_rule("DV-ATTR-003"));
+    }
+    if area2 > 0.0 {
         polygon.reverse();
     }
-    // Both material bands follow the authored thickness sides (issue 555 audit item 2): the
-    // tool's band, carried along the shared normal into the target frame, must reach past both
-    // faces of the target's own band.
+    let mut next = head.clone();
+    next.hole_records
+        .push(crate::model::command::MemberHoleRecord {
+            operation_id: command.operation_id,
+            ordinal,
+            kind: crate::model::command::MemberHoleKind::PartCut,
+            axis_point_mm,
+            axis_direction: [du, dv, dw],
+            extent: crate::model::command::HoleExtent::Through,
+            polygon_mm: polygon,
+            owner: None,
+        });
+    let mut footprint = Footprint::for_update(head.id, false, false, true, false, None)?;
+    let read = Footprint::from_entries(
+        &[Entry {
+            target: Target::Element(tool.id),
+            group: Group::ShapeInputs,
+        }],
+        &[],
+    )?;
+    footprint = footprint.union(read)?;
+    Ok(PolygonCutOutcome {
+        authored: AuthoredPart::Member(next),
+        ordinal,
+        footprint,
+        fingerprint: command.content_fingerprint()?,
+    })
+}
+
+/// The tool plate's prism mapped into the target plate's frame: the clockwise outline
+/// projected along the tool normal onto the target's local `z = 0` plane, the prism's unit
+/// axis in the target frame (its Z part kept positive) and whether the mapped band reaches
+/// past both target faces. Any relative rotation is derived; a prism whose axis lies in
+/// the target plane never crosses a face and is refused.
+type MappedPrism = (Vec<[f64; 2]>, [f64; 3], bool);
+
+fn tool_prism(target: &AuthoredPlate, tool: &AuthoredPlate) -> Result<MappedPrism, CommandError> {
+    let relative = quat_multiply(
+        quat_conjugate(target.placement.orientation_xyzw),
+        tool.placement.orientation_xyzw,
+    );
+    let mut axis = rotate_vector([0.0, 0.0, 1.0], relative);
+    let norm = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+    if !(norm.is_finite() && norm > 0.0) {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "tool_id",
+            "the tool must be parallel to the target plate",
+        ));
+    }
+    axis = [axis[0] / norm, axis[1] / norm, axis[2] / norm];
+    let flipped = axis[2] < 0.0;
+    if !axis[2].is_finite() || axis[2].abs() <= 1e-6 {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "tool_id",
+            "the tool's prism never crosses the target's faces",
+        ));
+    }
+    let dz = axis[2];
+    let mut polygon: Vec<[f64; 2]> = tool
+        .contour_points_mm
+        .iter()
+        .map(|[x, y, _]| {
+            let world = local_to_world([*x, *y, 0.0], &tool.placement);
+            let local = world_to_local(world, &target.placement);
+            // Project along the prism axis onto the z = 0 plane: the opening's shape at
+            // the reference height.
+            let t = local[2] / dz;
+            [local[0] - t * axis[0], local[1] - t * axis[1]]
+        })
+        .collect();
+    if polygon.len() > CONTOUR_POINT_CAP {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "tool_id",
+            "the tool contour exceeds the point cap",
+        )
+        .with_rule("DV-LIM-001"));
+    }
+    // The mapped winding follows the relative orientation; the record needs clockwise.
+    let mut area2 = 0.0f64;
+    for (p, q) in polygon.iter().zip(polygon.iter().cycle().skip(1)) {
+        area2 += p[0] * q[1] - q[0] * p[1];
+    }
+    if !area2.is_finite() {
+        return Err(CommandError::new(
+            ErrorCode::NonFiniteNumber,
+            "tool_id",
+            "value is not finite",
+        )
+        .with_rule("DV-ATTR-003"));
+    }
+    if area2 > 0.0 {
+        polygon.reverse();
+    }
+    // Both material bands follow the authored thickness sides (issue 555 audit item 2):
+    // the tool's band, carried along the prism axis into the target frame, must reach past
+    // both faces of the target's own band. The record's prism lines hang off the projected
+    // outline in the z = 0 plane, so the band is read at the outline's extreme axis
+    // heights: the worst line must still clear both faces.
     let offset = world_to_local(tool.placement.translation_mm, &target.placement);
+    let dot = |u: [f64; 3], v: [f64; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    let centre = dot(offset, axis);
     let sign = if flipped { -1.0 } else { 1.0 };
     let [tool_low, tool_high] = tool.local_z_band_mm();
-    let (a, b) = (offset[2] + sign * tool_low, offset[2] + sign * tool_high);
-    let (from, to) = if a <= b { (a, b) } else { (b, a) };
+    let (s_lo, s_hi) = if sign > 0.0 {
+        (centre + sign * tool_low, centre + sign * tool_high)
+    } else {
+        (centre + sign * tool_high, centre + sign * tool_low)
+    };
+    let mut rd_lo = f64::INFINITY;
+    let mut rd_hi = f64::NEG_INFINITY;
+    for r in &polygon {
+        let height = dot([r[0], r[1], 0.0], axis);
+        rd_lo = rd_lo.min(height);
+        rd_hi = rd_hi.max(height);
+    }
     let [target_low, target_high] = target.local_z_band_mm();
-    let crosses = from < target_low - TOOL_REACH_MM && to > target_high + TOOL_REACH_MM;
-    Ok((polygon, crosses))
+    let crosses = (s_lo - rd_hi) * dz < target_low - TOOL_REACH_MM
+        && (s_hi - rd_lo) * dz > target_high + TOOL_REACH_MM;
+    Ok((polygon, axis, crosses))
 }
 
 /// Applies `FitEndToPart`: the target is trimmed flush with the tool face nearest the target's
@@ -1240,17 +1467,17 @@ mod tests {
         };
         let target = plate();
         let cutter = tool(9, 50.0, 50.0, 30.0, at(-10.0));
-        assert!(tool_cavity(&target, &cutter).unwrap().1);
+        assert!(tool_prism(&target, &cutter).unwrap().2);
         let mut below = cutter.clone();
         below.thickness_side = Some(crate::model::command::PlateSide::Bottom);
-        assert!(!tool_cavity(&target, &below).unwrap().1);
+        assert!(!tool_prism(&target, &below).unwrap().2);
         let mut sunk = plate();
         sunk.thickness_side = Some(crate::model::command::PlateSide::Bottom);
-        assert!(!tool_cavity(&sunk, &cutter).unwrap().1);
+        assert!(!tool_prism(&sunk, &cutter).unwrap().2);
         assert!(
-            tool_cavity(&sunk, &tool(9, 50.0, 50.0, 30.0, at(-20.0)))
+            tool_prism(&sunk, &tool(9, 50.0, 50.0, 30.0, at(-20.0)))
                 .unwrap()
-                .1
+                .2
         );
     }
 
@@ -1359,11 +1586,11 @@ mod tests {
                 .code,
             ErrorCode::InvalidArgument
         );
-        let AuthoredPart::Plate(authored) = &outcome.authored else {
-            panic!("expected the plate target");
+        let AuthoredPart::Plate(outcome_authored) = &outcome.authored else {
+            panic!("a polygon cut on a plate target stays a plate");
         };
-        assert_eq!(authored.hole_records[0].kind, HoleKind::PolygonCut);
-        let body = evaluate_plate(authored).unwrap();
+        assert_eq!(outcome_authored.hole_records[0].kind, HoleKind::PolygonCut);
+        let body = evaluate_plate(outcome_authored).unwrap();
         assert!((body.quantities().volume_mm3 - 4_900_000.0).abs() <= 1e-6);
         // A second record takes the next ordinal of the shared through-cut counter.
         let next = CutByPolygon {
@@ -1372,7 +1599,7 @@ mod tests {
             ..command.clone()
         };
         assert_eq!(
-            cut_by_polygon(&next, Some(authored), None, &none, 1)
+            cut_by_polygon(&next, Some(outcome_authored), None, &none, 1)
                 .unwrap()
                 .ordinal,
             1
@@ -1477,10 +1704,16 @@ mod tests {
         };
         let outcome = cut_by_part(&command, Some(&source), None, Some(&cutter), &none, 0).unwrap();
         assert_eq!(outcome.ordinal, 0);
-        let AuthoredPart::Plate(authored) = &outcome.authored else {
-            panic!("expected the plate target");
+        let AuthoredPart::Plate(outcome_authored) = &outcome.authored else {
+            panic!("a plate target keeps a plate state");
         };
-        let body = evaluate_plate(authored).unwrap();
+        // The vertical part cut is a part_cut record with the unit axis.
+        assert_eq!(outcome_authored.hole_records[0].kind, HoleKind::PartCut);
+        assert_eq!(
+            outcome_authored.hole_records[0].axis_direction_mm,
+            [0.0, 0.0, 1.0]
+        );
+        let body = evaluate_plate(outcome_authored).unwrap();
         assert!((body.quantities().volume_mm3 - 4_900_000.0).abs() <= 1e-6);
         // The tool's footprint read is declared.
         assert!(
@@ -1507,15 +1740,16 @@ mod tests {
                 .code,
             ErrorCode::UnsupportedGeometry
         );
-        // A tool turned across the target is refused.
+        // A tool lying in the target plane never crosses a face, and a steeply tilted tool
+        // whose prism cannot cover the target's band either.
         let sideways = AuthoredPlate {
             placement: Placement {
                 translation_mm: [150.0, 150.0, -5.0],
                 orientation_xyzw: [
                     0.0,
-                    (std::f64::consts::FRAC_PI_4).sin(),
+                    (std::f64::consts::FRAC_PI_2).sin(),
                     0.0,
-                    (std::f64::consts::FRAC_PI_4).cos(),
+                    (std::f64::consts::FRAC_PI_2).cos(),
                 ],
             },
             ..cutter.clone()
@@ -1526,6 +1760,32 @@ mod tests {
                 .code,
             ErrorCode::UnsupportedGeometry
         );
+        // An oblique tool (45 degrees) whose mapped prism still passes both faces cuts:
+        // the band, read at the mapped outline's extreme axis heights, covers the slab
+        // (the tool is thick enough for the projected outline's spread).
+        let leaning = tool(
+            6,
+            100.0,
+            100.0,
+            200.0,
+            Placement {
+                translation_mm: [500.0, 200.0, -61.6],
+                orientation_xyzw: [
+                    0.0,
+                    (std::f64::consts::FRAC_PI_8).sin(),
+                    0.0,
+                    (std::f64::consts::FRAC_PI_8).cos(),
+                ],
+            },
+        );
+        let lean = cut_by_part(&command, Some(&source), None, Some(&leaning), &none, 1).unwrap();
+        let AuthoredPart::Plate(lean_authored) = &lean.authored else {
+            panic!("a plate target keeps a plate state");
+        };
+        let lean_axis = lean_authored.hole_records[0].axis_direction_mm;
+        assert!((lean_axis[0] - std::f64::consts::FRAC_1_SQRT_2).abs() <= 1e-12);
+        assert!((lean_axis[2] - std::f64::consts::FRAC_1_SQRT_2).abs() <= 1e-12);
+        assert!(evaluate_plate(lean_authored).is_ok());
     }
 
     #[test]

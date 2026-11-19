@@ -355,6 +355,7 @@ mod tests {
             ordinal: 3,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
             kind: crate::model::command::HoleKind::Hole,
+            axis_direction_mm: [0.0, 0.0, 1.0],
             owner: None,
         };
         // A retried copy derives the exact same identity.
@@ -384,6 +385,7 @@ mod tests {
             ordinal: 0,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
             kind: HoleKind::Hole,
+            axis_direction_mm: [0.0, 0.0, 1.0],
             owner: Some(group),
         }];
         let copy = copy_plate(&source, &command()).unwrap();

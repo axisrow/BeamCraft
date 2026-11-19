@@ -26,7 +26,7 @@ upgrades them); no new A05 group can be authored.
 |---|---|
 | `steel::model::command` | `BoltGroupInputs.hole_mode` (`Option<HoleMode>`, the definition's preference as the default: a bolt generates, a screw does not) and `BoltGroupInputs.hole_clearance_mm` (`Option<f64>`, the definition's clearance as the default) with admission and fingerprint input (`BoltGroupInputs/v2`), and `HoleRecord.owner` (`Option<ElementId>`). |
 | `steel::engine::bolt` | `generate_holes`: with `generate`, one round through hole per crossing fastener on every connected plate, of diameter `nominal + clearance`, centred where the shank axis crosses the plate's mid-plane, decided in the plate's own frame (any placement rotation, any `thickness_side`; issue 555); a shank axis more than 60 degrees off the plate normal is `UNSUPPORTED_GEOMETRY`; `none` writes no part. `generate_member_holes`: the member side of the same decision (the F06 member-hole amendment section 3), one owned member-hole record per fastener whose shank crosses the member's material, its range bound to the stack the fastener crosses; a curved member or polybeam, a rolled or skewed member frame and a shank more than 60 degrees off its section-plane projection refuse with `UNSUPPORTED_GEOMETRY`. `update_hole`/`remove_hole` refuse a group-owned record (plate or member) with `DEPENDENCY_CONFLICT` (`DV-REL-009`). |
-| `beamcraft_layer_engine::authored` | `steel:bolt:holeMode` (required token) and `steel:bolt:holeClearanceMm` (present exactly when `generate`) on the group record; `steel:hole:generatedBy` (the sixth plate record attribute, equal length, a full UUIDv7 or the empty string per record) and `steel:mhole:generatedBy` (the tenth member record attribute, same rule), so a drilled definition's instances and members read the records whole. |
+| `beamcraft_layer_engine::authored` | `steel:bolt:holeMode` (required token) and `steel:bolt:holeClearanceMm` (present exactly when `generate`) on the group record; `steel:hole:generatedBy` (a plate record attribute, equal length, a full UUIDv7 or the empty string per record) and `steel:mhole:generatedBy` (a member record attribute, same rule), so a drilled definition's instances and members read the records whole. |
 | `beamcraft_commands::bolt` | `create_bolt_group`/`update_bolt_group` write the hole records of every affected plate and member in the same transaction: the record identities are derived from the operation id (SHA-256 over the pair, version and variant bits forced) over one shared serial, so a retry authors the same identities; the part is replayed before anything is written, so a hole that does not fit refuses the whole command. `update` regenerates the holes and turning `generate` off removes exactly the group's records. `delete-element` of a group removes its records from the plates and members in the same revision. |
 
 ## Decisions
@@ -51,8 +51,8 @@ upgrades them); no new A05 group can be authored.
 - **Member records are the A04.2 records, owned like the plate ones (2026-11-19).** With
   `generate`, a beam or column of the connected parts takes one `MemberHoleRecord` per
   fastener whose shank crosses its material, tagged with the group's id
-  (`steel:mhole:generatedBy`, the tenth record attribute — the descriptor's nine become
-  ten, and pre-alpha stores are not migrated, the standing rule). The record's axis point
+  (`steel:mhole:generatedBy`, a record attribute of the member set — pre-alpha stores are
+  not migrated, the standing rule). The record's axis point
   is where the shank crosses the material it actually passes through, in the member frame;
   its direction is the shank's section-plane projection; its extent is a range that covers
   only the **stack the fastener crosses** — the axis-ray material intervals of the member's

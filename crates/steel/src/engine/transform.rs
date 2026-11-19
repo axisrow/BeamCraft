@@ -1141,12 +1141,12 @@ mod tests {
         drilled.hole_records = vec![crate::model::command::MemberHoleRecord {
             operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000ad").unwrap(),
             ordinal: 0,
+            kind: crate::model::command::MemberHoleKind::Hole,
             axis_point_mm: [500.0, 20.0, 0.0],
             axis_direction: [0.0, 1.0, 0.0],
             extent: crate::model::command::HoleExtent::Through,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
             owner: None,
-            kind: crate::model::command::MemberHoleKind::Hole,
         }];
         assert_eq!(
             mirror_member_local(&mut drilled).unwrap_err().code,

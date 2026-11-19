@@ -897,6 +897,7 @@ fn regenerated_holes(
                 ordinal,
                 polygon_mm: hole.polygon_mm.clone(),
                 kind: HoleKind::Hole,
+                axis_direction_mm: [0.0, 0.0, 1.0],
                 owner: Some(group),
             });
         }
@@ -964,12 +965,12 @@ fn regenerated_holes(
             next.hole_records.push(MemberHoleRecord {
                 operation_id: record_id,
                 ordinal,
+                kind: steel::model::command::MemberHoleKind::Hole,
                 axis_point_mm: hole.axis_point_mm,
                 axis_direction: hole.axis_direction,
                 extent: hole.extent,
                 polygon_mm,
                 owner: Some(group),
-                kind: steel::model::command::MemberHoleKind::Hole,
             });
         }
         next.hole_records.sort_by_key(|r| r.ordinal);

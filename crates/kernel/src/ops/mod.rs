@@ -54,7 +54,9 @@ pub mod section;
 pub use body::{Body, MAX_LOCAL_ID_BYTES, MAX_ORDINAL};
 pub use cut::{Keep, plane_cut, plane_cut_with};
 pub use diagnostic::{OpCode, OpDefect, OpFailure, OpField};
-pub use hole::{HoleCutter, through_hole, through_hole_with};
+pub use hole::{
+    HoleCutter, oblique_through_hole, oblique_through_hole_with, through_hole, through_hole_with,
+};
 pub use plane::CutPlane;
 pub use seal::{OpKind, OpResult};
 

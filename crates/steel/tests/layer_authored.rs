@@ -4255,6 +4255,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
         ordinal: 7,
         polygon_mm: vec![[10.0, 10.0], [10.0, 20.0], [20.0, 20.0], [20.0, 10.0]],
         kind: steel::model::command::HoleKind::Hole,
+        axis_direction_mm: [0.0, 0.0, 1.0],
         owner: None,
     };
     let (mut a, o) = Author::open(

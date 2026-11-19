@@ -11,15 +11,21 @@
 //! cap (one face each, facing outward), and every other triangle projects to an exact
 //! zero-area region in the YZ plane, which allows extra vertices at intermediate positions
 //! along the axis on the walls. The cutter is a G05 cavity (round, oval or polygonal;
-//! clockwise in the section plane) swept over a range along a hole axis `d = (0, y, z)`
-//! normalized, perpendicular to the member axis. [`MemberHoleCutter::new`] is the G14.1
-//! form `d = +Z` and keeps its byte-exact results; [`MemberHoleCutter::directed`] admits
-//! any other section direction.
+//! clockwise in the section plane) swept over a range along a hole axis, normalized: the
+//! certified perpendicular form is `d = (0, y, z)` ([`MemberHoleCutter::new`] is the G14.1
+//! `d = +Z` and keeps its byte-exact results; [`MemberHoleCutter::directed`] admits any
+//! other section direction), and [`MemberHoleCutter::oblique`] admits an axial component
+//! through the same walls, with a purely axial direction refused (the prism would cross
+//! the end caps, not the walls).
 //!
-//! The prism frame is `(e1, e2, d)` with `e1 = +X` and `e2 = d x e1`: a body point maps to
-//! footprint coordinates `(a, b) = (p . e1, p . e2)` and a height `t = p . d`, and the
-//! cavity polygon is authoritative in `(a, b)`. For `d = +Z` the map is the identity on
-//! `(x, y, z)`, so every existing G14.1 result is reproduced bit for bit.
+//! The prism frame is `(e1, e2, d)`: the certified perpendicular frame keeps `e1 = +X` and
+//! `e2 = d x e1`, and the oblique frame generalizes it as `e2 = (0, dz, -dy)/Lt` and
+//! `e1 = (Lt^2, -dx*dy, -dx*dz)/Lt` with `Lt = sqrt(dy^2 + dz^2)`, which reproduces the
+//! perpendicular frame exactly as `dx` goes to zero and keeps an X-parallel mesh edge
+//! projecting to a constant-`b` line. A body point maps to footprint coordinates
+//! `(a, b) = (p . e1, p . e2)` and a height `t = p . d`, and the cavity polygon is
+//! authoritative in `(a, b)`. For `d = +Z` the map is the identity on `(x, y, z)`, so every
+//! existing G14.1 result is reproduced bit for bit.
 //!
 //! Rules (the F06 member-hole amendment):
 //!
@@ -75,15 +81,23 @@ use beamcraft_kernel::trimesh::MAX_COORDINATE_MM;
 
 /// A straight cutter across a member: a clockwise cavity polygon in the hole frame's
 /// section plane (the `(a, b)` footprint plane) swept over `[from_mm, to_mm]` along the
-/// hole axis `d = (0, axis_y, axis_z)` normalized, perpendicular to the member axis.
+/// hole axis `d`, normalized. `new` and `directed` keep the certified perpendicular form
+/// `d = (0, axis_y, axis_z)`; [`MemberHoleCutter::oblique`] admits an axial component.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberHoleCutter {
     cavity: Cavity,
     from_mm: f64,
     to_mm: f64,
-    axis: (f64, f64),
+    axis: [f64; 3],
     ordinal: u16,
 }
+
+/// The operation's footprint frame closures over one body borrow.
+type MemberFrameClosures<'a> = (
+    Box<dyn Fn([f64; 3]) -> [f64; 2] + 'a>,
+    Box<dyn Fn([f64; 3]) -> f64 + 'a>,
+    Box<dyn Fn(f64, f64, f64) -> [f64; 3] + 'a>,
+);
 
 impl MemberHoleCutter {
     /// Creates the G14.1 cutter without validating it; [`member_through_hole`] validates
@@ -96,7 +110,7 @@ impl MemberHoleCutter {
             cavity,
             from_mm: z_from_mm,
             to_mm: z_to_mm,
-            axis: (0.0, 1.0),
+            axis: [0.0, 0.0, 1.0],
             ordinal,
         }
     }
@@ -119,7 +133,32 @@ impl MemberHoleCutter {
             cavity,
             from_mm,
             to_mm,
-            axis: (axis_y, axis_z),
+            axis: [0.0, axis_y, axis_z],
+            ordinal,
+        }
+    }
+
+    /// Creates an oblique cutter without validating it; [`member_through_hole`] validates
+    /// everything and normalizes the axis.
+    ///
+    /// The axis is a body-frame direction `(axis_x, axis_y, axis_z)` whose transverse part
+    /// `(axis_y, axis_z)` must be nonzero: a purely axial direction would cross the end
+    /// caps instead of the walls and is the command layer's refusal. The hole frame for a
+    /// general axis has `e2 = (0, axis_z, -axis_y) / Lt` and
+    /// `e1 = (Lt^2, -axis_x*axis_y, -axis_x*axis_z) / Lt` with `Lt = sqrt(axis_y^2 +
+    /// axis_z^2)`, which reproduces the perpendicular frame exactly when `axis_x` is zero.
+    pub const fn oblique(
+        cavity: Cavity,
+        axis: [f64; 3],
+        from_mm: f64,
+        to_mm: f64,
+        ordinal: u16,
+    ) -> Self {
+        Self {
+            cavity,
+            from_mm,
+            to_mm,
+            axis,
             ordinal,
         }
     }
@@ -139,8 +178,8 @@ impl MemberHoleCutter {
         self.to_mm
     }
 
-    /// The hole axis `(y, z)` as authored, before normalization.
-    pub const fn axis(&self) -> (f64, f64) {
+    /// The hole axis as authored, before normalization.
+    pub const fn axis(&self) -> [f64; 3] {
         self.axis
     }
 
@@ -155,12 +194,14 @@ pub fn member_through_hole(body: &Body, cutter: &MemberHoleCutter) -> Result<OpR
     member_through_hole_with(body, cutter, &OpLimits::DEFAULT, |_| false)
 }
 
-/// One flat wall face the cutter crosses: the linear height `t = gamma * b + delta` of its
-/// plane over the footprint, the midpoint of that height interval (the crossing order key),
-/// its entry direction and its boundary loops (outer counter-clockwise, holes clockwise) in
-/// the projected `(a, b)` plane.
+/// One flat wall face the cutter crosses: the affine height `t = gamma_a * a + gamma * b +
+/// delta` of its plane over the footprint (the certified frame keeps `gamma_a` at a literal
+/// zero and the `b` line's exact bits), the midpoint of that height interval (the crossing
+/// order key), its entry direction and its boundary loops (outer counter-clockwise, holes
+/// clockwise) in the projected `(a, b)` plane.
 struct CrossedFace {
     face: u16,
+    gamma_a: f64,
     gamma: f64,
     delta: f64,
     t_mid: f64,
@@ -170,9 +211,13 @@ struct CrossedFace {
 }
 
 impl CrossedFace {
-    /// The plane's height over the footprint coordinate `b`.
-    fn t_at(&self, b: f64) -> f64 {
-        self.gamma.mul_add(b, self.delta)
+    /// The plane's height over the footprint coordinates `(a, b)`.
+    fn t_at(&self, a: f64, b: f64) -> f64 {
+        if self.gamma_a == 0.0 {
+            self.gamma.mul_add(b, self.delta)
+        } else {
+            self.gamma_a.mul_add(a, self.gamma.mul_add(b, self.delta))
+        }
     }
 }
 
@@ -198,16 +243,23 @@ pub fn member_through_hole_with(
     }
     if !(cutter.from_mm.is_finite()
         && cutter.to_mm.is_finite()
-        && cutter.axis.0.is_finite()
-        && cutter.axis.1.is_finite())
+        && cutter.axis[0].is_finite()
+        && cutter.axis[1].is_finite()
+        && cutter.axis[2].is_finite())
         || points.iter().any(|p| !(p.x.is_finite() && p.y.is_finite()))
     {
         return Err(refuse(OpCode::NonFinite, OpDefect::None, Stage::Finiteness));
     }
-    if [cutter.from_mm, cutter.to_mm, cutter.axis.0, cutter.axis.1]
-        .iter()
-        .chain(points.iter().flat_map(|p| [&p.x, &p.y]))
-        .any(|v| v.abs() > MAX_COORDINATE_MM)
+    if [
+        cutter.from_mm,
+        cutter.to_mm,
+        cutter.axis[0],
+        cutter.axis[1],
+        cutter.axis[2],
+    ]
+    .iter()
+    .chain(points.iter().flat_map(|p| [&p.x, &p.y]))
+    .any(|v| v.abs() > MAX_COORDINATE_MM)
     {
         return Err(refuse(OpCode::AboveLimit, OpDefect::None, Stage::Caps));
     }
@@ -222,12 +274,29 @@ pub fn member_through_hole_with(
         ));
     }
     // The hole axis, normalized; a direction whose norm overflows or underflows away is as
-    // degenerate as the zero direction and sweeps no prism.
-    let norm = (cutter.axis.0 * cutter.axis.0 + cutter.axis.1 * cutter.axis.1).sqrt();
+    // degenerate as the zero direction and sweeps no prism. The transverse part must stay
+    // off zero: a purely axial direction would enter and leave through the end caps, not
+    // the walls, and the hole frame below degenerates with it.
+    let norm = (cutter.axis[0] * cutter.axis[0]
+        + cutter.axis[1] * cutter.axis[1]
+        + cutter.axis[2] * cutter.axis[2])
+        .sqrt();
     if !(norm.is_finite() && norm > 0.0) {
         return Err(refuse(OpCode::ContourInvalid, OpDefect::None, Stage::Caps));
     }
-    let (dy, dz) = (cutter.axis.0 / norm, cutter.axis.1 / norm);
+    let (dx, dy, dz) = (
+        cutter.axis[0] / norm,
+        cutter.axis[1] / norm,
+        cutter.axis[2] / norm,
+    );
+    let lt = (dy * dy + dz * dz).sqrt();
+    if !(lt.is_finite() && lt > 1e-12) {
+        return Err(refuse(
+            OpCode::OpUnsupported,
+            OpDefect::CutterNotThrough,
+            Stage::Ranges,
+        ));
+    }
     // The exact-predicate budget starts here so the winding check below can use it.
     let mut budget = ExactBudget::new(limits.max_exact_predicates);
     // The cavity contract is a clockwise footprint polygon; a counter-clockwise one
@@ -237,13 +306,50 @@ pub fn member_through_hole_with(
     if area_sign(&flat, &mut budget)? > 0 {
         return Err(refuse(OpCode::ContourInvalid, OpDefect::None, Stage::Caps));
     }
-    // The prism frame `(e1, e2, d)` with `e1 = +X` and `e2 = d x e1 = (0, dz, -dy)`: a body
-    // point maps to the footprint coordinate pair `(a, b) = (x, p . e2)` and a height
-    // `t = p . d`. For `d = +Z` each expression is the identity on `(x, y, z)`, so every
-    // G14.1 result is reproduced bit for bit.
-    let project = |p: [f64; 3]| [p[0], p[1] * dz - p[2] * dy];
-    let height = |p: [f64; 3]| p[1] * dy + p[2] * dz;
-    let to_body = |a: f64, b: f64, t: f64| [a, b * dz + t * dy, -b * dy + t * dz];
+    // The prism frame `(e1, e2, d)` with `e2 = d x e1` unit and `e2`'s X component kept at
+    // zero, so an X-parallel mesh edge projects to a constant-`b` line for every direction
+    // (the strip registry's kink lines stay horizontal). The perpendicular case keeps the
+    // certified frame's exact expressions bit for bit; the oblique frame is
+    // `e2 = (0, dz, -dy) / Lt`, `e1 = (Lt^2, -dx*dy, -dx*dz) / Lt`, the member axis
+    // projected onto the footprint plane, and every expression below reduces to the
+    // perpendicular one as `dx` goes to zero.
+    let oblique = dx != 0.0;
+    let frame_e1: [f64; 3] = if oblique {
+        [lt, -dx * dy / lt, -dx * dz / lt]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
+    let frame_e2: [f64; 3] = if oblique {
+        [0.0, dz / lt, -dy / lt]
+    } else {
+        [0.0, dz, -dy]
+    };
+    let (project, height, to_body): MemberFrameClosures = if oblique {
+        let e1 = frame_e1;
+        let e2 = frame_e2;
+        let project = move |p: [f64; 3]| {
+            [
+                p[0] * e1[0] + p[1] * e1[1] + p[2] * e1[2],
+                p[1] * e2[1] + p[2] * e2[2],
+            ]
+        };
+        let height = move |p: [f64; 3]| p[0] * dx + p[1].mul_add(dy, p[2] * dz);
+        let to_body = move |a: f64, b: f64, t: f64| {
+            [
+                a * e1[0] + t * dx,
+                a * e1[1] + b * e2[1] + t * dy,
+                a * e1[2] + b * e2[2] + t * dz,
+            ]
+        };
+        (Box::new(project), Box::new(height), Box::new(to_body))
+    } else {
+        // For `d = +Z` the map is the identity on `(x, y, z)`, so every G14.1 result is
+        // reproduced bit for bit.
+        let project = move |p: [f64; 3]| [p[0], p[1] * dz - p[2] * dy];
+        let height = move |p: [f64; 3]| p[1] * dy + p[2] * dz;
+        let to_body = move |a: f64, b: f64, t: f64| [a, b * dz + t * dy, -b * dy + t * dz];
+        (Box::new(project), Box::new(height), Box::new(to_body))
+    };
     let (zf, zt) = (cutter.from_mm, cutter.to_mm);
     let stem = format!("cut:f.h{}", cutter.ordinal);
     if body
@@ -268,8 +374,24 @@ pub fn member_through_hole_with(
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
             (lo.min(p.x), hi.max(p.x))
         });
-    // The footprint clears both end faces of the member by at least the floor.
-    let (near, far) = (p_min_x - solid.x0, solid.x1 - p_max_x);
+    // The footprint clears both end faces of the member by at least the floor. An oblique
+    // prism's x extent moves with the swept height (`x = Lt*a + dx*t`), so the extremes
+    // sit at the corners of the footprint-and-range box; the perpendicular form keeps the
+    // certified two-value check bit for bit.
+    let (near, far) = if oblique {
+        let x_at = |a: f64, t: f64| lt.mul_add(a, dx * t);
+        let x_lo = x_at(p_min_x, zf)
+            .min(x_at(p_min_x, zt))
+            .min(x_at(p_max_x, zf))
+            .min(x_at(p_max_x, zt));
+        let x_hi = x_at(p_min_x, zf)
+            .max(x_at(p_min_x, zt))
+            .max(x_at(p_max_x, zf))
+            .max(x_at(p_max_x, zt));
+        (x_lo - solid.x0, solid.x1 - x_hi)
+    } else {
+        (p_min_x - solid.x0, solid.x1 - p_max_x)
+    };
     let end_refusal = if near < 0.0 || far < 0.0 {
         Some(OpDefect::CutterNotThrough)
     } else if near == 0.0 || far == 0.0 {
@@ -312,14 +434,18 @@ pub fn member_through_hole_with(
                 tri.iter().fold(
                     (alo, ahi, blo, bhi, tlo, thi),
                     |(alo, ahi, blo, bhi, tlo, thi), i| match solid.position(*i) {
-                        Some(p) => (
-                            alo.min(p[0]),
-                            ahi.max(p[0]),
-                            blo.min(project(p)[1]),
-                            bhi.max(project(p)[1]),
-                            tlo.min(height(p)),
-                            thi.max(height(p)),
-                        ),
+                        Some(p) => {
+                            let a = project(p)[0];
+                            let b = project(p)[1];
+                            (
+                                alo.min(a),
+                                ahi.max(a),
+                                blo.min(b),
+                                bhi.max(b),
+                                tlo.min(height(p)),
+                                thi.max(height(p)),
+                            )
+                        }
                         None => (f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN),
                     },
                 )
@@ -346,7 +472,8 @@ pub fn member_through_hole_with(
             .copied()
             .flatten();
         // Extents of the face in the frame (a, b, t) and in raw y/z, with the two vertices
-        // of extreme `b` anchoring the plane's height line over the footprint.
+        // of extreme `b` anchoring the plane's height line over the footprint and the
+        // extreme-`a` vertex completing the affine anchor triple of the oblique frame.
         let mut finite = true;
         let (mut a_lo, mut a_hi) = (f64::INFINITY, f64::NEG_INFINITY);
         let (mut b_lo, mut b_hi) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -355,16 +482,19 @@ pub fn member_through_hole_with(
         let (mut z_lo, mut z_hi) = (f64::INFINITY, f64::NEG_INFINITY);
         let mut anchor_lo: Option<(f64, [f64; 3])> = None;
         let mut anchor_hi: Option<(f64, [f64; 3])> = None;
+        let mut anchor_a_lo: Option<(f64, [f64; 3])> = None;
+        let mut anchor_a_hi: Option<(f64, [f64; 3])> = None;
         for tri in triangles {
             for &i in tri {
                 let Some(p) = solid.position(i) else {
                     finite = false;
                     continue;
                 };
-                let b = project(p)[1];
+                let projected = project(p);
+                let (a, b) = (projected[0], projected[1]);
                 let t = height(p);
-                a_lo = a_lo.min(p[0]);
-                a_hi = a_hi.max(p[0]);
+                a_lo = a_lo.min(a);
+                a_hi = a_hi.max(a);
                 b_lo = b_lo.min(b);
                 b_hi = b_hi.max(b);
                 t_lo = t_lo.min(t);
@@ -381,6 +511,14 @@ pub fn member_through_hole_with(
                     Some((b0, _)) if *b0 >= b => {}
                     _ => anchor_hi = Some((b, p)),
                 }
+                match &anchor_a_lo {
+                    Some((a0, _)) if *a0 <= a => {}
+                    _ => anchor_a_lo = Some((a, p)),
+                }
+                match &anchor_a_hi {
+                    Some((a0, _)) if *a0 >= a => {}
+                    _ => anchor_a_hi = Some((a, p)),
+                }
             }
         }
         if !finite
@@ -395,11 +533,19 @@ pub fn member_through_hole_with(
         }
         // A face whose `b` extent is degenerate lies in a plane that contains the cutter
         // axis: its projected segment must clear the footprint, or its own `t` extent must
-        // clear the range. The normal gate keeps a face marked curved off this path.
+        // clear the range. The normal gate keeps a face marked curved off this path; the
+        // certified frame keeps its exact component equality, the oblique frame compares
+        // against its own `e2`.
         let flat_b = b_lo == b_hi
-            && normal.is_some_and(|n| {
-                n[0] == 0.0 && ((n[1] == dz && n[2] == -dy) || (n[1] == -dz && n[2] == dy))
-            });
+            && if oblique {
+                normal.is_some_and(|n| {
+                    n[0] == 0.0 && (n[1] * (dz / lt) + n[2] * (-dy / lt)).abs() >= 1.0 - 1e-9
+                })
+            } else {
+                normal.is_some_and(|n| {
+                    n[0] == 0.0 && ((n[1] == dz && n[2] == -dy) || (n[1] == -dz && n[2] == dy))
+                })
+            };
         if flat_b {
             if !clear_of_segment(points, a_lo, a_hi, b_lo, eps, &mut budget)?
                 && !t_clear(t_lo, t_hi, zf, zt, eps)
@@ -426,23 +572,81 @@ pub fn member_through_hole_with(
             continue;
         }
         // One flat axis-aligned plane, crossed at any angle: its height over the footprint
-        // is the line `t = gamma * b + delta` anchored at the face's extreme-b vertices, so
-        // the interval over the footprint ends at the footprint's own b extremes. For
-        // `d = +Z` this collapses to the G14.1 constant face height.
+        // is the affine line `t = gamma_a * a + gamma * b + delta` — the certified frame
+        // keeps the two-anchor `b` line bit for bit (`gamma_a` stays a literal zero), the
+        // oblique frame solves the same line from the anchor triple (the two extreme-`b`
+        // vertices and the extreme-`a` one), so the interval over the footprint ends at
+        // the footprint's own corners.
         let (Some((b_first, p_first)), Some((b_last, p_last))) = (&anchor_lo, &anchor_hi) else {
             return Err(internal());
         };
-        let gamma = (height(*p_last) - height(*p_first)) / (b_last - b_first);
-        let delta = height(*p_first) - gamma * b_first;
-        if !(gamma.is_finite() && delta.is_finite()) {
-            return Err(refuse(
-                OpCode::ContourInvalid,
-                OpDefect::None,
-                Stage::Ranges,
-            ));
-        }
-        let t_at = |b: f64| gamma.mul_add(b, delta);
-        let (t_at_lo, t_at_hi) = (t_at(p_min_y), t_at(p_max_y));
+        let (gamma_a, gamma, delta) = if oblique {
+            // The affine line needs three non-collinear `(a, b)` anchors; the extreme-`b`
+            // pair can share its `a` with an extreme-`a` vertex, so the four extremes are
+            // tried in a fixed order and the first non-degenerate triple decides.
+            let Some((a_lo_v, p_a_lo)) = &anchor_a_lo else {
+                return Err(internal());
+            };
+            let Some((a_hi_v, p_a_hi)) = &anchor_a_hi else {
+                return Err(internal());
+            };
+            let triplet =
+                |p2: &[f64; 3], c2: f64, p3: &[f64; 3], c3: f64| -> Option<(f64, f64, f64)> {
+                    let (a1, b1, t1) = (project(*p_first)[0], *b_first, height(*p_first));
+                    let (a2, b2, t2) = (project(*p2)[0], c2, height(*p2));
+                    let (a3, b3, t3) = (project(*p3)[0], c3, height(*p3));
+                    let (da1, db1, dt1) = (a2 - a1, b2 - b1, t2 - t1);
+                    let (da2, db2, dt2) = (a3 - a1, b3 - b1, t3 - t1);
+                    let det = da1.mul_add(db2, -(da2 * db1));
+                    if !(det.is_finite() && det.abs() > 1e-6) {
+                        return None;
+                    }
+                    let gamma_a = dt1.mul_add(db2, -(dt2 * db1)) / det;
+                    let gamma = da1.mul_add(dt2, -(da2 * dt1)) / det;
+                    let delta = t1 - gamma_a.mul_add(a1, gamma * b1);
+                    if !(gamma_a.is_finite() && gamma.is_finite() && delta.is_finite()) {
+                        return None;
+                    }
+                    Some((gamma_a, gamma, delta))
+                };
+            let solved = triplet(p_last, *b_last, p_a_lo, *a_lo_v)
+                .or_else(|| triplet(p_last, *b_last, p_a_hi, *a_hi_v))
+                .or_else(|| triplet(p_a_lo, *a_lo_v, p_a_hi, *a_hi_v));
+            let Some((gamma_a, gamma, delta)) = solved else {
+                return Err(refuse(
+                    OpCode::ContourInvalid,
+                    OpDefect::None,
+                    Stage::Ranges,
+                ));
+            };
+            (gamma_a, gamma, delta)
+        } else {
+            let gamma = (height(*p_last) - height(*p_first)) / (b_last - b_first);
+            let delta = height(*p_first) - gamma * b_first;
+            if !(gamma.is_finite() && delta.is_finite()) {
+                return Err(refuse(
+                    OpCode::ContourInvalid,
+                    OpDefect::None,
+                    Stage::Ranges,
+                ));
+            }
+            (0.0, gamma, delta)
+        };
+        let t_at = |a: f64, b: f64| gamma_a.mul_add(a, gamma.mul_add(b, delta));
+        let (t_at_lo, t_at_hi) = if oblique {
+            let corners = (
+                t_at(p_min_x, p_min_y),
+                t_at(p_min_x, p_max_y),
+                t_at(p_max_x, p_min_y),
+                t_at(p_max_x, p_max_y),
+            );
+            (
+                corners.0.min(corners.1).min(corners.2).min(corners.3),
+                corners.0.max(corners.1).max(corners.2).max(corners.3),
+            )
+        } else {
+            (t_at(p_min_x, p_min_y), t_at(p_min_x, p_max_y))
+        };
         let (t_face_lo, t_face_hi) = (t_at_lo.min(t_at_hi), t_at_lo.max(t_at_hi));
         let beyond = if t_face_hi < zf {
             Some(zf - t_face_hi)
@@ -477,11 +681,12 @@ pub fn member_through_hole_with(
             continue;
         }
         let entry = normal.is_some_and(|n| n[1] * dy + n[2] * dz < 0.0);
-        let (outer, holes) = face_loops(body, triangles, entry, project, limits, &mut budget)?;
-        match footprint_placement(points, &outer, &holes, project, eps, &mut budget)? {
+        let (outer, holes) = face_loops(body, triangles, entry, &project, limits, &mut budget)?;
+        match footprint_placement(points, &outer, &holes, &project, eps, &mut budget)? {
             Placement::Beyond => {}
             Placement::Within => crossed.push(CrossedFace {
                 face: *face,
+                gamma_a,
                 gamma,
                 delta,
                 t_mid: (t_face_lo + t_face_hi) / 2.0,
@@ -498,7 +703,7 @@ pub fn member_through_hole_with(
                     ids: (0..m32).collect(),
                     xyz: points
                         .iter()
-                        .map(|p| to_body(p.x, p.y, t_at(p.y)))
+                        .map(|p| to_body(p.x, p.y, t_at(p.x, p.y)))
                         .collect(),
                 };
                 let mut all_holes = holes.clone();
@@ -533,8 +738,11 @@ pub fn member_through_hole_with(
             body,
             &solid,
             points,
+            dx,
             dy,
             dz,
+            lt,
+            oblique,
             zf,
             zt,
             cutter,
@@ -592,7 +800,7 @@ pub fn member_through_hole_with(
         let first = base + u32::try_from(index).map_err(|_| internal())? * m32;
         let xyz: Vec<[f64; 3]> = points
             .iter()
-            .map(|p| to_body(p.x, p.y, crossed_face.t_at(p.y)))
+            .map(|p| to_body(p.x, p.y, crossed_face.t_at(p.x, p.y)))
             .collect();
         vertices.extend(xyz.iter().copied());
         rings.push(CapLoop {
@@ -626,7 +834,7 @@ pub fn member_through_hole_with(
         let carved = triangulate_cap(
             &crossed_face.outer,
             &all_holes,
-            project,
+            &project,
             limits,
             body.tolerance(),
             OpField::Cap,
@@ -664,8 +872,28 @@ pub fn member_through_hole_with(
             if !(length > 0.0 && length.is_finite()) {
                 return Err(internal());
             }
-            // The in-frame side normal (db, -da) mapped back to body coordinates.
-            let n = [db / length, -da * dz / length, da * dy / length];
+            // The band side's outward normal is the cavity edge mapped to the body frame
+            // crossed with the sweep axis; the certified frame's exact formula reduces to
+            // the same cross product and keeps its exact bits.
+            let n = if oblique {
+                let e = [
+                    da.mul_add(frame_e1[0], db * frame_e2[0]),
+                    da.mul_add(frame_e1[1], db * frame_e2[1]),
+                    da.mul_add(frame_e1[2], db * frame_e2[2]),
+                ];
+                let c = [
+                    e[1].mul_add(dz, -e[2] * dy),
+                    e[2].mul_add(dx, -e[0] * dz),
+                    e[0].mul_add(dy, -e[1] * dx),
+                ];
+                let norm = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+                if !(norm > 0.0 && norm.is_finite()) {
+                    return Err(internal());
+                }
+                [c[0] / norm, c[1] / norm, c[2] / norm]
+            } else {
+                [db / length, -da * dz / length, da * dy / length]
+            };
             normals.push(Some(n.map(|v| if v == 0.0 { 0.0 } else { v })));
             let face = u16::try_from(face_ids.len() - 1).map_err(|_| internal())?;
             let ring_id = |ring: &CapLoop, i: usize| ring.ids.get(i).copied().ok_or_else(internal);
@@ -995,6 +1223,19 @@ impl Strip {
         let w = dy * self.nz - dz * self.ny;
         (w / m, self.c / m)
     }
+
+    /// The affine height `t = gamma_a*a + gamma*b + delta` of the plane over the oblique
+    /// frame's footprint. The `a` tilt is the frame's own (`gamma_a = dx/Lt`, shared by
+    /// every wall plane, whose normal carries no X part); the `b` line and the offset
+    /// generalize [`Strip::gamma_delta`].
+    fn affine_height(&self, dx: f64, dy: f64, dz: f64, lt: f64) -> (f64, f64, f64) {
+        let m = self.axis_dot(dy, dz);
+        (
+            dx / lt,
+            (self.nz * dy - self.ny * dz) / (lt * m),
+            self.c / m,
+        )
+    }
 }
 
 /// One chain: strips joined by soft kinks (turns of at most `pi/4` between the strip
@@ -1195,8 +1436,9 @@ enum ClipSrc {
     Footprint(usize),
     /// A body vertex of the strip region (kept, never duplicated).
     Body(u32),
-    /// A contour crossing of a kink edge: its `(y, z)` is the edge's line and its `a` the
-    /// crossing position; both faces of the edge see the identical registered point.
+    /// A contour crossing of a kink edge: its `(a, y, z)` triple has the edge's line and
+    /// the crossing position; both faces of the edge see the identical registered point,
+    /// and the body point comes back through the cutter's frame.
     Kink([f64; 3]),
 }
 
@@ -1390,7 +1632,7 @@ fn strip_region(
             .collect()
     };
     // The kink lines: the strip's vertical mesh edges, as their `b` line, `(y, z)` and
-    // the `x` span the edge covers.
+    // the `a` span the edge covers (the certified frame's `a` is the raw `x`).
     let mut kink_lines: Vec<(f64, [f64; 2], f64, f64)> = Vec::new();
     let mut seen: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
     for (a, b) in tris
@@ -1406,8 +1648,8 @@ fn strip_region(
             continue;
         };
         if u[1] == v[1] && u[2] == v[2] {
-            let p = flat_point(u, project);
-            kink_lines.push((p.y, [u[1], u[2]], u[0].min(v[0]), u[0].max(v[0])));
+            let (pu, pv) = (flat_point(u, project), flat_point(v, project));
+            kink_lines.push((pu.y, [u[1], u[2]], pu.x.min(pv.x), pu.x.max(pv.x)));
         }
     }
     kink_lines.sort_by(|x, y| x.0.total_cmp(&y.0));
@@ -1472,8 +1714,11 @@ fn cut_through_chains(
     body: &Body,
     solid: &Solid,
     points: &[Point2],
+    dx: f64,
     dy: f64,
     dz: f64,
+    lt: f64,
+    oblique: bool,
     zf: f64,
     zt: f64,
     cutter: &MemberHoleCutter,
@@ -1486,6 +1731,27 @@ fn cut_through_chains(
 ) -> Result<OpResult, OpFailure> {
     let internal = || OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build);
     poll(cancelled, Stage::Build)?;
+    let frame_e1: [f64; 3] = if oblique {
+        [lt, -dx * dy / lt, -dx * dz / lt]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
+    let frame_e2: [f64; 3] = if oblique {
+        [0.0, dz / lt, -dy / lt]
+    } else {
+        [0.0, dz, -dy]
+    };
+    // The registered kink point's body coordinates: its `(a, y, z)` crosses the frame back
+    // through `a = Lt*x - (dx/Lt)*(dy*y + dz*z)`. The certified frame keeps the stored
+    // `(x, y, z)` triple bit for bit (`x = a` there).
+    let kink_xyz = move |a: f64, y: f64, z: f64| -> [f64; 3] {
+        if oblique {
+            let h0 = dy.mul_add(y, dz * z);
+            [(a + (dx / lt) * h0) / lt, y, z]
+        } else {
+            [a, y, z]
+        }
+    };
     let (strips, chains, strips_tris) = build_walls(body, solid, budget)?;
     let crossed = place_chains(
         body,
@@ -1493,8 +1759,11 @@ fn cut_through_chains(
         &strips,
         &strips_tris,
         points,
+        dx,
         dy,
         dz,
+        lt,
+        oblique,
         zf,
         zt,
         eps,
@@ -1700,8 +1969,9 @@ fn cut_through_chains(
             });
             let (id, xyz) = match own_kink {
                 Some(at) => {
-                    let id = kinks.point(at, &mut vertices, &mut next_vertex)?;
-                    (id, at)
+                    let xyz = kink_xyz(at[0], at[1], at[2]);
+                    let id = kinks.point(xyz, &mut vertices, &mut next_vertex)?;
+                    (id, xyz)
                 }
                 None => {
                     let piece = chain
@@ -1716,7 +1986,7 @@ fn cut_through_chains(
                     let xyz = to_body(
                         event.ab.x,
                         event.ab.y,
-                        piece.gamma.mul_add(event.ab.y, piece.delta),
+                        piece_height(piece, event.ab.x, event.ab.y),
                     );
                     let id = next_vertex;
                     next_vertex = next_vertex.checked_add(1).ok_or_else(internal)?;
@@ -1827,7 +2097,11 @@ fn cut_through_chains(
                         }
                         match event_index {
                             Some(ei) => ring_id(chain_ring, ei)?,
-                            None => kinks.point(at, &mut vertices, &mut next_vertex)?,
+                            None => kinks.point(
+                                kink_xyz(at[0], at[1], at[2]),
+                                &mut vertices,
+                                &mut next_vertex,
+                            )?,
                         }
                     }
                     ClipSrc::Footprint(index) => {
@@ -1945,10 +2219,7 @@ fn cut_through_chains(
                         )?);
                     }
                     let ab = piece.clip.get(j).ok_or_else(internal)?;
-                    hole.push((
-                        *id,
-                        to_body(ab.x, ab.y, piece.gamma.mul_add(ab.y, piece.delta)),
-                    ));
+                    hole.push((*id, to_body(ab.x, ab.y, piece_height(piece, ab.x, ab.y))));
                 }
                 hole.extend(between(
                     slot_event.last().copied().flatten(),
@@ -1984,7 +2255,7 @@ fn cut_through_chains(
             // narrow band cuts it in two; the assembly below yields both pieces.
             let at_of = |i: usize| -> Result<[f64; 3], OpFailure> {
                 match piece.tagged.get(i).map(|t| t.src) {
-                    Some(ClipSrc::Kink(at)) => Ok(at),
+                    Some(ClipSrc::Kink(at)) => Ok(kink_xyz(at[0], at[1], at[2])),
                     Some(ClipSrc::Body(id)) => body
                         .mesh()
                         .vertices()
@@ -2099,10 +2370,7 @@ fn cut_through_chains(
             let clip_at = |i: usize| -> Result<(u32, [f64; 3]), OpFailure> {
                 let ab = piece.tagged.get(i).map(|t| t.ab).ok_or_else(internal)?;
                 let id = *ids.get(i).ok_or_else(internal)?;
-                Ok((
-                    id,
-                    to_body(ab.x, ab.y, piece.gamma.mul_add(ab.y, piece.delta)),
-                ))
+                Ok((id, to_body(ab.x, ab.y, piece_height(piece, ab.x, ab.y))))
             };
             let mut arcs: Vec<(usize, usize, Vec<(u32, [f64; 3])>)> = Vec::new();
             for i in 0..n_clip {
@@ -2289,7 +2557,28 @@ fn cut_through_chains(
             if !(length > 0.0 && length.is_finite()) {
                 return Err(internal());
             }
-            let n = [db / length, -da * dz / length, da * dy / length];
+            // The band side's outward normal: the footprint edge mapped to the body frame
+            // crossed with the sweep axis (the certified frame's exact formula reduces to
+            // the same cross product and keeps its exact bits).
+            let n = if oblique {
+                let e = [
+                    da.mul_add(frame_e1[0], db * frame_e2[0]),
+                    da.mul_add(frame_e1[1], db * frame_e2[1]),
+                    da.mul_add(frame_e1[2], db * frame_e2[2]),
+                ];
+                let c = [
+                    e[1].mul_add(dz, -e[2] * dy),
+                    e[2].mul_add(dx, -e[0] * dz),
+                    e[0].mul_add(dy, -e[1] * dx),
+                ];
+                let norm = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+                if !(norm > 0.0 && norm.is_finite()) {
+                    return Err(internal());
+                }
+                [c[0] / norm, c[1] / norm, c[2] / norm]
+            } else {
+                [db / length, -da * dz / length, da * dy / length]
+            };
             normals.push(Some(n.map(|v| if v == 0.0 { 0.0 } else { v })));
             let in_id = ring_id(entry_ring, s)?;
             let in_id1 = ring_id(entry_ring, s1)?;
@@ -2388,10 +2677,13 @@ struct CrossedChain {
     entry: bool,
 }
 
-/// One crossed strip of a chain: its clip piece and its plane's height line over `b`.
+/// One crossed strip of a chain: its clip piece and its plane's affine height over the
+/// footprint (`gamma_a` stays a literal zero and the `b` line keeps its exact bits on the
+/// certified frame).
 struct ChainPiece {
     strip: usize,
     face: u16,
+    gamma_a: f64,
     gamma: f64,
     delta: f64,
     clip: Vec<Point2>,
@@ -2399,8 +2691,23 @@ struct ChainPiece {
     tagged: Vec<ClipVertex>,
     /// The strip's `(a, b)` region (outer loop, tagged) and kink lines.
     region: Vec<(Point2, u32)>,
-    /// The strip's vertical mesh edges: `b` line, body `(y, z)`, `x` span.
+    /// The strip's vertical mesh edges: `b` line, body `(y, z)`, `a` span.
     kinks: Vec<(f64, [f64; 2], f64, f64)>,
+}
+
+/// The plane's height over the footprint coordinates `(a, b)`; the certified frame keeps
+/// the two-term `b` line bit for bit.
+fn height_of(gamma_a: f64, gamma: f64, delta: f64, a: f64, b: f64) -> f64 {
+    if gamma_a == 0.0 {
+        gamma.mul_add(b, delta)
+    } else {
+        gamma_a.mul_add(a, gamma.mul_add(b, delta))
+    }
+}
+
+/// [`height_of`] through one crossed strip's stored coefficients.
+fn piece_height(piece: &ChainPiece, a: f64, b: f64) -> f64 {
+    height_of(piece.gamma_a, piece.gamma, piece.delta, a, b)
 }
 
 /// Classifies every chain against the cutter range with the union-aware placement:
@@ -2414,8 +2721,11 @@ fn place_chains(
     strips: &[Strip],
     strips_tris: &[Vec<[u32; 3]>],
     points: &[Point2],
+    dx: f64,
     dy: f64,
     dz: f64,
+    lt: f64,
+    oblique: bool,
     zf: f64,
     zt: f64,
     eps: f64,
@@ -2434,11 +2744,17 @@ fn place_chains(
             Stage::Ranges,
         )
     };
-    // The footprint's `b` extremes.
+    // The footprint's `b` extremes, and its `a` extremes for the oblique frame's corner
+    // heights (the certified frame keeps the `b`-extreme heights bit for bit).
     let (b_lo, b_hi) = points
         .iter()
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
             (lo.min(p.y), hi.max(p.y))
+        });
+    let (a_lo, a_hi) = points
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(p.x), hi.max(p.x))
         });
     let mut crossed: Vec<CrossedChain> = Vec::new();
     for chain in chains {
@@ -2451,7 +2767,7 @@ fn place_chains(
         }) {
             return Err(contour());
         }
-        // The strips' regions and the coarse height skip over the footprint's `b` extremes.
+        // The strips' regions and the coarse height skip over the footprint's corners.
         let mut pieces: Vec<ChainPiece> = Vec::new();
         let (mut t_c_lo, mut t_c_hi) = (f64::INFINITY, f64::NEG_INFINITY);
         for &strip_index in &chain.strips {
@@ -2460,13 +2776,25 @@ fn place_chains(
             let faces_out = strip.axis_dot(dy, dz) < 0.0;
             let (region, _holes, kinks) =
                 strip_region(body, tris, faces_out, project, limits, budget)?;
-            let (gamma, delta) = strip.gamma_delta(dy, dz);
-            let t_at = |b: f64| gamma.mul_add(b, delta);
-            t_c_lo = t_c_lo.min(t_at(b_lo).min(t_at(b_hi)));
-            t_c_hi = t_c_hi.max(t_at(b_lo).max(t_at(b_hi)));
+            let (gamma_a, gamma, delta) = if oblique {
+                strip.affine_height(dx, dy, dz, lt)
+            } else {
+                let (gamma, delta) = strip.gamma_delta(dy, dz);
+                (0.0, gamma, delta)
+            };
+            let t_at = |a: f64, b: f64| height_of(gamma_a, gamma, delta, a, b);
+            let corners = (
+                t_at(a_lo, b_lo),
+                t_at(a_lo, b_hi),
+                t_at(a_hi, b_lo),
+                t_at(a_hi, b_hi),
+            );
+            t_c_lo = t_c_lo.min(corners.0.min(corners.1).min(corners.2).min(corners.3));
+            t_c_hi = t_c_hi.max(corners.0.max(corners.1).max(corners.2).max(corners.3));
             pieces.push(ChainPiece {
                 strip: strip_index,
                 face: strip.face,
+                gamma_a,
                 gamma,
                 delta,
                 clip: Vec::new(),
@@ -2661,6 +2989,24 @@ fn place_chains(
                 _ => sides.push(vec![piece]),
             }
         }
+        // A crossing zone may wrap around the walk's own start (the ring walk begins at
+        // the chain's first strip, and an apex sits there as happily as anywhere): the
+        // first and the last sides are then one zone through the cyclic adjacency, and the
+        // split would ask each half to cover the footprint whole. Merge them back in the
+        // ring's own order. A chain whose walk never wraps is untouched, so the certified
+        // results keep their exact sides.
+        if sides.len() >= 2
+            && let (Some(first), Some(last)) = (sides.first(), sides.last())
+            && let (Some(f), Some(l)) =
+                (first.first().map(|p| p.strip), last.last().map(|p| p.strip))
+            && adjacency.get(&l).is_some_and(|nexts| nexts.contains(&f))
+        {
+            let mut wrapped = sides.pop().ok_or_else(internal)?;
+            if let Some(side) = sides.first_mut() {
+                wrapped.append(side);
+                *side = wrapped;
+            }
+        }
         for side in sides {
             // The union-aware placement, per side: the side's clips must cover the
             // footprint exactly — the exact clip areas sum to the exact footprint area
@@ -2701,9 +3047,8 @@ fn place_chains(
             let mut s_lo = f64::INFINITY;
             let mut s_hi = f64::NEG_INFINITY;
             for piece in &side {
-                let t_at = |b: f64| piece.gamma.mul_add(b, piece.delta);
                 for p in &piece.clip {
-                    let t = t_at(p.y);
+                    let t = piece_height(piece, p.x, p.y);
                     s_lo = s_lo.min(t);
                     s_hi = s_hi.max(t);
                 }
@@ -2938,11 +3283,11 @@ fn removed_volume_chains(crossed: &[CrossedChain]) -> Result<Enclosure, OpFailur
     let range = || OpFailure::numeric(OpField::Volume, OpDefect::NumericRange, Stage::Quantities);
     let e = min_exponent(crossed.iter().flat_map(|chain| {
         chain.pieces.iter().flat_map(|piece| {
-            piece
-                .clip
-                .iter()
-                .flat_map(|p| [p.x, p.y])
-                .chain([piece.gamma, piece.delta])
+            piece.clip.iter().flat_map(|p| [p.x, p.y]).chain([
+                piece.gamma_a,
+                piece.gamma,
+                piece.delta,
+            ])
         })
     }));
     let s = |x: f64| -> Result<Big, OpFailure> { scaled(x, e).map_err(|_| range()) };
@@ -2960,10 +3305,7 @@ fn removed_volume_chains(crossed: &[CrossedChain]) -> Result<Enclosure, OpFailur
             let mut perim = 0.0f64;
             let mut mag_t = piece.delta.abs();
             for (p, q) in piece.clip.iter().zip(piece.clip.iter().cycle().skip(1)) {
-                let (tp, tq) = (
-                    piece.gamma.mul_add(p.y, piece.delta),
-                    piece.gamma.mul_add(q.y, piece.delta),
-                );
+                let (tp, tq) = (piece_height(piece, p.x, p.y), piece_height(piece, q.x, q.y));
                 mag_t = mag_t.max(tp.abs()).max(tq.abs());
                 perim += (q.x - p.x).hypot(q.y - p.y);
                 // cross_i = p.x * q.y - q.x * p.y, exact in the scaled integers.

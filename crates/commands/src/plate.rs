@@ -77,8 +77,8 @@ use steel::layer as steel_layer;
 use steel::layer::PlateShape;
 use steel::model::command::{
     BendRecord, BendSpec, CornerTreatment, CreatePlate, CutRecord, HoleExtent, HoleKind,
-    HoleRecord, KeepSide, MAX_BENDS, MemberHoleKind, MemberHoleRecord, MemberKind, PlateCorner,
-    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
+    HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner, PlateSide,
+    SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
 
 /// Derived mesh as read back from a derived layer.
@@ -378,9 +378,18 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, Refusal> {
             _ => None,
         })
         .ok_or_else(bad)?;
+    // The prism axis of each record (A13, epic #556 slice 2): the vertical kinds store the
+    // unit +Z, a part cut stores its leaning unit axis with a positive Z part.
+    let axes = property(prim, "steel:hole:axisDirections")
+        .and_then(|value| match value {
+            Value::Array(items) => items.iter().map(numbers::<3>).collect::<Option<Vec<_>>>(),
+            _ => None,
+        })
+        .ok_or_else(bad)?;
     if polygons.len() != ids.len()
         || polygons.len() != ordinals.len()
         || polygons.len() != kinds.len()
+        || polygons.len() != axes.len()
         || polygons.len() != owners.len()
     {
         return Err(bad());
@@ -390,13 +399,15 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, Refusal> {
         .zip(ids)
         .zip(ordinals)
         .zip(kinds)
+        .zip(axes)
         .zip(owners)
-        .map(|((((polygon_mm, id), ordinal), kind), owner)| {
+        .map(|(((((polygon_mm, id), ordinal), kind), axis), owner)| {
             Ok(HoleRecord {
                 operation_id: OpId::parse(&id).map_err(|_| bad())?,
                 ordinal: ordinal.ok_or_else(bad)?,
                 polygon_mm,
                 kind,
+                axis_direction_mm: axis,
                 owner: match owner.as_str() {
                     "" => None,
                     text => Some(ElementId::parse(text).map_err(|_| bad())?),
@@ -781,13 +792,13 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         "steel:mhole:vertexCounts",
         "steel:mhole:operationIds",
         "steel:mhole:ordinals",
+        "steel:mhole:kinds",
         "steel:mhole:axisPointsMm",
         "steel:mhole:axisDirections",
         "steel:mhole:extents",
         "steel:mhole:extentFromMm",
         "steel:mhole:extentToMm",
         "steel:mhole:generatedBy",
-        "steel:mhole:kinds",
     ];
     let bad = || integrity("committed member has inconsistent hole record attributes");
     let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
@@ -819,9 +830,19 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
             .collect::<Result<_, _>>()?,
         _ => return Err(bad()),
     };
+    let kinds: Vec<steel::model::command::MemberHoleKind> = match property(prim, FIELDS[4]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| {
+                steel::model::command::MemberHoleKind::parse(text(v).ok_or_else(bad)?)
+                    .ok_or_else(bad)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(bad()),
+    };
     let mut axis_points = Vec::new();
     let mut directions = Vec::new();
-    for (field, sink) in [(FIELDS[4], &mut axis_points), (FIELDS[5], &mut directions)] {
+    for (field, sink) in [(FIELDS[5], &mut axis_points), (FIELDS[6], &mut directions)] {
         match property(prim, field) {
             Some(Value::Array(values)) => {
                 for v in values.iter() {
@@ -839,10 +860,10 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
             _ => Err(bad()),
         }
     };
-    let extents: Vec<HoleExtent> = match property(prim, FIELDS[6]) {
+    let extents: Vec<HoleExtent> = match property(prim, FIELDS[7]) {
         Some(Value::Array(values)) => {
-            let from = doubles(FIELDS[7])?;
-            let to = doubles(FIELDS[8])?;
+            let from = doubles(FIELDS[8])?;
+            let to = doubles(FIELDS[9])?;
             values
                 .iter()
                 .zip(from)
@@ -864,19 +885,11 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
     }
     // The generating bolt group of each record (the F06 member-hole amendment); the empty
     // string is a hand-placed one.
-    let owners: Vec<String> = match property(prim, FIELDS[9]) {
+    let owners: Vec<String> = match property(prim, FIELDS[10]) {
         Some(Value::Array(values)) => values
             .iter()
             .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
-            .collect::<Result<Vec<_>, _>>()?,
-        _ => return Err(bad()),
-    };
-    // The record kind of each record (A13): a fastener hole or a member polygon cut.
-    let kinds: Vec<MemberHoleKind> = match property(prim, FIELDS[10]) {
-        Some(Value::Array(values)) => values
-            .iter()
-            .map(|v| MemberHoleKind::parse(text(v).ok_or_else(bad)?).ok_or_else(bad))
-            .collect::<Result<Vec<_>, _>>()?,
+            .collect::<Result<_, _>>()?,
         _ => return Err(bad()),
     };
     if polygons.len() != owners.len() || polygons.len() != kinds.len() {
@@ -899,6 +912,7 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
                 Ok(MemberHoleRecord {
                     operation_id: OpId::parse(&id).map_err(|_| bad())?,
                     ordinal,
+                    kind,
                     axis_point_mm,
                     axis_direction,
                     extent,
@@ -907,7 +921,6 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
                         "" => None,
                         text => Some(ElementId::parse(text).map_err(|_| bad())?),
                     },
-                    kind,
                 })
             },
         )

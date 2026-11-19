@@ -1589,16 +1589,19 @@ impl HoleSpec {
     }
 }
 
-/// What one through-cut record of a plate authors (A13): a fastener hole (A04) or a polygon
-/// cut. Both replay through the same certified kernel subtraction and share the per-element
-/// ordinal counter and the `cut:f.h<ordinal>` wall ids; the kind keeps the operations distinct
-/// for numbering and reports.
+/// What one through-cut record of a plate authors (A13): a fastener hole (A04), a polygon
+/// cut or a part cut. All three replay through the same certified kernel subtraction and
+/// share the per-element ordinal counter and the `cut:f.h<ordinal>` wall ids; the kind
+/// keeps the operations distinct for numbering, reports and the replay's prism axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoleKind {
     /// A through hole authored by `AddHole` (A04).
     Hole,
-    /// A polygon cut authored by `CutByPolygon` or derived from `CutByPart` (A13).
+    /// A polygon cut authored by `CutByPolygon` (A13).
     PolygonCut,
+    /// A part cut derived from a tool plate's prism by `CutByPart` (A13, epic #556 slice
+    /// 2); its prism may lean against the plate (an oblique part cut).
+    PartCut,
 }
 
 impl HoleKind {
@@ -1607,6 +1610,7 @@ impl HoleKind {
         match self {
             Self::Hole => "hole",
             Self::PolygonCut => "polygon_cut",
+            Self::PartCut => "part_cut",
         }
     }
 
@@ -1615,6 +1619,7 @@ impl HoleKind {
         match token {
             "hole" => Some(Self::Hole),
             "polygon_cut" => Some(Self::PolygonCut),
+            "part_cut" => Some(Self::PartCut),
             _ => None,
         }
     }
@@ -1635,24 +1640,32 @@ pub struct HoleRecord {
     pub ordinal: usize,
     /// The authoritative clockwise polygon in plate-local XY, as generated at the input edge.
     pub polygon_mm: Vec<[f64; 2]>,
-    /// Whether the record is a hole (A04) or a polygon cut (A13).
+    /// Whether the record is a hole (A04), a polygon cut or a part cut (A13).
     pub kind: HoleKind,
+    /// The prism axis in plate-local coordinates: `(0, 0, 1)` for the vertical kinds (a
+    /// hole or a polygon cut) and the derived tool normal for a part cut, unit with a
+    /// positive Z part, so an oblique part cut stores its leaning prism.
+    pub axis_direction_mm: [f64; 3],
     /// The bolt group that generated the record (A14.4); `None` for a hand-placed hole. A
     /// generated record is owned by its group: it is created, regenerated and removed with the
     /// group as one unit, and `UpdateHole`/`RemoveHole` refuse it with `DEPENDENCY_CONFLICT`.
     pub owner: Option<ElementId>,
 }
 
-/// What one member-hole record authors: a fastener hole (A04.2) or a member polygon cut
-/// (A13, epic #556 slice 1). Both replay through the same certified member prism subtraction
-/// and share the per-member ordinal counter and the `cut:f.h<ordinal>` wall ids; the kind keeps
-/// the operations distinct for numbering and reports, exactly as the plate records' kind does.
+/// What one member-hole record authors (A04.2 and the A13 member cuts of epic #556): a
+/// fastener hole, a member polygon cut or a member part cut. All three replay through the
+/// same certified member prism subtraction and share the per-member ordinal counter and
+/// the `cut:f.h<ordinal>` wall ids; the kind keeps the operations distinct for numbering,
+/// reports and the replay's direction rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberHoleKind {
     /// A through hole authored by `AddHole` (A04.2).
     Hole,
     /// A member polygon cut authored by `CutByPolygon` (A13); a through cut only.
     PolygonCut,
+    /// A member part cut derived from a tool plate's prism by `CutByPart` (A13, epic #556
+    /// slice 2); a through cut whose axis may lean along the member.
+    PartCut,
 }
 
 impl MemberHoleKind {
@@ -1661,6 +1674,7 @@ impl MemberHoleKind {
         match self {
             Self::Hole => "hole",
             Self::PolygonCut => "polygon_cut",
+            Self::PartCut => "part_cut",
         }
     }
 
@@ -1669,6 +1683,7 @@ impl MemberHoleKind {
         match token {
             "hole" => Some(Self::Hole),
             "polygon_cut" => Some(Self::PolygonCut),
+            "part_cut" => Some(Self::PartCut),
             _ => None,
         }
     }
@@ -1688,24 +1703,27 @@ pub struct MemberHoleRecord {
     /// The per-member ordinal in creation order, starting at zero. It names the record's
     /// FeatureIds (`cut:f.h<ordinal>...`).
     pub ordinal: usize,
+    /// Whether the record is a hole (A04.2), a polygon cut or a part cut (A13).
+    pub kind: MemberHoleKind,
     /// A point `(u, v, w)` on the hole axis in the member frame.
     pub axis_point_mm: [f64; 3],
-    /// The direction of the hole axis in the member frame: any section-plane direction
-    /// `(u, v, 0)` with a nonzero transverse part; the replay normalizes the axis line.
+    /// The direction of the hole axis in the member frame. A hole or a polygon cut keeps
+    /// the section-plane form `(u, v, 0)` with a nonzero transverse part; a part cut may
+    /// lean along the member (`w != 0`), a purely axial one staying refused. The replay
+    /// normalizes the axis line.
     pub axis_direction: [f64; 3],
     /// How far the cutter reaches.
     pub extent: HoleExtent,
     /// The authoritative clockwise polygon relative to the axis point in the plane
-    /// perpendicular to the axis, hole-frame XY (x along `+Z_m`, y along `axis_direction x
-    /// +Z_m`), vertex 0 on `+Z_m`.
+    /// perpendicular to the axis, hole-frame XY (x along the member axis's projection
+    /// onto the plane, y along `axis_direction x x`), vertex 0 on the projected member
+    /// axis — the section-plane frame of A04.2 for the perpendicular kinds.
     pub polygon_mm: Vec<[f64; 2]>,
     /// The bolt group that generated the record (the F06 member-hole amendment section 3, the
     /// member side of the bolt amendment section 5); `None` for a hand-placed hole. A generated
     /// record is owned by its group: it is created, regenerated and removed with the group as
     /// one unit, and `UpdateHole`/`RemoveHole` refuse it with `DEPENDENCY_CONFLICT`.
     pub owner: Option<ElementId>,
-    /// Whether the record is a hole (A04.2) or a member polygon cut (A13).
-    pub kind: MemberHoleKind,
 }
 
 /// Replace one existing hole's authoritative polygon, preserving its identity and ordinal.

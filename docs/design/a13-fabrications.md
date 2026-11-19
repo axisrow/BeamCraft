@@ -2,7 +2,8 @@
 
 Date: 2026-10-28. Status: **experimental first slice; A13 acceptance is NOT claimed.**
 Branch `feat/a13-cuts-chamfers-split`. The member polygon cut of epic #556 slice 1 joined
-2026-11-20 on `feat/a13-member-prism-cuts`.
+2026-11-20 on `feat/a13-member-prism-cuts`; the member part cuts and the oblique part cuts
+of epic #556 slice 2 landed on top (see the epic-556 section below).
 
 The seven fabrication operations of the A13 card, on the plate and straight-member forms
 already on `master`, as A-2 operation records: line, polygon and part cuts, fitting an end to
@@ -30,22 +31,22 @@ beamcraft combine-parts   --survivor --consumed --operation-id
 | line cut | `plane_cut` (A03 form) | kernel `plane_cut` of the plane through the line and the axis |
 | polygon cut (plate) | through-cut record, kind `polygon_cut` | kernel `through_hole` prism subtraction |
 | polygon cut (member) | owned `MemberHoleRecord`, kind `polygon_cut`, a through cut | kernel member prism subtraction (`member_through_hole`, the G14 cutters) |
-| part cut | through-cut record from the tool plate's mapped prism | kernel `through_hole` |
+| part cut (plate) | through-cut record, kind `part_cut`, with the mapped prism axis | kernel `through_hole` (vertical) or the oblique through-cut |
+| part cut (member) | member record, kind `part_cut`, the tool mapped into the member frame | kernel `member_through_hole`, the general-direction cutter |
 | fit | `plane_cut` from the tool face nearest the target's extent midpoint | kernel `plane_cut` |
 | chamfer | `plane_cut` through two edge distances at a contour vertex | kernel `plane_cut` |
 | split | a `plane_cut` record on each half; the second element is created in the transaction | `plane_cut` twice |
 | combine | the survivor's extended axis; the consumed member is deleted | member re-evaluation |
 
 Polygon cuts share the A04 hole record form with an explicit `steel:hole:kinds` token
-(`hole` / `polygon_cut`), one shared per-element ordinal counter and the same `cut:f.h<ordinal>`
-wall ids, so a cut never numbers as a fastener hole. Instance prims mirror the kind token with
-the other shared shape properties. The member polygon cut (epic #556 slice 1) mirrors the same
-kind on the member's own record list: `MemberHoleRecord` grows the `kind` field, stored as the
-eleventh record attribute `steel:mhole:kinds` (`hole` / `polygon_cut`; the descriptor's ten
-become eleven, pre-alpha stores are not migrated, the standing rule), and joins the member's
-per-member counter and `cut:f.h<ordinal>` wall ids. A part cut on a member target stays the
-documented `UNSUPPORTED_GEOMETRY` (slice 2 of the epic); a combine refuses a parallel axis
-offset across the survivor's line.
+(`hole` / `polygon_cut` / `part_cut`), one shared per-element ordinal counter and the same
+`cut:f.h<ordinal>` wall ids, so a cut never numbers as a fastener hole. Instance prims mirror
+the kind token with the other shared shape properties. The member cuts mirror the same kind on
+the member's own record list: `MemberHoleRecord` grows the `kind` field, stored as the eleventh
+record attribute `steel:mhole:kinds` (`hole` / `polygon_cut` / `part_cut`; the descriptor's ten
+became eleven, pre-alpha stores are not migrated, the standing rule), and joins the member's
+per-member counter and `cut:f.h<ordinal>` wall ids. A combine refuses a parallel axis offset
+across the survivor's line.
 
 ## The member polygon cut (#556 slice 1)
 
@@ -83,6 +84,38 @@ member target with `UNSUPPORTED_GEOMETRY` — its admission is plate-shaped (a c
 plus two distances in the contour plane), and a member-end chamfer is a plane-cut pair at an
 end or a profile-level corner treatment, still unassigned.
 
+## Epic #556 slice 2: member part cuts and oblique part cuts
+
+`cut-by-part` accepts a member target: the tool plate's contour and prism axis are derived
+once at admission into the member frame (the hole frame's x is the member axis projected
+onto the plane perpendicular to the cut direction, y completes the right-handed frame, which
+reduces to the A04.2 convention for a section-plane direction) and stored as an owned member
+record of kind `part_cut` under the shared per-member counter and `cut:f.h<ordinal>` wall
+ids. The kernel's certified prism cutter generalizes to a direction with an axial component:
+a slot may lean along the member (a knife plate at the brace angle) while the certified
+perpendicular results stay bit-exact. A purely axial direction — a prism that would enter
+through the end caps instead of the walls — is refused `UNSUPPORTED_GEOMETRY`, as is a tool
+whose transverse part vanishes.
+
+The plate part cut drops the parallel-to-target restriction: any relative rotation is
+derived, the tool contour is projected along the prism axis onto the target's `z = 0` plane
+(the projection is what both cap openings translate through) and the mapped band must reach
+past both faces at the outline's extreme axis heights. The prism axis is stored on the
+record (`steel:hole:axisDirections`, unit, positive Z part) and the replay sweeps the mapped
+outline along it; a prism lying in the target plane never crosses a face and is refused.
+
+Limits (the slice's honest boundaries):
+
+* One oblique member cut per member: a body cut obliquely no longer satisfies the kernel's
+  X-extrusion contract, so a later member hole (round, polygon or part) on it refuses the
+  evaluation and the member keeps its last valid state. Order the cuts: perpendicular holes
+  first, the leaning slot last.
+* A member part cut is a through cut only; the purely axial and the blind forms stay
+  refused.
+* A plate part cut is a through cut too: the mapped prism must pass both faces, and a
+  subsequent hole on the obliquely cut plate refuses the same way (the body stops being a
+  Z-prism for the cap machinery).
+
 ## Decisions (owner review needed)
 
 1. **Derived records.** The line cut, fit and chamfer parameters are resolved once at
@@ -103,7 +136,8 @@ end or a profile-level corner treatment, still unassigned.
 
 ## Not done (not claimed)
 
-* Member-tool fits, plate combines (polygon union), polygon cuts on polybeams, oriented
-  (non-parallel) part cuts, `cut-by-part` with a member target (epic #556 slice 2, the
-  oblique tool included), member-end chamfers, A12 arc-contour acceptance rows.
+* Member-tool fits, plate combines (polygon union), polygon cuts on polybeams, member-end
+  chamfers, A12 arc-contour acceptance rows.
 * No UI authoring; the view snapshot shows the result like any other body.
+* Blind (partial-depth) part cuts for either target; a second member-hole record after an
+  oblique cut on the same element (see the limits above).

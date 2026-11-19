@@ -411,6 +411,7 @@ pub(super) const MHOLE_FIELDS: &[(&str, &str)] = &[
     ("steel:mhole:vertexCounts", "int[]"),
     ("steel:mhole:operationIds", "string[]"),
     ("steel:mhole:ordinals", "int[]"),
+    ("steel:mhole:kinds", "token[]"),
     ("steel:mhole:axisPointsMm", "double3[]"),
     ("steel:mhole:axisDirections", "double3[]"),
     ("steel:mhole:extents", "token[]"),

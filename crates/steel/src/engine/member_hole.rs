@@ -44,6 +44,9 @@ use beamcraft_model::id::OpId;
 /// Millimetres a through cutter reaches past both faces of the body, as for plate holes.
 pub(crate) const CUTTER_OVERSHOOT_MM: f64 = 1.0;
 
+/// One replay record's body-height closure over the cutter axis.
+type MemberRecordHeight = Box<dyn Fn(&[f64; 3]) -> f64>;
+
 /// Largest operation ordinal the kernel names a hole wall with (`cut:f.h<ordinal>` inside the
 /// 64-byte FeatureId bound); one more record on one member is an implementation limit.
 const MAX_ORDINAL: usize = 999;
@@ -87,7 +90,10 @@ fn target_of(head: &AuthoredMember, command: &AddHole) -> Result<(), CommandErro
 
 /// The next per-member ordinal in creation order: one past the last live record, with the
 /// counter's capacity check (the same rule as a plate's hole counter).
-fn admit_ordinal(records: &[MemberHoleRecord], pinned: usize) -> Result<usize, CommandError> {
+pub(crate) fn admit_ordinal(
+    records: &[MemberHoleRecord],
+    pinned: usize,
+) -> Result<usize, CommandError> {
     let minimum = records
         .last()
         .map_or(Some(0), |r| r.ordinal.checked_add(1))
@@ -153,6 +159,7 @@ pub fn add_member_hole_after(
     next.hole_records.push(MemberHoleRecord {
         operation_id: command.operation_id,
         ordinal,
+        kind: crate::model::command::MemberHoleKind::Hole,
         axis_point_mm: member.axis_point_mm,
         axis_direction: member.axis_direction,
         extent: member.extent,
@@ -160,7 +167,6 @@ pub fn add_member_hole_after(
         // A hand-placed hole belongs to nobody (the F06 member-hole amendment); only a
         // bolt group's own generation writes an owner (bolt amendment section 5).
         owner: None,
-        kind: MemberHoleKind::Hole,
     });
     Ok(MemberHoleOutcome {
         footprint: Footprint::for_update(command.target_id, false, false, true, false, None)?,
@@ -570,72 +576,136 @@ pub(crate) fn replay_member_holes(
     let mut solid: Option<SolidMesh> = None;
     let mut element_body = body.clone();
     for record in records {
-        // The hole axis: normalized exactly as the kernel normalizes its `(axis_y, axis_z)`,
-        // so the footprint frame here and the kernel's are the same line bit for bit.
+        // The hole axis. A hole or a polygon cut keeps the certified section-plane form
+        // and its exact arithmetic; a part cut may lean along the member (its replay
+        // normalizes the general direction), a purely axial one staying refused.
         let [du, dv, dw] = record.axis_direction;
-        if dw != 0.0 {
+        let part_cut = record.kind == crate::model::command::MemberHoleKind::PartCut;
+        if !part_cut && dw != 0.0 {
             return Err(pending_member_holes(
                 "a member hole axis must stay in the member's section plane",
             ));
         }
-        let norm = (du * du + dv * dv).sqrt();
-        if !(norm.is_finite() && norm > 0.0) {
-            return Err(pending_member_holes(
-                "a member hole axis direction needs a nonzero transverse part",
-            ));
-        }
-        let (dy, dz) = (du / norm, dv / norm);
         let hole_body = permuted_body(&element_body, &axes_kernel)?;
-        // The cutter range along the axis: `through` spans the body's full height past both
-        // walls; a range runs from the axis point along the axis (the model refuses from >= to,
-        // and a range ending inside a wall is the kernel's blind refusal).
-        let height = |p: &[f64; 3]| p[1].mul_add(dy, p[2] * dz);
-        let (t_lo, t_hi) = hole_body
-            .mesh()
-            .vertices()
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
-                (lo.min(height(p)), hi.max(height(p)))
-            });
-        let point = record.axis_point_mm;
-        // The stored member-frame point `(u, v, w)` resolves through the frame origin into
-        // element coordinates, then into the kernel frame's `a`, transverse line and height
-        // coordinates. For a frame origin at the coordinate origin each resolved component is
-        // the stored one (the cross terms vanish exactly on the signed unit rows), so the
-        // origin-based members keep their byte-exact results.
-        let element = [
-            origin_mm[0] + weighted([bx[0], by[0], bz[0]], point),
-            origin_mm[1] + weighted([bx[1], by[1], bz[1]], point),
-            origin_mm[2] + weighted([bx[2], by[2], bz[2]], point),
-        ];
-        let (a, y_k, z_k) = (
-            weighted(bz, element),
-            weighted(bx, element),
-            weighted(by, element),
-        );
-        let t0 = y_k.mul_add(dy, z_k * dz);
-        let (from, to) = match record.extent {
-            HoleExtent::Through => (t_lo - CUTTER_OVERSHOOT_MM, t_hi + CUTTER_OVERSHOOT_MM),
-            HoleExtent::Range { from_mm, to_mm } => (t0 + from_mm, t0 + to_mm),
-        };
-        // The axis point in the footprint plane: `a` along the member axis, `b` along the
-        // axis' `e2 = d x e1`. The stored polygon is clockwise in exactly this frame — its
-        // hole-frame XY is `(Z_m, axis_direction x Z_m)` — so the coordinates carry unchanged.
-        let centre = [a, dz * y_k - dy * z_k];
-        let cavity = Cavity::polygon(
-            record
-                .polygon_mm
+        // The cutter's axis, range and footprint frame, per kind. The kernel frame is the
+        // exact cyclic rotation of the member frame (X = the member axis `Z_m`), so a
+        // member-frame direction `(du, dv, dw)` reads `(dw, du, dv)` there.
+        let cutter = if part_cut {
+            let norm = (du * du + dv * dv + dw * dw).sqrt();
+            if !(norm.is_finite() && norm > 0.0) {
+                return Err(pending_member_holes(
+                    "a member hole axis direction needs a nonzero transverse part",
+                ));
+            }
+            let (dx, dy, dz) = (dw / norm, du / norm, dv / norm);
+            let lt = (dy * dy + dz * dz).sqrt();
+            if !(lt.is_finite() && lt > 1e-12) {
+                return Err(pending_member_holes(
+                    "a member hole axis must cross the member's walls, not run along them",
+                ));
+            }
+            let height: MemberRecordHeight =
+                Box::new(move |p: &[f64; 3]| p[0].mul_add(dx, p[1].mul_add(dy, p[2] * dz)));
+            let (t_lo, t_hi) = hole_body
+                .mesh()
+                .vertices()
                 .iter()
-                .map(|[x, y]| Point2::new(centre[0] + x, centre[1] + y))
-                .collect(),
-        );
-        let ordinal = u16::try_from(record.ordinal)
-            .ok()
-            .filter(|ordinal| *ordinal <= 999)
-            .ok_or_else(|| {
-                pending_member_holes("the record ordinal exceeds the kernel capacity")
-            })?;
-        let cutter = MemberHoleCutter::directed(cavity, dy, dz, from, to, ordinal);
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                    (lo.min(height(p)), hi.max(height(p)))
+                });
+            let point = record.axis_point_mm;
+            let element = [
+                origin_mm[0] + weighted([bx[0], by[0], bz[0]], point),
+                origin_mm[1] + weighted([bx[1], by[1], bz[1]], point),
+                origin_mm[2] + weighted([bx[2], by[2], bz[2]], point),
+            ];
+            let (a, y_k, z_k) = (
+                weighted(bz, element),
+                weighted(bx, element),
+                weighted(by, element),
+            );
+            let t0 = dx.mul_add(a, y_k.mul_add(dy, z_k * dz));
+            let (from, to) = match record.extent {
+                HoleExtent::Through => (t_lo - CUTTER_OVERSHOOT_MM, t_hi + CUTTER_OVERSHOOT_MM),
+                HoleExtent::Range { from_mm, to_mm } => (t0 + from_mm, t0 + to_mm),
+            };
+            // The axis point in the footprint plane: `a` along the member axis, `b` along
+            // the oblique frame's `e2 = (0, dz, -dy)/Lt`. The stored polygon is clockwise
+            // in exactly this frame — its hole-frame XY is the member axis projected onto
+            // the plane perpendicular to the axis and `axis_direction x` that — so the
+            // coordinates carry unchanged.
+            let centre = [a, (dz * y_k - dy * z_k) / lt];
+            let cavity = Cavity::polygon(
+                record
+                    .polygon_mm
+                    .iter()
+                    .map(|[x, y]| Point2::new(centre[0] + x, centre[1] + y))
+                    .collect(),
+            );
+            let ordinal = u16::try_from(record.ordinal)
+                .ok()
+                .filter(|ordinal| *ordinal <= 999)
+                .ok_or_else(|| {
+                    pending_member_holes("the record ordinal exceeds the kernel capacity")
+                })?;
+            MemberHoleCutter::oblique(cavity, [dx, dy, dz], from, to, ordinal)
+        } else {
+            let norm = (du * du + dv * dv).sqrt();
+            if !(norm.is_finite() && norm > 0.0) {
+                return Err(pending_member_holes(
+                    "a member hole axis direction needs a nonzero transverse part",
+                ));
+            }
+            let (dy, dz) = (du / norm, dv / norm);
+            let height: MemberRecordHeight =
+                Box::new(move |p: &[f64; 3]| p[1].mul_add(dy, p[2] * dz));
+            let (t_lo, t_hi) = hole_body
+                .mesh()
+                .vertices()
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                    (lo.min(height(p)), hi.max(height(p)))
+                });
+            let point = record.axis_point_mm;
+            // The stored member-frame point `(u, v, w)` resolves through the frame origin into
+            // element coordinates, then into the kernel frame's `a`, transverse line and height
+            // coordinates. For a frame origin at the coordinate origin each resolved component is
+            // the stored one (the cross terms vanish exactly on the signed unit rows), so the
+            // origin-based members keep their byte-exact results.
+            let element = [
+                origin_mm[0] + weighted([bx[0], by[0], bz[0]], point),
+                origin_mm[1] + weighted([bx[1], by[1], bz[1]], point),
+                origin_mm[2] + weighted([bx[2], by[2], bz[2]], point),
+            ];
+            let (a, y_k, z_k) = (
+                weighted(bz, element),
+                weighted(bx, element),
+                weighted(by, element),
+            );
+            let t0 = y_k.mul_add(dy, z_k * dz);
+            let (from, to) = match record.extent {
+                HoleExtent::Through => (t_lo - CUTTER_OVERSHOOT_MM, t_hi + CUTTER_OVERSHOOT_MM),
+                HoleExtent::Range { from_mm, to_mm } => (t0 + from_mm, t0 + to_mm),
+            };
+            // The axis point in the footprint plane: `a` along the member axis, `b` along the
+            // axis' `e2 = d x e1`. The stored polygon is clockwise in exactly this frame — its
+            // hole-frame XY is `(Z_m, axis_direction x Z_m)` — so the coordinates carry unchanged.
+            let centre = [a, dz * y_k - dy * z_k];
+            let cavity = Cavity::polygon(
+                record
+                    .polygon_mm
+                    .iter()
+                    .map(|[x, y]| Point2::new(centre[0] + x, centre[1] + y))
+                    .collect(),
+            );
+            let ordinal = u16::try_from(record.ordinal)
+                .ok()
+                .filter(|ordinal| *ordinal <= 999)
+                .ok_or_else(|| {
+                    pending_member_holes("the record ordinal exceeds the kernel capacity")
+                })?;
+            MemberHoleCutter::directed(cavity, dy, dz, from, to, ordinal)
+        };
         let applied =
             member_through_hole(&hole_body, &cutter).map_err(|failure| record_refusal(&failure))?;
         let result = permuted_body(applied.body(), &back)?;
@@ -656,7 +726,7 @@ pub(crate) fn replay_member_holes(
 mod tests {
     use super::*;
     use crate::engine::member::{MemberBody, ProfileInfo, evaluate_member};
-    use crate::model::command::{MemberKind, RemoveHole};
+    use crate::model::command::{MemberHoleKind, MemberKind, RemoveHole};
     use crate::model::section::{ParametricSection, SectionFamily, SectionShape};
     use beamcraft_model::command::Placement;
     use beamcraft_model::digest::ContentDigest;
@@ -1060,6 +1130,7 @@ mod tests {
         rolled.hole_records.push(MemberHoleRecord {
             operation_id: op(2),
             ordinal: 0,
+            kind: MemberHoleKind::Hole,
             axis_point_mm: [0.0, 0.0, 500.0],
             axis_direction: [1.0, 0.0, 0.0],
             extent: HoleExtent::Through,
@@ -1067,7 +1138,6 @@ mod tests {
                 .polygon()
                 .unwrap(),
             owner: None,
-            kind: MemberHoleKind::Hole,
         });
         let error = evaluate_member(&rolled, rectangle(width, height)).unwrap_err();
         assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
@@ -1279,6 +1349,7 @@ mod tests {
             authored.hole_records.push(MemberHoleRecord {
                 operation_id: op(2),
                 ordinal: 0,
+                kind: MemberHoleKind::Hole,
                 axis_point_mm: [0.0, 0.0, 500.0],
                 axis_direction: direction,
                 extent: HoleExtent::Through,
@@ -1286,7 +1357,6 @@ mod tests {
                     .polygon()
                     .unwrap(),
                 owner: None,
-                kind: MemberHoleKind::Hole,
             });
             let error = evaluate_member(&authored, rectangle(200.0, 300.0)).unwrap_err();
             assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
@@ -1499,6 +1569,7 @@ mod tests {
         advanced.hole_records.push(MemberHoleRecord {
             operation_id: op(3),
             ordinal: 5,
+            kind: MemberHoleKind::Hole,
             axis_point_mm: [0.0, 0.0, 500.0],
             axis_direction: [1.0, 0.0, 0.0],
             extent: HoleExtent::Through,
@@ -1506,7 +1577,6 @@ mod tests {
                 .polygon()
                 .unwrap(),
             owner: None,
-            kind: MemberHoleKind::Hole,
         });
         assert_eq!(
             add_member_hole_after(
@@ -1525,6 +1595,7 @@ mod tests {
         let base = MemberHoleRecord {
             operation_id: op(4),
             ordinal: 0,
+            kind: MemberHoleKind::Hole,
             axis_point_mm: [0.0, 0.0, 500.0],
             axis_direction: [1.0, 0.0, 0.0],
             extent: HoleExtent::Through,
@@ -1532,7 +1603,6 @@ mod tests {
                 .polygon()
                 .unwrap(),
             owner: None,
-            kind: MemberHoleKind::Hole,
         };
         full.hole_records = (0..MAX_HOLES)
             .map(|i| MemberHoleRecord {

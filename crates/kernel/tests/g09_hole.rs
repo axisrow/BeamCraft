@@ -13,8 +13,8 @@ use crate::common_ops;
 
 use beamcraft_kernel::diagnostic::Stage;
 use beamcraft_kernel::ops::{
-    Body, CutPlane, HoleCutter, Keep, OpCode, OpDefect, OpField, OpKind, OpResult, plane_cut,
-    through_hole,
+    Body, CutPlane, HoleCutter, Keep, OpCode, OpDefect, OpField, OpKind, OpResult,
+    oblique_through_hole, plane_cut, through_hole,
 };
 use beamcraft_kernel::profile::{Cavity, CurveSpec, Point2, extrude};
 use common::{close, hole_rect, p, parse_blob, rect, regular_polygon_area};
@@ -813,4 +813,105 @@ fn a_hole_after_a_cut_still_respects_the_floor_of_the_original_body() {
         &HoleCutter::new(hole_rect(0.25, 1000.0, 1000.0, 2000.0), -1.0, 11.0, 5),
     );
     assert!(ok.is_ok());
+}
+
+// The oblique through-cut of epic #556 slice 2: a prism along a general axis with a
+// positive Z part, through a Z-prism plate.
+
+#[test]
+fn an_oblique_prism_cuts_the_exact_tilted_volume() {
+    // A 45-degree prism through an 8 mm plate: the prism's horizontal cross-section is the
+    // authored cavity translated at every height, so the removed column is the cavity's
+    // area times the thickness — the sealed result carries the tilted walls and the
+    // translated openings.
+    let (w, l, t) = (40.0, 30.0, 8.0);
+    let body = plate(w, l, t);
+    let before = body.volume_mm3();
+    let cavity = hole_rect(15.0, 11.0, 25.0, 19.0);
+    let res = oblique_through_hole(
+        &body,
+        &HoleCutter::oblique(
+            cavity.clone(),
+            [1.0, 0.0, 1.0],
+            -1.0,
+            (t + 1.0) * 2.0f64.sqrt(),
+            3,
+        ),
+    )
+    .unwrap();
+    let facts = assert_sealed(&res);
+    assert_eq!(res.kind(), OpKind::ThroughHole);
+    let mut area2 = 0.0;
+    for (a, b) in cavity
+        .points()
+        .iter()
+        .zip(cavity.points().iter().cycle().skip(1))
+    {
+        area2 += a.x * b.y - b.x * a.y;
+    }
+    let area = area2.abs() / 2.0;
+    let expected = area * t;
+    let removed = {
+        let blob = parse_blob(res.blob());
+        before.lo - common::mesh_volume(&blob.vertices, &blob.triangles)
+    };
+    assert!(
+        (removed - expected).abs() <= 1e-6 * expected,
+        "removed {removed} vs expected {expected}"
+    );
+    assert_eq!(facts.euler, 0);
+    let table = res.face_table();
+    assert!(table.iter().any(|id| id == "cut:f.h3.s0"));
+    // The openings sit at the translated positions: the cavity's (15, 11) corner maps to
+    // (15, 11) on the entry cap and to (23, 11) on the exit cap (the sweep offset).
+    let blob = parse_blob(res.blob());
+    assert!(
+        blob.vertices
+            .iter()
+            .any(|v| v[2] == 0.0 && (v[0] - 15.0).abs() < 1e-9 && (v[1] - 11.0).abs() < 1e-9)
+    );
+    assert!(
+        blob.vertices
+            .iter()
+            .any(|v| v[2] == 8.0 && (v[0] - 23.0).abs() < 1e-9 && (v[1] - 11.0).abs() < 1e-9)
+    );
+}
+
+#[test]
+fn an_oblique_prism_admits_the_vertical_special_case_and_refuses_blind_or_flat() {
+    let body = plate(40.0, 30.0, 8.0);
+    // The vertical axis reproduces the certified op bit for bit.
+    let cavity = hole_rect(15.0, 11.0, 25.0, 19.0);
+    let vertical = drill(&body, cavity.clone(), 8.0, 5);
+    let as_oblique = oblique_through_hole(
+        &body,
+        &HoleCutter::oblique(cavity.clone(), [0.0, 0.0, 1.0], -1.0, 9.0, 5),
+    )
+    .unwrap();
+    assert_eq!(vertical.blob(), as_oblique.blob());
+    // A range ending inside the plate is blind.
+    let err = oblique_through_hole(
+        &body,
+        &HoleCutter::oblique(cavity.clone(), [1.0, 0.0, 1.0], -1.0, 5.0, 9),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::CutterNotThrough);
+    // An axis lying in the cap plane never crosses a cap (the range stays finite; the
+    // caller's division by `dz` would not).
+    let err = oblique_through_hole(
+        &body,
+        &HoleCutter::oblique(cavity.clone(), [1.0, 0.0, 0.0], -1.0, 9.0, 9),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::CutterNotThrough);
+    // A negative Z part is refused; the caller canonicalizes the sign.
+    let err = oblique_through_hole(
+        &body,
+        &HoleCutter::oblique(cavity, [1.0, 0.0, -1.0], -13.0, -1.0, 9),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::CutterNotThrough);
 }

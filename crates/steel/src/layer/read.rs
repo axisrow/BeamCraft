@@ -152,6 +152,7 @@ pub(super) fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         "steel:hole:operationIds",
         "steel:hole:ordinals",
         "steel:hole:kinds",
+        "steel:hole:axisDirections",
         "steel:hole:generatedBy",
     ];
     let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
@@ -173,6 +174,9 @@ pub(super) fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     let Value::Array(kinds) = required(prim, "steel:hole:kinds", "token[]")? else {
         return Err(invalid());
     };
+    let Value::Array(axes) = required(prim, "steel:hole:axisDirections", "double3[]")? else {
+        return Err(invalid());
+    };
     let Value::Array(owners) = required(prim, "steel:hole:generatedBy", "string[]")? else {
         return Err(invalid());
     };
@@ -180,6 +184,7 @@ pub(super) fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         || counts.len() != ids.len()
         || counts.len() != ordinals.len()
         || counts.len() != kinds.len()
+        || counts.len() != axes.len()
         || counts.len() != owners.len()
     {
         return Err(invalid());
@@ -191,6 +196,22 @@ pub(super) fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
             return Err(invalid());
         };
         if !owner.is_empty() && !uuid7(owner) {
+            return Err(invalid());
+        }
+    }
+    // Each record's prism axis is finite and in cap, unit with a positive Z part: the
+    // vertical kinds store the +Z, a part cut stores its leaning axis.
+    let axes = points(prim, "steel:hole:axisDirections")?;
+    if axes.len() != counts.len() {
+        return Err(invalid());
+    }
+    for axis in &axes {
+        let [x, y, z] = *axis;
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            return Err(invalid());
+        }
+        let norm = (x * x + y * y + z * z).sqrt();
+        if !((norm - 1.0).abs() <= 1e-6 && z > 0.0) {
             return Err(invalid());
         }
     }
@@ -238,7 +259,7 @@ pub(super) fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         let Value::Text(kind) = kind else {
             return Err(invalid());
         };
-        if kind != "hole" && kind != "polygon_cut" {
+        if crate::model::command::HoleKind::parse(kind).is_none() {
             return Err(invalid());
         }
     }
@@ -248,11 +269,12 @@ pub(super) fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
 pub(super) const MAX_HOLES: usize = 64;
 pub(super) const MAX_HOLE_POINTS: usize = 1024;
 
-/// The optional member-hole operation records of a loaded beam or column (A04.2): all ten
+/// The optional member-hole operation records of a loaded beam or column (A04.2): all eleven
 /// attributes or none, the counts add up to the points, every polygon has at least three
 /// in-cap points with every `z` zero, there is one full UUIDv7 and one strictly increasing
 /// non-negative ordinal per polygon, each axis point is finite and in cap, each axis direction
-/// is finite, in cap and stays in the section plane with a nonzero transverse part (the
+/// is finite, in cap and stays in the section plane with a nonzero transverse part for the
+/// vertical kinds while a part cut may lean along the member (the
 /// magnitude names nothing; the replay normalizes the axis line), each extent is `through`
 /// (zero range) or a `from < to` range, and every generated record names its full generating
 /// bolt group while a hand-placed hole stores the empty string. Winding, placement and fit are
@@ -264,6 +286,7 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         "steel:mhole:vertexCounts",
         "steel:mhole:operationIds",
         "steel:mhole:ordinals",
+        "steel:mhole:kinds",
         "steel:mhole:axisPointsMm",
         "steel:mhole:axisDirections",
         "steel:mhole:extents",
@@ -306,6 +329,7 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     if counts.len() > MAX_HOLES
         || counts.len() != ids.len()
         || counts.len() != ordinals.len()
+        || counts.len() != kinds.len()
         || counts.len() != extents.len()
         || counts.len() != from.len()
         || counts.len() != to.len()
@@ -313,6 +337,15 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         || counts.len() != kinds.len()
     {
         return Err(invalid());
+    }
+    // Every record names a served kind: a fastener hole, a polygon cut or a part cut.
+    for kind in kinds {
+        let Value::Text(kind) = kind else {
+            return Err(invalid());
+        };
+        if crate::model::command::MemberHoleKind::parse(kind).is_none() {
+            return Err(invalid());
+        }
     }
     // Every generated record names its full generating bolt group; a hand-placed hole stores
     // the empty string (the F06 member-hole amendment section 3).
@@ -345,11 +378,22 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     cap(polygons.iter().flatten().copied(), 1e9)?;
     cap(axis.iter().flatten().copied(), 1e9)?;
     cap(directions.iter().flatten().copied(), 1e9)?;
-    // Each axis direction stays in the member's section plane with a nonzero transverse
-    // part (G14.2); the replay normalizes the axis line, so the magnitude names nothing.
-    for direction in &directions {
+    // Each axis direction stays finite and nonzero. A hole or a polygon cut keeps the
+    // member's section plane with a nonzero transverse part (G14.2); a part cut may lean
+    // along the member (the replay normalizes the axis line, so the magnitude names
+    // nothing and a purely axial one refuses there).
+    for (direction, kind) in directions.iter().zip(kinds.iter()) {
+        let Value::Text(kind) = kind else {
+            return Err(invalid());
+        };
         let [u, v, w] = *direction;
-        if w != 0.0 || !((u != 0.0 || v != 0.0) && u.is_finite() && v.is_finite()) {
+        let finite_nonzero =
+            u.is_finite() && v.is_finite() && w.is_finite() && (u != 0.0 || v != 0.0 || w != 0.0);
+        let served = match crate::model::command::MemberHoleKind::parse(kind) {
+            Some(crate::model::command::MemberHoleKind::PartCut) => finite_nonzero,
+            _ => w == 0.0 && (u != 0.0 || v != 0.0) && u.is_finite() && v.is_finite(),
+        };
+        if !served {
             return Err(invalid());
         }
     }
