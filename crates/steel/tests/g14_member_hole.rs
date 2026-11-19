@@ -1072,7 +1072,10 @@ fn an_axial_component_cuts_a_faceted_chain_with_the_exact_volume() {
     // The solid 48-band tube, cut along (1, 1, 0)/sqrt(2): the prism stays on the z = 0
     // mid-plane (the footprint's `b` is `-z` there), enters through the -y apex band and
     // leaves through the +y apex band, each a single strip with `n = (0, +-1, 0)`, so the
-    // removed column is `A * 2R' * sqrt(2)` with `R'` the section's apothem.
+    // removed column is `A * 2R' * sqrt(2)` with `R'` the section's apothem. The +y
+    // apex's crossing zone straddles the chain walk's first strip (the angle-0 band),
+    // which is what
+    // `a_wrap_around_crossing_zone_merges_one_side` below guards on purpose.
     let body = tube_body();
     let cavity = circle(100.0 * 2.0f64.sqrt(), 0.0, R);
     let root2 = 2.0f64.sqrt();
@@ -1161,6 +1164,38 @@ fn an_axial_component_cuts_a_faceted_chain_with_the_exact_volume() {
         (removed - expected).abs() <= 1e-3 * expected,
         "removed {removed} vs expected {expected}"
     );
+}
+
+#[test]
+fn a_wrap_around_crossing_zone_merges_one_side() {
+    // The registry walk starts at the chain's first strip (the angle-0 band of this tube),
+    // and this slot's crossing zone straddles exactly that strip: the +y apex's bands are
+    // `47, 0` with the footprint's slivers reaching into `46` and `1`, so the zone wraps
+    // the walk's own start. Without the cyclic first-and-last side merge the split sides
+    // each fail the union-aware whole-footprint coverage and the cut is refused; the merge
+    // keeps it one side and the cut certifies.
+    let body = tube_body();
+    let cavity = circle(100.0 * 2.0f64.sqrt(), 0.0, R);
+    let root2 = 2.0f64.sqrt();
+    let apothem = (B / 2.0) * (PI / f64::from(N)).cos();
+    let apex = apothem * root2;
+    let a0 = 100.0 * 2.0f64.sqrt();
+    let res = drill_oblique(
+        &body,
+        &cavity,
+        [1.0, 1.0, 0.0],
+        a0 - apex - 2.0 * R - 5.0,
+        a0 + apex + 2.0 * R + 5.0,
+        44,
+    );
+    assert_sealed(&res);
+    // The sides tile the footprint once each: two crossings, one handle, and the removed
+    // column stays inside the certified enclosure the seal checked.
+    assert_eq!(genus(&res), 1);
+    let removed = volume(&body) - volume(res.body());
+    let analytic = res.analytic_volume_mm3().unwrap();
+    let before = volume(&body);
+    assert!(analytic.lo <= before - removed && before - removed <= analytic.hi);
 }
 
 #[test]

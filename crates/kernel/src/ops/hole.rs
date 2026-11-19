@@ -433,19 +433,19 @@ pub fn oblique_through_hole_with(
         return Err(refuse(OpCode::OpUnsupported, defect, Stage::Ranges));
     }
 
-    // New vertices: the cavity translated to each cap opening, at the cap heights.
+    // New vertices: the cavity translated to each cap opening. The z component is the
+    // cap's own exact height (a `(z/dz)*dz` round trip can sit an ulp off the plane).
     let base = u32::try_from(body.mesh().vertices().len()).map_err(|_| internal())?;
     let m32 = u32::try_from(m).map_err(|_| internal())?;
-    let ring_at = |z: f64| z / dz;
-    let shifted = |p: &crate::profile::Point2, t: f64| [p.x + t * dx, p.y + t * dy, t * dz];
+    let shifted = |p: &crate::profile::Point2, t: f64, z: f64| [p.x + t * dx, p.y + t * dy, z];
     let mut vertices: Vec<[f64; 3]> = body.mesh().vertices().to_vec();
     let bottom_xyz: Vec<[f64; 3]> = points
         .iter()
-        .map(|p| shifted(p, ring_at(prism.z0)))
+        .map(|p| shifted(p, prism.z0 / dz, prism.z0))
         .collect();
     let top_xyz: Vec<[f64; 3]> = points
         .iter()
-        .map(|p| shifted(p, ring_at(prism.z1)))
+        .map(|p| shifted(p, prism.z1 / dz, prism.z1))
         .collect();
     vertices.extend(bottom_xyz.iter().copied());
     vertices.extend(top_xyz.iter().copied());

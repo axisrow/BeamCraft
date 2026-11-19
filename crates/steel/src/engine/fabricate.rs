@@ -612,15 +612,21 @@ fn tool_prism(target: &AuthoredPlate, tool: &AuthoredPlate) -> Result<MappedPris
         ));
     }
     axis = [axis[0] / norm, axis[1] / norm, axis[2] / norm];
+    // The prism is a line, so either axis direction maps the same outline; the axis is
+    // canonicalized to a positive z part (master's flipped parallel tools keep their cut)
+    // and the tool band keeps the flip sign alone.
     let flipped = axis[2] < 0.0;
-    if !axis[2].is_finite() || axis[2].abs() <= 1e-6 {
+    if flipped {
+        axis = [-axis[0], -axis[1], -axis[2]];
+    }
+    let dz = axis[2];
+    if !dz.is_finite() || dz.abs() <= 1e-6 {
         return Err(CommandError::new(
             ErrorCode::UnsupportedGeometry,
             "tool_id",
             "the tool's prism never crosses the target's faces",
         ));
     }
-    let dz = axis[2];
     let mut polygon: Vec<[f64; 2]> = tool
         .contour_points_mm
         .iter()
@@ -1786,6 +1792,29 @@ mod tests {
         assert!((lean_axis[0] - std::f64::consts::FRAC_1_SQRT_2).abs() <= 1e-12);
         assert!((lean_axis[2] - std::f64::consts::FRAC_1_SQRT_2).abs() <= 1e-12);
         assert!(evaluate_plate(lean_authored).is_ok());
+        // A flipped parallel tool (its local +Z pointing against the target normal) cuts
+        // exactly the upright tool's cut: the prism is a line, the axis canonicalizes to
+        // the positive z and only the band keeps the flip sign.
+        let flipped = tool(
+            6,
+            100.0,
+            100.0,
+            20.0,
+            Placement {
+                translation_mm: [150.0, 150.0, 15.0],
+                orientation_xyzw: [1.0, 0.0, 0.0, 0.0],
+            },
+        );
+        let flipped_cut =
+            cut_by_part(&command, Some(&source), None, Some(&flipped), &none, 2).unwrap();
+        let AuthoredPart::Plate(flipped_authored) = &flipped_cut.authored else {
+            panic!("a plate target keeps a plate state");
+        };
+        assert_eq!(
+            flipped_authored.hole_records[0].axis_direction_mm,
+            [0.0, 0.0, 1.0]
+        );
+        assert!(evaluate_plate(flipped_authored).is_ok());
     }
 
     #[test]
