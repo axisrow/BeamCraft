@@ -3934,6 +3934,15 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
                             ("operation_id", Json::text(r.operation_id.to_string())),
                             ("ordinal", Json::uint(r.ordinal as u64)),
                             ("extent", Json::text(r.extent.as_str())),
+                            // The generating bolt group (the F06 member-hole amendment);
+                            // null for a hand-placed hole.
+                            (
+                                "generated_by",
+                                r.owner
+                                    .as_ref()
+                                    .map(|group| Json::text(group.to_string()))
+                                    .unwrap_or(Json::Null),
+                            ),
                         ])
                     })
                     .collect(),

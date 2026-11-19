@@ -1145,6 +1145,7 @@ mod tests {
             axis_direction: [0.0, 1.0, 0.0],
             extent: crate::model::command::HoleExtent::Through,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
+            owner: None,
         }];
         assert_eq!(
             mirror_member_local(&mut drilled).unwrap_err().code,

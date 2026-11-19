@@ -47,7 +47,10 @@
 //!
 //! Limits, none of them hidden: a bad entry is reported and skipped, while a duplicate
 //! designation refuses the whole library; a firm file that does not read is reported and skipped
-//! by [`load_firm`], never silently dropped; the library provenance is reported with the entry
+//! by [`load_firm`], never silently dropped; a project copy whose `environment/` folder survives
+//! without its `environment.usda` is reported in [`ProjectChain::environment_lost`], because the
+//! folder proves an environment was chosen and the fallback would substitute sections (#628);
+//! the library provenance is reported with the entry
 //! but not stored in the definition; the layer engine runs in this process (no LEW-03
 //! containment), as for every other command.
 
@@ -1252,12 +1255,27 @@ pub fn append_neutral(
     Ok(())
 }
 
+/// The project's own environment copy is demonstrably incomplete: the `environment/` folder
+/// proves an environment was chosen at creation (only `create-project --environment` makes
+/// it), but its `environment.usda` is gone, so the chain resolves from the firm libraries and
+/// the built-in neutral environment alone. Reported, never silent: the fallback may answer a
+/// designation with another section, bolt or grade than the environment the project was
+/// created with (#628).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentCopyLost {
+    /// The path of the environment file the project is missing.
+    pub path: String,
+    /// Fixed explanation.
+    pub message: &'static str,
+}
+
 /// The layered lookup of one project: the project's own copy of its environment (the project
 /// layer), then the firm libraries of the application data, then the built-in neutral
 /// environment. The strongest first; a designation the model already defines never reaches this
 /// chain, because the model layer answers before it. A project whose environment copy is absent
 /// resolves from firm and neutral alone; `environment` carries the copy's declarations when it
-/// is present, and `firm_refused` names the firm files that did not read.
+/// is present, `environment_lost` reports a demonstrably incomplete copy, and `firm_refused`
+/// names the firm files that did not read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectChain {
     /// The resolver over the profile libraries of the chain, strongest first.
@@ -1270,6 +1288,10 @@ pub struct ProjectChain {
     pub material_lookup: Option<Lookup>,
     /// The project environment copy's own declarations, when the project carries one.
     pub environment: Option<EnvironmentInfo>,
+    /// The project's lost environment copy, when the `environment/` folder proves one was
+    /// chosen and its `environment.usda` is gone; `None` for a project without a folder and
+    /// for a copy that reads.
+    pub environment_lost: Option<EnvironmentCopyLost>,
     /// The firm files that did not read, in file-name order.
     pub firm_refused: Vec<FirmFileRefused>,
 }
@@ -1278,8 +1300,11 @@ pub struct ProjectChain {
 /// is read with [`load_environment`] (a refused copy refuses the chain, as a missing library
 /// would silently change which section, bolt or grade a designation selects) and retagged as
 /// the project layer; the firm layer is loaded from `config_dir`'s `libraries/` (`None` is the
-/// current user's). The neutral environment joins last. Every namespace — profiles, fasteners
-/// and materials — builds its own resolver over the same chain.
+/// current user's). The neutral environment joins last. A copy whose folder survives without
+/// its `environment.usda` cannot be read and does not refuse — an honest chain resolves from
+/// firm and neutral — but it is reported in [`ProjectChain::environment_lost`] rather than
+/// silently dropped. Every namespace — profiles, fasteners and materials — builds its own
+/// resolver over the same chain.
 pub fn project_library_chain(
     store: &std::path::Path,
     config_dir: Option<&std::path::Path>,
@@ -1288,24 +1313,34 @@ pub fn project_library_chain(
     let mut fastener_sources = Vec::new();
     let mut material_sources = Vec::new();
     let mut environment = None;
-    if let Some(file) = crate::project::project_environment_file(store) {
-        let file = file
-            .to_str()
-            .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
-        let copy = load_environment(file)?;
-        environment = Some(copy.info);
-        sources.extend(copy.sources.into_iter().map(|s| Source {
-            layer: LAYER_PROJECT,
-            ..s
-        }));
-        fastener_sources.extend(copy.fastener_sources.into_iter().map(|s| Source {
-            layer: LAYER_PROJECT,
-            ..s
-        }));
-        material_sources.extend(copy.material_sources.into_iter().map(|s| Source {
-            layer: LAYER_PROJECT,
-            ..s
-        }));
+    let mut environment_lost = None;
+    match crate::project::project_environment_copy(store) {
+        crate::project::ProjectEnvironmentCopy::Present(file) => {
+            let file = file
+                .to_str()
+                .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
+            let copy = load_environment(file)?;
+            environment = Some(copy.info);
+            sources.extend(copy.sources.into_iter().map(|s| Source {
+                layer: LAYER_PROJECT,
+                ..s
+            }));
+            fastener_sources.extend(copy.fastener_sources.into_iter().map(|s| Source {
+                layer: LAYER_PROJECT,
+                ..s
+            }));
+            material_sources.extend(copy.material_sources.into_iter().map(|s| Source {
+                layer: LAYER_PROJECT,
+                ..s
+            }));
+        }
+        crate::project::ProjectEnvironmentCopy::Incomplete(file) => {
+            environment_lost = Some(EnvironmentCopyLost {
+                path: file.to_string_lossy().into_owned(),
+                message: "the project's environment copy has lost its environment.usda; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with",
+            });
+        }
+        crate::project::ProjectEnvironmentCopy::Absent => {}
     }
     let firm = load_firm(config_dir);
     let firm_refused = firm.refused;
@@ -1320,6 +1355,7 @@ pub fn project_library_chain(
         fastener_lookup,
         material_lookup,
         environment,
+        environment_lost,
         firm_refused,
     })
 }

@@ -51,14 +51,18 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use steel::engine::bolt::Bounds;
 use steel::engine::bolt::Faces;
+use steel::engine::bolt::GeneratedMemberHole;
+use steel::engine::bolt::MemberHoleInput;
+use steel::engine::committed::MemberRecord;
 use steel::engine::committed::PlateRecord;
+use steel::engine::member::{evaluate_member, member_quantities};
 use steel::engine::transaction::PriorOp;
 use steel::engine::weld::{PartKind, Parts};
 use steel::layer as steel_layer;
 use steel::layer::{Bolt as LayerBolt, BoltGroup as LayerBoltGroup};
 use steel::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup, HoleKind,
-    HoleRecord, MAX_HOLES, UpdateBoltGroup,
+    HoleRecord, MAX_HOLES, MemberHoleRecord, UpdateBoltGroup,
 };
 
 /// Identities of one A05 call beyond the command itself.
@@ -123,8 +127,13 @@ struct Model {
     /// The world placement of every part: the frame a generated hole's polygon is mapped into
     /// (A14.4); any rotation is carried into the plate-local frame (issue 555).
     placements: BTreeMap<ElementId, Placement>,
-    /// Identities of the decoded beams and columns: a generating group refuses them until G14.
+    /// Identities of the decoded beams and columns: the plate hole decision skips them, the
+    /// member decision decides them.
     members: std::collections::BTreeSet<ElementId>,
+    /// The member-side facts the generated member-hole decision reads (the F06 member-hole
+    /// amendment): world faces, world frame and origin, the replay's element frame and the
+    /// straight-member flag, built once per decoded member.
+    member_inputs: BTreeMap<ElementId, MemberHoleInput>,
 }
 
 fn bolt_of(
@@ -311,13 +320,15 @@ pub(crate) fn bolt_group_of(
 
 /// The geometry the placement and hole decisions read: conservative world bounds of every
 /// decoded part, the world triangles of its stored scene mesh (the face-exact grip geometry,
-/// issue 519 defect B), its world placement, the member identities and every plate's local box.
+/// issue 519 defect B), its world placement, the member identities and every plate's local box,
+/// and the member-side facts the member hole decision reads.
 type Geometry = (
     BTreeMap<ElementId, Bounds>,
     BTreeMap<ElementId, Faces>,
     BTreeMap<ElementId, Placement>,
     std::collections::BTreeSet<ElementId>,
     BTreeMap<ElementId, Bounds>,
+    BTreeMap<ElementId, MemberHoleInput>,
 );
 
 /// The world-space triangles of a part's stored scene mesh, turned by its placement. A mesh
@@ -432,6 +443,7 @@ fn world_geometry_for(
     let mut placements = BTreeMap::new();
     let mut members = std::collections::BTreeSet::new();
     let mut slabs = BTreeMap::new();
+    let mut member_inputs = BTreeMap::new();
     let profiles = profile_lookup(&decoded.definitions);
     for (authored, mesh) in &decoded.plates {
         // A framed (out-of-plane contour) plate carries its material along its contour
@@ -520,8 +532,16 @@ fn world_geometry_for(
             faces.insert(authored.id, part_faces);
         }
         placements.insert(authored.id, placement);
+        member_inputs.insert(
+            authored.id,
+            steel::engine::member::member_hole_input(
+                authored,
+                &profiles(&authored.profile)?,
+                faces.get(&authored.id).cloned().unwrap_or_default(),
+            )?,
+        );
     }
-    Ok((bounds, faces, placements, members, slabs))
+    Ok((bounds, faces, placements, members, slabs, member_inputs))
 }
 
 fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
@@ -548,6 +568,7 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
         members: std::collections::BTreeSet::new(),
         faces: BTreeMap::new(),
         slabs: BTreeMap::new(),
+        member_inputs: BTreeMap::new(),
     };
     for prim in &prims {
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
@@ -587,12 +608,13 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
     model.bolts.sort_by_key(|b| b.id);
     model.groups.sort_by_key(|g| g.id);
     let decoded = decode(&reader, &opened, control)?;
-    let (bounds, faces, placements, members, slabs) = world_geometry(&decoded)?;
+    let (bounds, faces, placements, members, slabs, member_inputs) = world_geometry(&decoded)?;
     model.bounds = bounds;
     model.slabs = slabs;
     model.faces = faces;
     model.placements = placements;
     model.members = members;
+    model.member_inputs = member_inputs;
     model.definitions = decoded.definitions;
     Ok(model)
 }
@@ -738,27 +760,33 @@ fn derived_op_id(op: OpId, index: usize) -> Result<OpId, Refusal> {
     Ok(OpId::from_uuid(uuid))
 }
 
-/// The changes a group's generated holes add (A14.4): the complete new record set and the
-/// rewritten mesh of every affected plate, with the footprint writes the records cost. The
-/// records named by `keep` are kept; an update passes the filter that drops the group's old
-/// records, so regeneration and removal share one path. A hole that does not fit (outside the
-/// outline, into another record, past the record or ordinal cap) refuses the whole command
-/// and nothing is written.
+/// The changes a group's generated holes add (A14.4 and the F06 member-hole amendment): the
+/// complete new record set and the rewritten mesh of every affected plate and member, with the
+/// footprint writes the records cost. The records named by `keep`/`keep_member` are kept; an
+/// update passes the filters that drop the group's old records, so regeneration and removal
+/// share one path. A hole that does not fit (outside the outline or the walls, into another
+/// record, past the record or ordinal cap) refuses the whole command and nothing is written.
+#[allow(clippy::too_many_arguments)]
 fn hole_changes(
     op_id: OpId,
     group: ElementId,
     holes: &[steel::engine::bolt::GeneratedHole],
+    member_holes: &[GeneratedMemberHole],
     keep: &dyn Fn(&HoleRecord) -> bool,
+    keep_member: &dyn Fn(&MemberHoleRecord) -> bool,
     base_request: &OpenRequest,
     control: &Control,
     footprint: Footprint,
 ) -> Result<(Vec<Change>, Footprint), Refusal> {
     let owned: Vec<_> = holes.iter().map(|hole| (group, hole)).collect();
+    let member_owned: Vec<_> = member_holes.iter().map(|hole| (group, hole)).collect();
     regenerated_holes(
         op_id,
         &owned,
+        &member_owned,
         &BTreeSet::from([group]),
         keep,
+        keep_member,
         base_request,
         control,
         footprint,
@@ -767,14 +795,19 @@ fn hole_changes(
 }
 
 /// [`hole_changes`] over several groups at once, each new hole tagged with its owning group,
-/// so groups sharing a plate rewrite its record set once (issue 544). `moved` replaces the
-/// head's authored record of that plate (a part the same command moves).
+/// so groups sharing a part rewrite its record set once (issue 544). `moved` replaces the
+/// head's authored record of that plate (a part the same command moves). The record
+/// identities stay a pure function of the operation: the derived ids take one shared serial
+/// over the plates first, then the members, each in decision order, so a retry authors the
+/// same identities.
 #[allow(clippy::too_many_arguments)]
 fn regenerated_holes(
     op_id: OpId,
     owned: &[(ElementId, &steel::engine::bolt::GeneratedHole)],
+    member_owned: &[(ElementId, &GeneratedMemberHole)],
     regenerating: &BTreeSet<ElementId>,
     keep: &dyn Fn(&HoleRecord) -> bool,
+    keep_member: &dyn Fn(&MemberHoleRecord) -> bool,
     base_request: &OpenRequest,
     control: &Control,
     footprint: Footprint,
@@ -783,8 +816,9 @@ fn regenerated_holes(
     let mut reader = Reader::default();
     let opened = reader.open(base_request.clone(), control)?;
     let decoded = decode(&reader, &opened, control)?;
-    let (plates, _) = evaluate_decoded(&decoded)?;
+    let (plates, members) = evaluate_decoded(&decoded)?;
     let materials = material_lookup(&decoded.definitions);
+    let profiles = profile_lookup(&decoded.definitions);
     let mut by_part: BTreeMap<ElementId, Vec<(ElementId, &steel::engine::bolt::GeneratedHole)>> =
         BTreeMap::new();
     for (group, hole) in owned {
@@ -800,6 +834,24 @@ fn regenerated_holes(
             .any(|r| r.owner.is_some_and(|owner| regenerating.contains(&owner)))
         {
             by_part.entry(plate.authored.id).or_default();
+        }
+    }
+    let mut by_member: BTreeMap<ElementId, Vec<(ElementId, &GeneratedMemberHole)>> =
+        BTreeMap::new();
+    for (group, hole) in member_owned {
+        by_member
+            .entry(hole.part)
+            .or_default()
+            .push((*group, *hole));
+    }
+    for member in &members {
+        if member
+            .authored
+            .hole_records
+            .iter()
+            .any(|r| r.owner.is_some_and(|owner| regenerating.contains(&owner)))
+        {
+            by_member.entry(member.authored.id).or_default();
         }
     }
     let mut changes = Vec::new();
@@ -859,6 +911,80 @@ fn regenerated_holes(
             quantities,
         };
         changes.push(steel_layer::hole_records(
+            part.to_string(),
+            next.hole_records.clone(),
+        ));
+        changes.push(part_mesh_change(&record)?);
+        footprint = footprint.union(Footprint::for_update(
+            part, false, false, true, false, None,
+        )?)?;
+    }
+    for (part, part_holes) in by_member {
+        let head = members
+            .iter()
+            .find(|m| m.authored.id == part)
+            .ok_or_else(|| integrity("a generating group named a member the head does not hold"))?;
+        let mut next = head.authored.clone();
+        next.hole_records.retain(keep_member);
+        let next_ordinal = decoded
+            .member_hole_history
+            .get(&part)
+            .map_or(0usize, |h| usize::from(h.next_ordinal));
+        for (index, (group, hole)) in part_holes.into_iter().enumerate() {
+            let ordinal = next_ordinal + index;
+            if next.hole_records.len() >= MAX_HOLES {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "hole",
+                    "more than 64 holes on one member",
+                )
+                .with_rule("DV-LIM-001")
+                .into());
+            }
+            if ordinal > 999 {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "hole.ordinal",
+                    "hole ordinal capacity exhausted",
+                )
+                .into());
+            }
+            let record_id = derived_op_id(op_id, serial)?;
+            serial += 1;
+            // The authoritative polygon comes from the accepted member-hole generator, the
+            // same one a hand-placed `add-hole` stores (the F06 member-hole amendment).
+            let polygon_mm =
+                steel::model::command::HoleSpec::Member(steel::model::command::MemberHole {
+                    axis_point_mm: hole.axis_point_mm,
+                    axis_direction: hole.axis_direction,
+                    extent: hole.extent,
+                    diameter_mm: hole.diameter_mm,
+                })
+                .polygon()?;
+            next.hole_records.push(MemberHoleRecord {
+                operation_id: record_id,
+                ordinal,
+                axis_point_mm: hole.axis_point_mm,
+                axis_direction: hole.axis_direction,
+                extent: hole.extent,
+                polygon_mm,
+                owner: Some(group),
+            });
+        }
+        next.hole_records.sort_by_key(|r| r.ordinal);
+        // The replay is the refusal gate: a hole that does not fit (a footprint past a wall
+        // face's flat part, a blind range, a meeting with another record) refuses the whole
+        // command, and the member keeps its last valid state.
+        let profile = profiles(&next.profile)?;
+        let body = evaluate_member(&next, profile)?;
+        let quantities =
+            member_quantities(&body, next.material.as_ref().map(&materials).transpose()?)?;
+        let record = MemberRecord {
+            authored: next.clone(),
+            body,
+            quantities,
+        };
+        changes.push(steel_layer::member_holes(
             part.to_string(),
             next.hole_records.clone(),
         ));
@@ -1046,7 +1172,8 @@ pub fn create_bolt_group(
             .parts
             .create_bolt_group(command, &model.bounds, &model.faces)?;
     // The hole decision shares the transaction: generate writes one record per crossing
-    // fastener on every plate, none writes no part (A14.4).
+    // fastener on every plate and on every member whose stack a fastener crosses, none
+    // writes no part (A14.4, the F06 member-hole amendment).
     let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
         &placed.row(),
@@ -1054,14 +1181,22 @@ pub fn create_bolt_group(
         &model.placements,
         &model.members,
     )?;
-    let (hole_writes, footprint) = if holes.is_empty() {
+    let member_holes = steel::engine::bolt::generate_member_holes(
+        &command.inputs,
+        &placed.row(),
+        &placed.seats_mm,
+        &model.member_inputs,
+    )?;
+    let (hole_writes, footprint) = if holes.is_empty() && member_holes.is_empty() {
         (Vec::new(), footprint)
     } else {
         hole_changes(
             context.op_id,
             command.new_id,
             &holes,
+            &member_holes,
             &|_: &HoleRecord| true,
+            &|_: &MemberHoleRecord| true,
             &base_request,
             &control,
             footprint,
@@ -1222,24 +1357,33 @@ pub fn update_bolt_group(
         &model.placements,
         &model.members,
     )?;
+    let member_holes = steel::engine::bolt::generate_member_holes(
+        &command.inputs,
+        &placed.row(),
+        &placed.seats_mm,
+        &model.member_inputs,
+    )?;
     let generated_before = model
         .groups
         .iter()
         .find(|g| g.id == command.target_id)
         .is_some_and(|g| g.spec.hole_mode == "generate");
-    let (hole_writes, footprint) = if holes.is_empty() && !generated_before {
-        (Vec::new(), footprint)
-    } else {
-        hole_changes(
-            context.op_id,
-            command.target_id,
-            &holes,
-            &|record: &HoleRecord| record.owner != Some(command.target_id),
-            &base_request,
-            &control,
-            footprint,
-        )?
-    };
+    let (hole_writes, footprint) =
+        if holes.is_empty() && member_holes.is_empty() && !generated_before {
+            (Vec::new(), footprint)
+        } else {
+            hole_changes(
+                context.op_id,
+                command.target_id,
+                &holes,
+                &member_holes,
+                &|record: &HoleRecord| record.owner != Some(command.target_id),
+                &|record: &MemberHoleRecord| record.owner != Some(command.target_id),
+                &base_request,
+                &control,
+                footprint,
+            )?
+        };
     let schema = schema_identity()?;
     let mut resources = Vec::new();
     if !model.definitions.contains_key(&resource.digest) {
@@ -1509,9 +1653,24 @@ pub(crate) fn follow_moved_part(
         model.bounds.insert(moved, [low, high]);
     }
     model.placements.insert(moved, *new);
+    // The moved member's decision facts follow the same rigid delta: its world frame axes
+    // and origin are carried as vectors and points, and its faces are the carried ones. The
+    // element frame and the straight flag do not move.
+    if let Some(input) = model.member_inputs.get_mut(&moved) {
+        input.frame = [
+            carry_vector(input.frame[0]),
+            carry_vector(input.frame[1]),
+            carry_vector(input.frame[2]),
+        ];
+        input.origin_mm = carry(input.origin_mm);
+        if let Some(carried) = model.faces.get(&moved) {
+            input.faces = carried.clone();
+        }
+    }
     let mut changes = Vec::new();
     let mut footprint = Footprint::from_entries(&[], &[])?;
     let mut owned_holes = Vec::new();
+    let mut owned_member_holes = Vec::new();
     let mut regenerating = BTreeSet::new();
     for group in &groups {
         let spec = &group.spec;
@@ -1583,9 +1742,16 @@ pub(crate) fn follow_moved_part(
             &model.placements,
             &model.members,
         )?;
-        if !holes.is_empty() || spec.hole_mode == "generate" {
+        let member_holes = steel::engine::bolt::generate_member_holes(
+            &command.inputs,
+            &placed.row(),
+            &placed.seats_mm,
+            &model.member_inputs,
+        )?;
+        if !holes.is_empty() || !member_holes.is_empty() || spec.hole_mode == "generate" {
             regenerating.insert(group.id);
             owned_holes.extend(holes.into_iter().map(|hole| (group.id, hole)));
+            owned_member_holes.extend(member_holes.into_iter().map(|hole| (group.id, hole)));
         }
         changes.push(steel_layer::replace_bolt_group(
             group.id.to_string(),
@@ -1594,11 +1760,14 @@ pub(crate) fn follow_moved_part(
     }
     if !regenerating.is_empty() {
         let owned: Vec<_> = owned_holes.iter().map(|(g, h)| (*g, h)).collect();
+        let member_owned: Vec<_> = owned_member_holes.iter().map(|(g, h)| (*g, h)).collect();
         let (hole_writes, next) = regenerated_holes(
             op_id,
             &owned,
+            &member_owned,
             &regenerating,
             &|record: &HoleRecord| !record.owner.is_some_and(|o| regenerating.contains(&o)),
+            &|record: &MemberHoleRecord| !record.owner.is_some_and(|o| regenerating.contains(&o)),
             base_request,
             control,
             footprint,

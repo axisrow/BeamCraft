@@ -478,9 +478,10 @@ impl ChangeHook for SetMemberHoles {
                 .collect::<Vec<_>>(),
             cut_history::Family::MemberHole,
         )?;
-        // The nine record attributes, always together: the authoritative polygons of
-        // every record and their member-frame axis points, directions, extents, ids and
-        // ordinals (A04.2). A through extent stores zero range values.
+        // The ten record attributes, always together: the authoritative polygons of
+        // every record and their member-frame axis points, directions, extents, ids,
+        // ordinals and generating groups (A04.2, the F06 member-hole amendment). A
+        // through extent stores zero range values; a hand-placed hole stores no owner.
         let mut flat = Vec::new();
         let mut counts = Vec::new();
         let mut ids = Vec::new();
@@ -490,6 +491,7 @@ impl ChangeHook for SetMemberHoles {
         let mut extents = Vec::new();
         let mut from = Vec::new();
         let mut to = Vec::new();
+        let mut owners = Vec::new();
         for record in records {
             flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
             counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
@@ -504,6 +506,10 @@ impl ChangeHook for SetMemberHoles {
             };
             from.push(start);
             to.push(end);
+            owners.push(match record.owner {
+                Some(group) => group.to_string(),
+                None => String::new(),
+            });
         }
         for (name, ty, v) in [
             ("steel:mhole:pointsMm", "double3[]", points(&flat)),
@@ -546,6 +552,11 @@ impl ChangeHook for SetMemberHoles {
                 "steel:mhole:extentToMm",
                 "double[]",
                 sdf::Value::DoubleVec(to),
+            ),
+            (
+                "steel:mhole:generatedBy",
+                "string[]",
+                sdf::Value::StringVec(owners),
             ),
         ] {
             attr(authored, &p, name, ty, v)?;

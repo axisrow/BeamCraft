@@ -331,10 +331,45 @@ fn scoped_root(names: &[String], project: &ProjectId) -> String {
     )
 }
 
+/// The state of the project's own copy of its environment: the `environment/` folder only
+/// `create-project --environment` makes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectEnvironmentCopy {
+    /// The project carries a copy whose `environment.usda` is present.
+    Present(PathBuf),
+    /// The project has no `environment/` entry: it was never created with an environment.
+    /// A plain project is a normal state, not a loss.
+    Absent,
+    /// The `environment/` entry exists but its `environment.usda` does not. The folder proves
+    /// an environment was chosen at creation, so the copy is demonstrably incomplete — its
+    /// libraries were lost or not carried along — and a chain that falls back to firm and
+    /// neutral must report it instead of substituting sections silently (#628).
+    Incomplete(PathBuf),
+}
+
+/// Reports the state of the project's own environment copy at `dir`.
+#[must_use]
+pub fn project_environment_copy(dir: &Path) -> ProjectEnvironmentCopy {
+    let folder = dir.join(PROJECT_ENVIRONMENT_DIR);
+    let file = folder.join(ENVIRONMENT_FILE);
+    if file.is_file() {
+        return ProjectEnvironmentCopy::Present(file);
+    }
+    if folder.exists() {
+        return ProjectEnvironmentCopy::Incomplete(file);
+    }
+    ProjectEnvironmentCopy::Absent
+}
+
 /// The environment file of the project at `dir`, when the project was created with one.
+/// An incomplete copy — the `environment/` folder without its `environment.usda` — is `None`
+/// here: the file cannot be read; [`project_environment_copy`] tells that state apart from a
+/// project that never had an environment.
 pub fn project_environment_file(dir: &Path) -> Option<PathBuf> {
-    let file = dir.join(PROJECT_ENVIRONMENT_DIR).join(ENVIRONMENT_FILE);
-    file.is_file().then_some(file)
+    match project_environment_copy(dir) {
+        ProjectEnvironmentCopy::Present(file) => Some(file),
+        ProjectEnvironmentCopy::Absent | ProjectEnvironmentCopy::Incomplete(_) => None,
+    }
 }
 
 /// Copies the environment `file`, the profile, fastener and material libraries it lists and its
@@ -398,6 +433,33 @@ mod tests {
         ] {
             assert!(check_project_name(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_environment_copy_states_are_told_apart() {
+        let dir = std::env::temp_dir().join(format!("bim-copy-state-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // A plain project: no environment folder at all, not a loss.
+        assert_eq!(
+            project_environment_copy(&dir),
+            ProjectEnvironmentCopy::Absent
+        );
+        // A portable project: the copy is present and names its file.
+        let folder = dir.join(PROJECT_ENVIRONMENT_DIR);
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join(ENVIRONMENT_FILE), "#usda 1.0\n").unwrap();
+        assert_eq!(
+            project_environment_copy(&dir),
+            ProjectEnvironmentCopy::Present(folder.join(ENVIRONMENT_FILE))
+        );
+        // The recognizable loss: the folder proves an environment was chosen, the file is gone.
+        fs::remove_file(folder.join(ENVIRONMENT_FILE)).unwrap();
+        assert_eq!(
+            project_environment_copy(&dir),
+            ProjectEnvironmentCopy::Incomplete(folder.join(ENVIRONMENT_FILE))
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -102,6 +102,7 @@ mod pmass;
 mod polybeam;
 mod prim_naming;
 mod project_claim;
+mod project_environment_warning;
 mod publication_evidence;
 mod publication_guard;
 mod rebase;

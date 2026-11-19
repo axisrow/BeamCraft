@@ -776,7 +776,7 @@ fn decode_cut(prim: &Prim) -> Result<Vec<CutRecord>, Refusal> {
 /// increasing and every id a full UUIDv7. A damaged or half-authored record is an integrity
 /// error, never a default.
 fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refusal> {
-    const FIELDS: [&str; 9] = [
+    const FIELDS: [&str; 10] = [
         "steel:mhole:pointsMm",
         "steel:mhole:vertexCounts",
         "steel:mhole:operationIds",
@@ -786,6 +786,7 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         "steel:mhole:extents",
         "steel:mhole:extentFromMm",
         "steel:mhole:extentToMm",
+        "steel:mhole:generatedBy",
     ];
     let bad = || integrity("committed member has inconsistent hole record attributes");
     let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
@@ -860,6 +861,18 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
     {
         return Err(bad());
     }
+    // The generating bolt group of each record (the F06 member-hole amendment); the empty
+    // string is a hand-placed one.
+    let owners: Vec<String> = match property(prim, FIELDS[9]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    if polygons.len() != owners.len() {
+        return Err(bad());
+    }
     polygons
         .into_iter()
         .zip(ids)
@@ -867,8 +880,9 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         .zip(axis_points)
         .zip(directions)
         .zip(extents)
+        .zip(owners)
         .map(
-            |(((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent)| {
+            |((((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent), owner)| {
                 Ok(MemberHoleRecord {
                     operation_id: OpId::parse(&id).map_err(|_| bad())?,
                     ordinal,
@@ -876,6 +890,10 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
                     axis_direction,
                     extent,
                     polygon_mm,
+                    owner: match owner.as_str() {
+                        "" => None,
+                        text => Some(ElementId::parse(text).map_err(|_| bad())?),
+                    },
                 })
             },
         )

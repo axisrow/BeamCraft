@@ -248,14 +248,15 @@ pub(super) fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
 pub(super) const MAX_HOLES: usize = 64;
 pub(super) const MAX_HOLE_POINTS: usize = 1024;
 
-/// The optional member-hole operation records of a loaded beam or column (A04.2): all nine
+/// The optional member-hole operation records of a loaded beam or column (A04.2): all ten
 /// attributes or none, the counts add up to the points, every polygon has at least three
 /// in-cap points with every `z` zero, there is one full UUIDv7 and one strictly increasing
 /// non-negative ordinal per polygon, each axis point is finite and in cap, each axis direction
 /// is finite, in cap and stays in the section plane with a nonzero transverse part (the
-/// magnitude names nothing; the replay normalizes the axis line), and each extent is `through`
-/// (zero range) or a `from < to` range. Winding, placement and fit are the engine's decision
-/// on replay, never re-derived here.
+/// magnitude names nothing; the replay normalizes the axis line), each extent is `through`
+/// (zero range) or a `from < to` range, and every generated record names its full generating
+/// bolt group while a hand-placed hole stores the empty string. Winding, placement and fit are
+/// the engine's decision on replay, never re-derived here.
 pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
     let names = [
@@ -268,6 +269,7 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         "steel:mhole:extents",
         "steel:mhole:extentFromMm",
         "steel:mhole:extentToMm",
+        "steel:mhole:generatedBy",
     ];
     let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -294,14 +296,28 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     let Value::Array(to) = required(prim, "steel:mhole:extentToMm", "double[]")? else {
         return Err(invalid());
     };
+    let Value::Array(owners) = required(prim, "steel:mhole:generatedBy", "string[]")? else {
+        return Err(invalid());
+    };
     if counts.len() > MAX_HOLES
         || counts.len() != ids.len()
         || counts.len() != ordinals.len()
         || counts.len() != extents.len()
         || counts.len() != from.len()
         || counts.len() != to.len()
+        || counts.len() != owners.len()
     {
         return Err(invalid());
+    }
+    // Every generated record names its full generating bolt group; a hand-placed hole stores
+    // the empty string (the F06 member-hole amendment section 3).
+    for owner in owners {
+        let Value::Text(owner) = owner else {
+            return Err(invalid());
+        };
+        if !owner.is_empty() && !uuid7(owner) {
+            return Err(invalid());
+        }
     }
     let polygons = points(prim, "steel:mhole:pointsMm")?;
     let axis = points(prim, "steel:mhole:axisPointsMm")?;
