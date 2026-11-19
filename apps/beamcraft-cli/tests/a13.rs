@@ -1090,6 +1090,49 @@ fn a_member_polygon_cut_slots_an_shs_end_to_end() {
     let kind = f.rejected("remove-hole", &["--id", &member, "--operation-id", OP_A]);
     assert_eq!(kind, "INVALID_ARGUMENT");
 
+    // A retired record identity stays retired: a hole removed from this member cannot name
+    // the member polygon cut that follows it (one project-wide record identity space).
+    f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            "01b00000-0000-7000-8000-0000000000f7",
+            "--axis-point",
+            "0,0,5000",
+            "--axis-direction",
+            "0,1,0",
+            "--diameter",
+            "40",
+        ],
+    );
+    f.ok(
+        "remove-hole",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            "01b00000-0000-7000-8000-0000000000f7",
+        ],
+    );
+    let kind = f.rejected(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            "01b00000-0000-7000-8000-0000000000f7",
+            "--axis-point",
+            "0,0,5000",
+            "--axis-direction",
+            "0,1,0",
+            "--polygon",
+            "-10,-10;-10,10;10,10;10,-10",
+        ],
+    );
+    assert_eq!(kind, "DUPLICATE_ID");
+
     // The undo returns the head member; the redo restores both cuts (the draft's own slot at
     // another axis position composes with the head's along the same section direction).
     let draft = f.draft();

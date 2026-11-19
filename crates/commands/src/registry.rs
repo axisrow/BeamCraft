@@ -892,6 +892,10 @@ pub const COMMANDS: &[Command] = &[
             req("--id", "UUID"),
             req("--operation-id", "UUID"),
             req("--polygon", "X,Y;X,Y;..."),
+            // The member form: the polygon lives in the member-hole frame named by the pair
+            // (through cut, a section-plane direction), the plate form takes neither.
+            opt("--axis-point", "U,V,W"),
+            opt("--axis-direction", "X,Y,Z"),
         ],
     ),
     entry(
