@@ -934,8 +934,8 @@ mod tests {
             .content_fingerprint()
             .unwrap()
         );
-        // The path of the new file is not part of the request: the same bytes are one update
-        // however they were named.
+        // The path text itself is never stored, but the source label (the file name, as
+        // `pin_source` derives it) is part of the request, as the two asserts above show.
         // A pin that is not admitted is refused before any digest exists.
         let mut bad = next;
         bad.bytes = 0;
