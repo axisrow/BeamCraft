@@ -339,9 +339,10 @@ pub fn member_gross_signature(
 
 /// Signature of the NET inputs of a member: the gross signature and the list of operations, each
 /// identified by the digest of its own authored content ([`member_operation_digests`]). A member
-/// without operations hashes the empty list, so its net signature keeps its earlier bytes; a
-/// cut, bolt hole or cope adds its digest here and changes the net signature without touching
-/// the gross one.
+/// without operations hashes the empty list, so its net signature keeps its earlier bytes. The
+/// plane cuts are already inputs of the gross signature ([`push_cuts`]); the member-hole records
+/// are not, so a bolt hole or cope adds its digest here and changes the net signature without
+/// touching the gross one.
 pub fn member_net_signature(gross: &ContentDigest, operations: &[ContentDigest]) -> ContentDigest {
     let mut bytes = Vec::with_capacity(48 + 32 * operations.len());
     bytes.extend_from_slice(b"BeamCraft/PMass/MemberNet/v1\0");
@@ -353,9 +354,11 @@ pub fn member_net_signature(gross: &ContentDigest, operations: &[ContentDigest])
     digest(&bytes)
 }
 
-/// The content digest of one authored plane-cut record (A03): the cutting geometry only. The
-/// record identity and ordinal are not shape inputs, so two records with the same plane and
-/// kept side hash the same, and a record that is renumbered stays current.
+/// The content digest of one authored plane-cut record (A03): the cutting geometry only, so two
+/// records with the same plane and kept side hash the same. The digest binds the content beyond
+/// what [`push_cuts`] already hashes into the gross signature; a cut's ordinal is a gross input
+/// there, so a renumbered cut moves the gross signature and the record reads stale for that
+/// reason, not through this digest.
 fn cut_operation_digest(record: &CutRecord) -> ContentDigest {
     let mut bytes = Vec::with_capacity(64);
     bytes.extend_from_slice(b"BeamCraft/A03/CutRecordContent/v1\0");
@@ -368,8 +371,9 @@ fn cut_operation_digest(record: &CutRecord) -> ContentDigest {
 }
 
 /// The content digest of one authored member-hole record (A04.2): the member-frame cutter only.
-/// The record identity and ordinal are not shape inputs; the polygon carries its vertex count,
-/// and the extent distinguishes a through cut from a ranged one.
+/// A member-hole record enters no other signature, so its identity and ordinal are not shape
+/// inputs and a renumbered hole stays current; the polygon carries its vertex count, and the
+/// extent distinguishes a through cut from a ranged one.
 fn member_hole_operation_digest(record: &MemberHoleRecord) -> ContentDigest {
     let mut bytes = Vec::with_capacity(96 + 16 * record.polygon_mm.len());
     bytes.extend_from_slice(b"BeamCraft/A04-2/MemberHoleRecordContent/v1\0");
@@ -717,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn a_members_records_enter_its_net_signature_and_never_the_gross_one() {
+    fn a_members_hole_records_enter_its_net_signature_and_never_the_gross_one() {
         let profile = i_profile(None);
         // One quantity set for every variant: the signatures bind the authored inputs and the
         // algorithm label, not the values, and the test's records need not replay to a mesh.
@@ -726,7 +730,8 @@ mod tests {
         let mut holed = member();
         holed.hole_records.push(member_hole(100.0, 3000.0));
         let holed_record = member_record(&holed, &profile, &quantities);
-        // The gross signature knows nothing of the record; the net signature binds it.
+        // The gross signature knows nothing of a hole record (a plane cut, by contrast, is a
+        // `push_cuts` input of the gross signature already); the net signature binds the hole.
         assert_eq!(holed_record.gross_signature, plain.gross_signature);
         assert_ne!(holed_record.shape_signature, plain.shape_signature);
         // The expected record is exactly net(gross, operation digests) in replay order.
@@ -756,7 +761,7 @@ mod tests {
         assert_eq!(
             member_operation_digests(&retagged),
             holed_digests,
-            "the record identity and ordinal are not shape inputs"
+            "a hole record's identity and ordinal are not shape inputs"
         );
         // A plane cut adds its own digest; the order is the replay order (cuts, then holes).
         retagged.cuts.push(CutRecord {

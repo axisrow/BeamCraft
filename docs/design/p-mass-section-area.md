@@ -86,7 +86,10 @@ cuts (A03) and the member-hole records (A04.2) over the certified body, measures
 `net = gross - removed` with the gross kept at the nominal `area x axis length`. The net signature
 carries the operations: `member_record` binds `member_net_signature(gross,
 &member_operation_digests(member))`, one content digest per authored record (plane cuts, then
-member holes, in replay order; a record's identity and ordinal are not shape inputs). The cut
+member holes, in replay order). For a member hole — the record the gross signature does not see —
+identity and ordinal are not shape inputs, so a renumbered hole stays current; a plane cut's
+ordinal is a `push_cuts` input of the gross signature already, so a renumbered cut reads stale
+through the gross signature. The cut
 algorithm label moved to its second generation (`kernel-a03-plane-cut-volume/2;ops-signed`)
 with this change, so a member record written earlier reads as a superseded value.
 
