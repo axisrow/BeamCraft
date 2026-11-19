@@ -340,7 +340,7 @@ pub fn member_gross_signature(
 /// Signature of the NET inputs of a member: the gross signature and the list of operations, each
 /// identified by the digest of its own authored content ([`member_operation_digests`]). A member
 /// without operations hashes the empty list, so its net signature keeps its earlier bytes. The
-/// plane cuts are already inputs of the gross signature ([`push_cuts`]); the member-hole records
+/// plane cuts are already inputs of the gross signature (`push_cuts`); the member-hole records
 /// are not, so a bolt hole or cope adds its digest here and changes the net signature without
 /// touching the gross one.
 pub fn member_net_signature(gross: &ContentDigest, operations: &[ContentDigest]) -> ContentDigest {
