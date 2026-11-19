@@ -13,7 +13,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -53,10 +53,11 @@ impl Fixture {
         assert_eq!(code, 0, "{args:?}: {body:?}");
         body
     }
-    fn code(&self, args: &[&str]) -> String {
-        let (code, body) = self.raw(args);
-        assert_eq!(code, 2, "{args:?}: {body:?}");
-        text(&body, "code")
+    /// One `run-script` invocation with the same clean environment `raw` gives its spawns:
+    /// the store commands amortize the environment copy's library parse into one process
+    /// (#738 P7), the commands' own work unchanged.
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines_without_config(&self.shared.root, store, lines)
     }
 }
 
@@ -157,165 +158,144 @@ fn a_project_created_with_the_china_environment_resolves_its_designations() {
     ]);
     let store = text(at(&created, &["project"]), "path");
 
-    // A designation of the pack resolves through the project's own environment copy, with no
-    // --library option naming any file.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "0,0,0",
-        "--end",
-        "6000,0,0",
-        "--profile",
-        "I10",
-        "--material",
-        "Steel",
-    ]);
-    assert_eq!(text(&made, "outcome"), "member_created");
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 1433.0);
-    // 1433 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 67.4943, 1e-9);
-
-    // A 2016-edition-only designation: I55a, catalogue area 13410 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "4000,0,0",
-        "--end",
-        "4000,0,6000",
-        "--profile",
-        "I55a",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 13410.0);
-    close(num(&q, &["mass", "kg"]), 631.611, 1e-9);
-
-    // The largest beam: I63c, catalogue area 17980 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "8000,0,0",
-        "--end",
-        "14000,0,0",
-        "--profile",
-        "I63c",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 17980.0);
-    close(num(&q, &["mass", "kg"]), 846.858, 1e-9);
-
-    // The channel series resolves beside the beams: C5, catalogue area 692.5 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "16000,0,0",
-        "--end",
-        "22000,0,0",
-        "--profile",
-        "C5",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 692.5);
-    close(num(&q, &["mass", "kg"]), 32.61675, 1e-9);
-
-    // The largest channel: C40c, catalogue area 9104 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "24000,0,0",
-        "--end",
-        "24000,0,6000",
-        "--profile",
-        "C40c",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 9104.0);
-    close(num(&q, &["mass", "kg"]), 428.7984, 1e-9);
-
-    // The GB/T 11263-2017 H-section pack of the same environment resolves through one series
-    // designation per family: HW100x100 (2158 mm2), HM594x302 (21710 mm2) and the deepest
-    // narrow beam HN1000x300 (39510 mm2), each as a 4 m column.
-    for (profile, area) in [
-        ("HW100x100", 2158.0),
-        ("HM594x302", 21710.0),
-        ("HN1000x300", 39510.0),
-    ] {
-        let made = f.ok(&[
-            "create-member",
-            "--store",
-            &store,
-            "--kind",
+    // The designation round rides one process: a designation of the pack resolves through
+    // the project's own environment copy, with no --library option naming any file, and
+    // every catalogue figure below is the standard's published value.
+    // kind, start, end, profile, catalogue area mm2, mass kg (area x length x 7850 kg/m3);
+    // the mass stays unchecked where the original round did not pin it.
+    type Designation = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        f64,
+        Option<f64>,
+    );
+    let cases: [Designation; 8] = [
+        ("beam", "0,0,0", "6000,0,0", "I10", 1433.0, Some(67.4943)),
+        // A 2016-edition-only designation.
+        (
             "column",
-            "--start",
+            "4000,0,0",
+            "4000,0,6000",
+            "I55a",
+            13410.0,
+            Some(631.611),
+        ),
+        // The largest beam.
+        (
+            "beam",
+            "8000,0,0",
+            "14000,0,0",
+            "I63c",
+            17980.0,
+            Some(846.858),
+        ),
+        // The channel series resolves beside the beams.
+        (
+            "beam",
+            "16000,0,0",
+            "22000,0,0",
+            "C5",
+            692.5,
+            Some(32.61675),
+        ),
+        // The largest channel.
+        (
+            "column",
+            "24000,0,0",
+            "24000,0,6000",
+            "C40c",
+            9104.0,
+            Some(428.7984),
+        ),
+        // The GB/T 11263-2017 H-section pack resolves through one series designation per
+        // family, each as a 4 m column.
+        (
+            "column",
             "16000,0,4000",
-            "--end",
             "16000,0,8000",
-            "--profile",
-            profile,
-            "--material",
-            "Steel",
-        ]);
-        let q = at(&made, &["member", "quantities"]).clone();
-        assert_eq!(text(&q, "area_source"), "catalogue", "{profile}");
-        assert_eq!(num(&q, &["section_area_mm2"]), area, "{profile}");
-    }
-
+            "HW100x100",
+            2158.0,
+            None,
+        ),
+        (
+            "column",
+            "16000,0,4000",
+            "16000,0,8000",
+            "HM594x302",
+            21710.0,
+            None,
+        ),
+        (
+            "column",
+            "16000,0,4000",
+            "16000,0,8000",
+            "HN1000x300",
+            39510.0,
+            None,
+        ),
+    ];
     // A designation the shipped series does not publish is refused, not silently substituted:
     // the channel series has no 18c or 22c variant (the official table leaves them out; the
     // flawed web transcription printed blank cells there), the I-beam series has no I33, and
     // the thin-wall (HT) and pile (HP) series of GB/T 11263-2017 are not in the H-section pack.
-    for absent in ["C18c", "C22c", "I33", "H200x100", "HT200x100", "HP250x250"] {
+    let absent = ["C18c", "C22c", "I33", "H200x100", "HT200x100", "HP250x250"];
+    let member = |profile: &str, kind: &str, start: &str, end: &str| {
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            kind,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--profile",
+            profile,
+            "--material",
+            "Steel",
+        ])
+    };
+    let mut lines: Vec<Scripted> = cases
+        .iter()
+        .map(|(kind, start, end, profile, _, _)| member(profile, kind, start, end))
+        .collect();
+    for designation in absent {
+        lines.push(Scripted::refused(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            designation,
+            "--material",
+            "Steel",
+        ]));
+    }
+    let replies = f.script(&store, &lines);
+    // Replies 0..8 carry the members, 8..14 the refusals (the refused lines commit nothing).
+    for (index, (_, _, _, profile, area, mass)) in cases.iter().enumerate() {
+        let made = &replies[index];
+        assert_eq!(text(made, "outcome"), "member_created", "{profile}");
+        let q = at(made, &["member", "quantities"]).clone();
+        assert_eq!(text(&q, "area_source"), "catalogue", "{profile}");
+        assert_eq!(num(&q, &["section_area_mm2"]), *area, "{profile}");
+        if let Some(want) = mass {
+            close(num(&q, &["mass", "kg"]), *want, 1e-9);
+        }
+    }
+    for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            f.code(&[
-                "create-member",
-                "--store",
-                &store,
-                "--kind",
-                "beam",
-                "--start",
-                "0,0,0",
-                "--end",
-                "6000,0,0",
-                "--profile",
-                absent,
-                "--material",
-                "Steel"
-            ]),
+            text(&replies[8 + index], "code"),
             "NOT_FOUND",
-            "{absent}"
+            "{designation}"
         );
     }
 

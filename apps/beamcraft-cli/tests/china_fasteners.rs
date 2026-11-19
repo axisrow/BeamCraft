@@ -14,7 +14,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use crate::support::{self, at, list, text};
+use crate::support::{self, Scripted, at, list, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -28,6 +28,10 @@ const LIBRARY: &str = concat!(
     "/../../environments/china/gb-fasteners.usda"
 );
 const ACTOR: &str = "0199e7a0-0000-7000-8000-0000000000d1";
+// The pinned element ids of the bolt round, so the whole round rides one process (#738 P7).
+const P1: &str = "0199e7a0-0000-7000-8000-00000000f0d1";
+const P2: &str = "0199e7a0-0000-7000-8000-00000000f0d2";
+const GROUP: &str = "0199e7a0-0000-7000-8000-00000000f0d3";
 
 struct Fixture {
     shared: support::StoreFixture,
@@ -63,18 +67,11 @@ impl Fixture {
         assert_eq!(code, 2, "{args:?}: {body:?}");
         text(&body, "code")
     }
-    fn plate(&self, store: &str, extra: &[&str]) -> String {
-        let mut args: Vec<&str> = vec![
-            "create-plate",
-            "--store",
-            store,
-            "--width",
-            "200",
-            "--length",
-            "200",
-        ];
-        args.extend_from_slice(extra);
-        text(at(&self.ok(&args), &["plate"]), "element_id")
+    /// One `run-script` invocation with the same clean environment `raw` gives its spawns:
+    /// the store commands amortize the environment copy's library parse into one process
+    /// (#738 P7), the commands' own work unchanged.
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines_without_config(&self.shared.root, store, lines)
     }
 }
 
@@ -291,57 +288,124 @@ fn a_project_created_with_the_china_environment_resolves_its_bolts() {
         "the project copy holds the GB fastener library"
     );
 
-    // A bolt designation of the set resolves through the project's own environment copy, with
-    // no --fastener-library option naming any file (BC-ENV-002). M16 through 2 x 20 mm needs
-    // grip 40 + washers 2 x 3 + head 10 + nut 14.8 + protrusion 5 = 75.8, so the declared
-    // lengths list answers 80.
-    let p1 = f.plate(&store, &["--thickness", "20", "--name", "P1"]);
-    let p2 = f.plate(
-        &store,
-        &[
+    // The bolt round rides one process (#738 P7): a bolt designation of the set resolves
+    // through the project's own environment copy, with no --fastener-library option naming
+    // any file (BC-ENV-002). M16 through 2 x 20 mm needs grip 40 + washers 2 x 3 + head 10 +
+    // nut 14.8 + protrusion 5 = 75.8, so the declared lengths list answers 80.
+    let parts = format!("{P1},{P2}");
+    let mut lines = vec![
+        Scripted::ok(&[
+            "create-plate",
+            "--store",
+            &store,
+            "--width",
+            "200",
+            "--length",
+            "200",
+            "--thickness",
+            "20",
+            "--name",
+            "P1",
+            "--new-id",
+            P1,
+        ]),
+        Scripted::ok(&[
+            "create-plate",
+            "--store",
+            &store,
+            "--width",
+            "200",
+            "--length",
+            "200",
             "--thickness",
             "20",
             "--name",
             "P2",
             "--translation",
             "0,0,20",
-        ],
-    );
-    let parts = format!("{p1},{p2}");
-    let made = f.ok(&[
-        "create-bolt-group",
-        "--store",
-        &store,
-        "--name",
-        "SE16",
-        "--parts",
-        &parts,
-        "--designation",
-        "M16",
-        "--point1",
-        "50,50,40",
-        "--point2",
-        "50,150,40",
-        "--plane-normal",
-        "0,0,-1",
-        "--offset-start",
-        "25",
-        "--count",
-        "2",
-        "--pitch",
-        "50",
-        "--hole-mode",
-        "none",
-    ]);
-    let groups = list(&made, "bolt_groups");
+            "--new-id",
+            P2,
+        ]),
+        Scripted::ok(&[
+            "create-bolt-group",
+            "--store",
+            &store,
+            "--name",
+            "SE16",
+            "--parts",
+            parts.as_str(),
+            "--designation",
+            "M16",
+            "--point1",
+            "50,50,40",
+            "--point2",
+            "50,150,40",
+            "--plane-normal",
+            "0,0,-1",
+            "--offset-start",
+            "25",
+            "--count",
+            "2",
+            "--pitch",
+            "50",
+            "--hole-mode",
+            "none",
+            "--new-id",
+            GROUP,
+        ]),
+        // The pinned definition is the catalogue entry itself: the GB standard, the 8.8
+        // structural grade and the medium-assembly hole clearance (1.5 mm, neither the DIN
+        // set's 2 nor the GOST set's 1) prove which entry the resolver answered.
+        Scripted::ok(&["definitions", "--store", &store, "--name", "M16"]),
+        // A repin resolves through the environment the same way: M24 over the same grip
+        // needs 40 + 2 x 4 + 15 + 21.5 + 7 = 91.5, so the declared list answers 100.
+        Scripted::ok(&[
+            "update-bolt-group",
+            "--store",
+            &store,
+            "--target",
+            GROUP,
+            "--repin",
+            "true",
+            "--designation",
+            "M24",
+        ]),
+    ];
+    // A designation the pack does not list stays NOT_FOUND, never a near match.
+    let absent = ["M30", "m16"];
+    for designation in absent {
+        lines.push(Scripted::refused(&[
+            "create-bolt-group",
+            "--store",
+            &store,
+            "--name",
+            "BAD",
+            "--parts",
+            parts.as_str(),
+            "--designation",
+            designation,
+            "--point1",
+            "50,50,40",
+            "--point2",
+            "50,150,40",
+            "--plane-normal",
+            "0,0,-1",
+            "--offset-start",
+            "25",
+            "--count",
+            "2",
+            "--pitch",
+            "50",
+            "--hole-mode",
+            "none",
+        ]));
+    }
+    let replies = f.script(&store, &lines);
+    let made = &replies[2];
+    let groups = list(made, "bolt_groups");
     assert_eq!(groups.len(), 1);
     assert_eq!(text(&groups[0], "length_mm"), "80");
-
-    // The pinned definition is the catalogue entry itself: the GB standard, the 8.8 structural
-    // grade and the medium-assembly hole clearance (1.5 mm, neither the DIN set's 2 nor the
-    // GOST set's 1) prove which entry the resolver answered.
-    let definitions = f.ok(&["definitions", "--store", &store, "--name", "M16"]);
-    let pinned = list(&definitions, "definitions");
+    let pinned = list(&replies[3], "definitions");
     assert_eq!(pinned.len(), 1);
     assert_eq!(text(&pinned[0], "kind"), "fastener");
     assert_eq!(text(&pinned[0], "designation"), "M16");
@@ -349,55 +413,16 @@ fn a_project_created_with_the_china_environment_resolves_its_bolts() {
     assert_eq!(text(&pinned[0], "grade"), "8.8");
     assert_eq!(num(&pinned[0], &["nominal_diameter_mm"]), 16.0);
     assert_eq!(num(&pinned[0], &["hole_clearance_mm"]), 1.5);
-    let group = text(&made, "element_id");
-
-    // A repin resolves through the environment the same way: M24 over the same grip needs
-    // 40 + 2 x 4 + 15 + 21.5 + 7 = 91.5, so the declared list answers 100.
-    let repinned = f.ok(&[
-        "update-bolt-group",
-        "--store",
-        &store,
-        "--target",
-        &group,
-        "--repin",
-        "true",
-        "--designation",
-        "M24",
-    ]);
-    let groups = list(&repinned, "bolt_groups");
+    let repinned = &replies[4];
+    let groups = list(repinned, "bolt_groups");
     assert_eq!(text(&groups[0], "name"), "SE16");
     assert_eq!(text(&groups[0], "length_mm"), "100");
-
-    // A designation the pack does not list stays NOT_FOUND, never a near match.
-    for absent in ["M30", "m16"] {
+    // Replies 5..7 carry the refusals in the authored order.
+    for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            f.code(&[
-                "create-bolt-group",
-                "--store",
-                &store,
-                "--name",
-                "BAD",
-                "--parts",
-                &parts,
-                "--designation",
-                absent,
-                "--point1",
-                "50,50,40",
-                "--point2",
-                "50,150,40",
-                "--plane-normal",
-                "0,0,-1",
-                "--offset-start",
-                "25",
-                "--count",
-                "2",
-                "--pitch",
-                "50",
-                "--hole-mode",
-                "none",
-            ]),
+            text(&replies[5 + index], "code"),
             "NOT_FOUND",
-            "{absent}"
+            "{designation}"
         );
     }
 }

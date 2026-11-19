@@ -125,6 +125,21 @@ impl StoreFixture {
 /// runs one real invocation over the store `store`, asserts the summary's outcome and
 /// every line's exit code, and returns each command's reply in order.
 pub(crate) fn script_lines(root: &Path, store: &str, lines: &[Scripted]) -> Vec<Json> {
+    run_script(root, store, lines, &[])
+}
+
+/// The same driver for suites that strip the ambient `BEAMCRAFT_CONFIG_DIR` from every
+/// spawn they make: the scripted invocation sees the same clean environment the suite's
+/// direct spawns see.
+pub(crate) fn script_lines_without_config(
+    root: &Path,
+    store: &str,
+    lines: &[Scripted],
+) -> Vec<Json> {
+    run_script(root, store, lines, &["BEAMCRAFT_CONFIG_DIR"])
+}
+
+fn run_script(root: &Path, store: &str, lines: &[Scripted], strip_env: &[&str]) -> Vec<Json> {
     let file = root.join(format!("script-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
     let entries = lines
         .iter()
@@ -142,7 +157,11 @@ pub(crate) fn script_lines(root: &Path, store: &str, lines: &[Scripted]) -> Vec<
         Json::Array(entries).encode(&Limits::DEFAULT).unwrap(),
     )
     .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+    let mut invocation = Command::new(env!("CARGO_BIN_EXE_beamcraft"));
+    for name in strip_env {
+        invocation.env_remove(name);
+    }
+    let output = invocation
         .args([
             "run-script",
             "--store",

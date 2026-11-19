@@ -13,7 +13,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -53,10 +53,11 @@ impl Fixture {
         assert_eq!(code, 0, "{args:?}: {body:?}");
         body
     }
-    fn code(&self, args: &[&str]) -> String {
-        let (code, body) = self.raw(args);
-        assert_eq!(code, 2, "{args:?}: {body:?}");
-        text(&body, "code")
+    /// One `run-script` invocation with the same clean environment `raw` gives its spawns:
+    /// the store commands amortize the environment copy's library parse into one process
+    /// (#738 P7), the commands' own work unchanged.
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines_without_config(&self.shared.root, store, lines)
     }
 }
 
@@ -141,118 +142,84 @@ fn a_project_created_with_the_europe_environment_resolves_its_designations() {
     ]);
     let store = text(at(&created, &["project"]), "path");
 
-    // A designation of the pack resolves through the project's own environment copy, with no
-    // --library option naming any file.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "0,0,0",
-        "--end",
-        "6000,0,0",
-        "--profile",
-        "IPE300",
-        "--material",
-        "Steel",
-    ]);
-    assert_eq!(text(&made, "outcome"), "member_created");
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 5381.0);
-    // 5381 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 253.4451, 1e-9);
-
-    // A designation of a heavier series member: HEA340, catalogue area 13350 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "4000,0,0",
-        "--end",
-        "4000,0,6000",
-        "--profile",
-        "HEA340",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 13350.0);
-    close(num(&q, &["mass", "kg"]), 628.785, 1e-9);
-
-    // A designation of the channel series: UPE100, catalogue area 1250 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "8000,0,0",
-        "--end",
-        "14000,0,0",
-        "--profile",
-        "UPE100",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 1250.0);
-    // 1250 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 58.875, 1e-9);
-
-    // A designation of the taper-flange channel series: UPN100, catalogue area 1350 mm2. The
-    // declared area wins for the quantities and the taper-flange outline draws without a
-    // declared-area warning.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "16000,0,0",
-        "--end",
-        "22000,0,0",
-        "--profile",
-        "UPN100",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 1350.0);
-    // 1350 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 63.585, 1e-9);
-
+    // The designation round rides one process: a designation of the pack resolves through
+    // the project's own environment copy, with no --library option naming any file, and
+    // every catalogue figure below is the standard's published value.
+    let cases: [(&str, &str, &str, &str, f64, f64); 4] = [
+        // profile, start, end, kind, catalogue area mm2, mass kg (area x length x 7850 kg/m3).
+        ("IPE300", "0,0,0", "6000,0,0", "beam", 5381.0, 253.4451),
+        // A designation of a heavier series member.
+        (
+            "HEA340",
+            "4000,0,0",
+            "4000,0,6000",
+            "column",
+            13350.0,
+            628.785,
+        ),
+        // A designation of the channel series.
+        ("UPE100", "8000,0,0", "14000,0,0", "beam", 1250.0, 58.875),
+        // A designation of the taper-flange channel series: the declared area wins for the
+        // quantities and the taper-flange outline draws without a declared-area warning.
+        ("UPN100", "16000,0,0", "22000,0,0", "beam", 1350.0, 63.585),
+    ];
     // A designation the series does not publish is refused, not silently substituted: no IPE 250
     // and no UPE 250 exist (the channel sequence steps 240 to 270), and the UPN series steps
     // 300 to 320 without a 270 or 330.
-    for absent_profile in ["IPE250", "UPE250", "UPN270", "UPN330"] {
+    let absent = ["IPE250", "UPE250", "UPN270", "UPN330"];
+    let member = |profile: &str, kind: &str, start: &str, end: &str| {
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            kind,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--profile",
+            profile,
+            "--material",
+            "Steel",
+        ])
+    };
+    let mut lines: Vec<Scripted> = cases
+        .iter()
+        .map(|(profile, start, end, kind, _, _)| member(profile, kind, start, end))
+        .collect();
+    for designation in absent {
+        lines.push(Scripted::refused(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            designation,
+            "--material",
+            "Steel",
+        ]));
+    }
+    let replies = f.script(&store, &lines);
+    // Replies 0..4 carry the members, 4..8 the refusals (the refused lines commit nothing).
+    for (index, (profile, _, _, _, area, mass)) in cases.iter().enumerate() {
+        let made = &replies[index];
+        assert_eq!(text(made, "outcome"), "member_created", "{profile}");
+        let q = at(made, &["member", "quantities"]).clone();
+        assert_eq!(text(&q, "area_source"), "catalogue", "{profile}");
+        assert_eq!(num(&q, &["section_area_mm2"]), *area, "{profile}");
+        close(num(&q, &["mass", "kg"]), *mass, 1e-9);
+    }
+    for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            f.code(&[
-                "create-member",
-                "--store",
-                &store,
-                "--kind",
-                "beam",
-                "--start",
-                "0,0,0",
-                "--end",
-                "6000,0,0",
-                "--profile",
-                absent_profile,
-                "--material",
-                "Steel"
-            ]),
-            "NOT_FOUND"
+            text(&replies[4 + index], "code"),
+            "NOT_FOUND",
+            "{designation}"
         );
     }
 

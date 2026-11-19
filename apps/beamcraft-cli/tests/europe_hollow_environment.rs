@@ -15,7 +15,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -55,10 +55,11 @@ impl Fixture {
         assert_eq!(code, 0, "{args:?}: {body:?}");
         body
     }
-    fn code(&self, args: &[&str]) -> String {
-        let (code, body) = self.raw(args);
-        assert_eq!(code, 2, "{args:?}: {body:?}");
-        text(&body, "code")
+    /// One `run-script` invocation with the same clean environment `raw` gives its spawns:
+    /// the store commands amortize the environment copy's library parse into one process
+    /// (#738 P7), the commands' own work unchanged.
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines_without_config(&self.shared.root, store, lines)
     }
 }
 
@@ -135,56 +136,49 @@ fn a_project_created_with_the_europe_environment_resolves_hollow_designations() 
     ]);
     let store = text(at(&created, &["project"]), "path");
 
-    // An SHS designation of the hollow pack resolves through the project's own environment
-    // copy, with no --library option naming any file. SHS100x100x5 declares a catalogue area
-    // of 1840 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "0,0,0",
-        "--end",
-        "6000,0,0",
-        "--profile",
-        "SHS100x100x5",
-        "--material",
-        "Steel",
-    ]);
-    assert_eq!(text(&made, "outcome"), "member_created");
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 1840.0);
-    // 1840 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 86.664, 1e-9);
-
-    // A CHS designation of the same pack: CHS219.1x6.0, catalogue area 4020 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "4000,0,0",
-        "--end",
-        "4000,0,6000",
-        "--profile",
-        "CHS219.1x6.0",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 4020.0);
-    close(num(&q, &["mass", "kg"]), 189.342, 1e-9);
-
+    // The designation round rides one process: a designation of the pack resolves through
+    // the project's own environment copy, with no --library option naming any file, and
+    // every catalogue figure below is the standard's published value.
+    let cases: [(&str, &str, &str, &str, f64, f64); 2] = [
+        // profile, start, end, kind, catalogue area mm2, mass kg (area x length x 7850 kg/m3).
+        // An SHS designation of the hollow pack; SHS100x100x5 declares 1840 mm2.
+        ("SHS100x100x5", "0,0,0", "6000,0,0", "beam", 1840.0, 86.664),
+        // A CHS designation of the same pack.
+        (
+            "CHS219.1x6.0",
+            "4000,0,0",
+            "4000,0,6000",
+            "column",
+            4020.0,
+            189.342,
+        ),
+    ];
     // A designation the shipped hollow series does not publish is refused, not silently
     // substituted: 110 mm is not an EN 10219-2 square size.
-    assert_eq!(
-        f.code(&[
+    let absent = ["SHS110x110x5"];
+    let member = |profile: &str, kind: &str, start: &str, end: &str| {
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            kind,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--profile",
+            profile,
+            "--material",
+            "Steel",
+        ])
+    };
+    let mut lines: Vec<Scripted> = cases
+        .iter()
+        .map(|(profile, start, end, kind, _, _)| member(profile, kind, start, end))
+        .collect();
+    for designation in absent {
+        lines.push(Scripted::refused(&[
             "create-member",
             "--store",
             &store,
@@ -195,12 +189,22 @@ fn a_project_created_with_the_europe_environment_resolves_hollow_designations() 
             "--end",
             "6000,0,0",
             "--profile",
-            "SHS110x110x5",
+            designation,
             "--material",
-            "Steel"
-        ]),
-        "NOT_FOUND"
-    );
+            "Steel",
+        ]));
+    }
+    let replies = f.script(&store, &lines);
+    // Replies 0..2 carry the members, 2 the refusal (the refused line commits nothing).
+    for (index, (profile, _, _, _, area, mass)) in cases.iter().enumerate() {
+        let made = &replies[index];
+        assert_eq!(text(made, "outcome"), "member_created", "{profile}");
+        let q = at(made, &["member", "quantities"]).clone();
+        assert_eq!(text(&q, "area_source"), "catalogue", "{profile}");
+        assert_eq!(num(&q, &["section_area_mm2"]), *area, "{profile}");
+        close(num(&q, &["mass", "kg"]), *mass, 1e-9);
+    }
+    assert_eq!(text(&replies[2], "code"), "NOT_FOUND", "SHS110x110x5");
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
