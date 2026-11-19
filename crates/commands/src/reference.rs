@@ -12,7 +12,9 @@
 //!          pin (digest, size, format, default prim, declared units) --engine--> admission and
 //!          footprint --layer engine (U02)--> wrapper in the authored layer, the foreign bytes
 //!          carried as a retained external layer --host (U06/U07)--> blobs, verifier, root switch
-//! move / correct / inspect / write: the verified head, the wrapper, the same path back
+//! move / correct / update / inspect / write: the verified head, the wrapper, the same path
+//! back; the update (R03) additionally carries the new snapshot as a manifest asset and
+//! compares the supported properties and geometry of the two snapshots it switches between.
 //! ```
 //!
 //! # What is guaranteed
@@ -38,7 +40,8 @@ use crate::source_file::read_file;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::measure::{ReferenceMeasurement, measure_reference};
 use beamcraft_engine::reference::{
-    ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, write_foreign,
+    ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, update_source,
+    write_foreign,
 };
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerRole, Revision, RevisionStore, Uuid7,
@@ -54,7 +57,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::reference::{
     AttachReference, CorrectReferenceUnits, ForeignTarget, MAX_SOURCE_BYTES, MoveReference,
-    WriteForeign, check_source_path,
+    UpdateReferenceSource, WriteForeign, check_source_path,
 };
 use session::Refusal;
 use session::pipeline::{
@@ -617,6 +620,333 @@ pub fn correct_wrapper_units(
         },
         hook,
     )
+}
+
+/// Inputs of one `update_wrapper_source` call (R03): the explicit re-read of a wrapper's source.
+#[derive(Debug, Clone)]
+pub struct UpdateRequest {
+    /// Identities and context.
+    pub ids: Ids,
+    /// The wrapper whose source is replaced.
+    pub target_id: ElementId,
+    /// The path text of the new source file. Classified before any I/O and never stored.
+    pub source_path: String,
+}
+
+/// One side of the R03 comparison: the supported properties of one pinned snapshot and its R02
+/// measurement of the composed surface. What the supported profile cannot measure is stated in
+/// `unsupported`, never guessed: the properties are still compared, the geometry is not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceSide {
+    /// Digest of the snapshot.
+    pub digest: ContentDigest,
+    /// Version of the snapshot.
+    pub version: u32,
+    /// Name of the snapshot's `defaultPrim`.
+    pub default_prim: String,
+    /// `metersPerUnit` the snapshot declares, if it declares one.
+    pub declared_meters_per_unit: Option<f64>,
+    /// `upAxis` the snapshot declares, if it declares one.
+    pub declared_up_axis: Option<UpAxis>,
+    /// Foreign prims composed below the wrapper.
+    pub foreign_prim_count: usize,
+    /// The kernel measurement of the composed surface (R02), when the supported profile
+    /// certifies one.
+    pub measurement: Option<ReferenceMeasurement>,
+    /// The refusal code that stopped the measurement (`UNSUPPORTED_GEOMETRY`, a budget code,
+    /// a status the profile reports without values), when there was one.
+    pub unsupported: Option<ErrorCode>,
+}
+
+/// The R03 result's comparison of the two snapshots of one wrapper: the supported properties,
+/// the certified geometry on both sides, and the composed prim tree the update added or removed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Comparison {
+    /// The snapshot the wrapper pinned before the update.
+    pub before: SourceSide,
+    /// The snapshot the wrapper pins now.
+    pub after: SourceSide,
+    /// Source paths (`/DefaultPrim/...`) the new snapshot adds, bounded, in path order.
+    pub added_prims: Vec<String>,
+    /// Source paths the new snapshot removes, bounded, in path order.
+    pub removed_prims: Vec<String>,
+    /// True when a diff list was cut at the reply bound; the counts stay complete.
+    pub prim_diff_truncated: bool,
+    /// True when the update cleared an explicit units interpretation that was made for the
+    /// earlier snapshot.
+    pub units_cleared: bool,
+}
+
+/// Result of `update_wrapper_source`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Updated {
+    /// True when the same operation was already committed and nothing was written.
+    pub replayed: bool,
+    /// The wrapper after the update.
+    pub wrapper: Wrapper,
+    /// The before/after comparison of the two snapshots.
+    pub comparison: Comparison,
+    /// Names of the owned layers whose bytes changed (empty for a replay).
+    pub changed_layers: Vec<String>,
+    /// The foreign layers of the new revision and their digests; both snapshots are there.
+    pub foreign_layers: Vec<(String, ContentDigest)>,
+    /// The revision that holds the result.
+    pub revision: RevisionSummary,
+    /// The declared footprint; `None` for a replay.
+    pub footprint: Option<Footprint>,
+}
+
+/// The largest number of source paths one diff list carries; the counts stay complete, as with
+/// the wrapper's own prim listing.
+const MAX_LISTED_PRIM_DIFF: usize = 512;
+
+/// Properties and prim paths of one side, before any measurement.
+fn side_of(wrapper: &Wrapper) -> SourceSide {
+    let source = &wrapper.record.source;
+    SourceSide {
+        digest: source.digest,
+        version: source.version,
+        default_prim: source.default_prim.clone(),
+        declared_meters_per_unit: source.declared_meters_per_unit,
+        declared_up_axis: source.declared_up_axis,
+        foreign_prim_count: wrapper.foreign.len(),
+        measurement: None,
+        unsupported: None,
+    }
+}
+
+/// Measures one wrapper (R02) over the verified head. A measurement the supported profile cannot
+/// make is marked with its refusal code; a wrapper that is not there, or a store that fails to
+/// open, is an error, not a mark.
+fn measured_side(
+    store: &RevisionStore,
+    id: ElementId,
+    wrapper: &Wrapper,
+) -> Result<SourceSide, Refusal> {
+    let mut side = side_of(wrapper);
+    match measure_references(store, Some(id)) {
+        Ok(report) => {
+            let [measured] = report.measurements.as_slice() else {
+                return Err(integrity("the measured wrapper is not uniquely reported"));
+            };
+            side.measurement = Some(measured.measurement.clone());
+        }
+        Err(refusal) if refusal.code == ErrorCode::NotFound => return Err(refusal),
+        Err(refusal)
+            if matches!(
+                refusal.code,
+                ErrorCode::IntegrityError | ErrorCode::BackendUnavailable
+            ) =>
+        {
+            return Err(refusal);
+        }
+        Err(refusal) => side.unsupported = Some(refusal.code),
+    }
+    Ok(side)
+}
+
+fn prim_paths(wrapper: &Wrapper) -> std::collections::BTreeSet<&str> {
+    wrapper
+        .foreign
+        .iter()
+        .map(|f| f.source_path.as_str())
+        .collect()
+}
+
+/// Explicitly re-reads the source of an existing wrapper: the file at `source_path` becomes the
+/// wrapper's next pinned version, and nothing else about the wrapper moves. There is no
+/// automatic update: a changed file on disk is never noticed until this command names it.
+///
+/// Steps, each failing closed: classify the path text (no I/O); read and examine the file; open
+/// and verify the head; version policy (the wrapper's counter always moves one forward); replay
+/// decision; engine admission; measure the before side; author the replacement with U02, adding
+/// the new bytes as a non-owned manifest layer; check the layer engine's writes against the
+/// declared footprint; publish and re-read; measure the after side and compare the supported
+/// properties, geometry and prim trees of the two snapshots. The source files are only ever
+/// read; an explicit units interpretation is cleared with the result stating it, because it is
+/// stored with the digest it was made for.
+pub fn update_wrapper_source(
+    store: &RevisionStore,
+    request: &UpdateRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Updated, Refusal> {
+    // First of all, and before the store or the file system is touched.
+    check_source_path(&request.source_path).map_err(command_error)?;
+    let control = control();
+    let (mut pin, bytes) = pin_source(&request.source_path, &control)?;
+    let (head, base) = load_base(store, &request.ids.project, &request.ids.workspace)?;
+    if head.is_none() {
+        return Err(not_found());
+    }
+    let known = read_head(&base, &control)?;
+    let current = find(&known, request.target_id).ok_or_else(not_found)?;
+    // The pinned bytes are handled first: they are either a replay of the accepted update or,
+    // for an unseen operation, the refusal "that snapshot is the current one". The version is
+    // the wrapper's own counter of accepted snapshots: it moves one forward, and the digest
+    // identifies the snapshot, never the count.
+    let same_bytes = pin.digest == current.record.source.digest;
+    pin.version = if same_bytes {
+        current.record.source.version
+    } else {
+        current
+            .record
+            .source
+            .version
+            .checked_add(1)
+            .ok_or(command_error(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "source.version",
+                "the version counter is exhausted",
+            )))?
+    };
+    let command = UpdateReferenceSource {
+        target_id: request.target_id,
+        source: pin.clone(),
+    };
+    let fingerprint = command.content_fingerprint().map_err(command_error)?;
+    let op_host = host_uuid(&request.ids.op_id.to_string())?;
+    let (prior, recorded) = prior_op_with(store, &op_host, || {
+        // The head holds the result of this update exactly when the wrapper already pins the
+        // requested snapshot.
+        UpdateReferenceSource {
+            target_id: current.record.id,
+            source: current.record.source.clone(),
+        }
+        .content_fingerprint()
+        .map_err(command_error)
+    })?;
+    let layer_name = pin.layer_name();
+    let source_reused = base.external.contains(&layer_name);
+    match prior {
+        PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
+            let side = measured_side(store, request.target_id, current)?;
+            let wrapper = find(&known, request.target_id)
+                .cloned()
+                .ok_or_else(|| integrity("replayed wrapper is absent from the head revision"))?;
+            return Ok(Updated {
+                replayed: true,
+                comparison: Comparison {
+                    before: side.clone(),
+                    after: side,
+                    added_prims: Vec::new(),
+                    removed_prims: Vec::new(),
+                    prim_diff_truncated: false,
+                    units_cleared: false,
+                },
+                wrapper,
+                changed_layers: Vec::new(),
+                foreign_layers: foreign_layers(&base),
+                revision: replay_summary(&head, recorded)?,
+                footprint: None,
+            });
+        }
+        PriorOp::Accepted { .. } => {
+            return Err(command_error(CommandError::new(
+                ErrorCode::OpIdReuse,
+                "op_id",
+                "operation id was accepted with different content",
+            )));
+        }
+        PriorOp::Unseen => {}
+    }
+    if same_bytes {
+        return Err(command_error(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "source.digest",
+            "the source bytes are the pinned version",
+        )));
+    }
+    let outcome = update_source(&current.record, &command).map_err(command_error)?;
+    // Read-only, before anything is written: the measurement of the snapshot being replaced.
+    let before = measured_side(store, request.target_id, current)?;
+    let before_assets: std::collections::BTreeMap<String, ContentDigest> = base
+        .assets
+        .iter()
+        .map(|a| (a.name.clone(), a.digest))
+        .collect();
+    let mut open = open_base(&base)?;
+    if !source_reused {
+        open.assets.push(Asset {
+            name: layer_name.clone(),
+            digest: pin.digest,
+            bytes,
+        });
+        open.manifest = open.manifest_digest()?;
+    }
+    let schema = schema_identity()?;
+    let (mut author, opened) = crate::scope::open_author(store, open, false, schema, &control)?;
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: request.ids.op_id.to_string(),
+            actor: request.ids.actor.to_string(),
+            schema,
+            resources: Vec::new(),
+            changes: vec![Change::ReferenceSource {
+                id: request.target_id.to_string(),
+                source: pin.clone(),
+            }],
+        },
+        &control,
+    )?;
+    check_footprint(&prepared, &outcome.footprint)?;
+    let changed = changed_layers(&prepared, &before_assets);
+    let foreign = prepared
+        .retained
+        .iter()
+        .map(|l| (l.name.clone(), l.digest))
+        .collect();
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            footprint: &outcome.footprint,
+            fingerprint,
+            prepared: &prepared,
+            schema,
+            project: &base.project,
+            workspace: &base.workspace,
+            revision_id: &request.ids.revision_id,
+            op: op_host,
+            base_generation: base.generation,
+            expected: &base.expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    let wrapper = reread(store, request.target_id)?
+        .ok_or_else(|| integrity("the updated wrapper is absent from the new head"))?;
+    let after = measured_side(store, request.target_id, &wrapper)?;
+    let (before_paths, after_paths) = (prim_paths(current), prim_paths(&wrapper));
+    let added: Vec<_> = after_paths.difference(&before_paths).collect();
+    let removed: Vec<_> = before_paths.difference(&after_paths).collect();
+    let prim_diff_truncated =
+        added.len() > MAX_LISTED_PRIM_DIFF || removed.len() > MAX_LISTED_PRIM_DIFF;
+    Ok(Updated {
+        replayed: false,
+        comparison: Comparison {
+            before,
+            after,
+            added_prims: added
+                .into_iter()
+                .take(MAX_LISTED_PRIM_DIFF)
+                .map(|p| (*p).to_owned())
+                .collect(),
+            removed_prims: removed
+                .into_iter()
+                .take(MAX_LISTED_PRIM_DIFF)
+                .map(|p| (*p).to_owned())
+                .collect(),
+            prim_diff_truncated,
+            units_cleared: current.record.units.is_some(),
+        },
+        wrapper,
+        changed_layers: changed,
+        foreign_layers: foreign,
+        revision: summarize(&committed.info),
+        footprint: Some(outcome.footprint),
+    })
 }
 
 /// The verified head and its wrappers.

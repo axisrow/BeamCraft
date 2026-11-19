@@ -1219,6 +1219,18 @@ pub const COMMANDS: &[Command] = &[
     entry(
         Route::Reference,
         "reference",
+        "update-reference",
+        Access::Write,
+        Ids::Common,
+        &[
+            req("--store", "ROOT"),
+            req("--id", "UUID"),
+            req("--source", "FILE"),
+        ],
+    ),
+    entry(
+        Route::Reference,
+        "reference",
         "correct-reference-units",
         Access::Write,
         Ids::Common,

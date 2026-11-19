@@ -1187,6 +1187,378 @@ fn a_workspace_forks_publishes_and_undoes_with_the_foreign_layer_intact() {
     );
 }
 
+/// The next version of the invented architect model: the same default prim, the block grown by
+/// the owner, one new prim, a new note. Metres and Y up like the first version.
+const SITE_V2: &str = r#"#usda 1.0
+(
+    defaultPrim = "Site"
+    metersPerUnit = 1.0
+    upAxis = "Y"
+)
+def Xform "Site"
+{
+    def Xform "Block"
+    {
+        custom string note = "updated by the owner"
+        def Mesh "Body"
+        {
+            uniform token subdivisionScheme = "none"
+            point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0), (0, 0, 3), (2, 0, 3), (2, 2, 3), (0, 2, 3)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+        }
+    }
+    def Cube "Annex"
+    {
+        double size = 1
+        double3 xformOp:translate:offset = (5, 0, 1.5)
+        uniform token[] xformOpOrder = ["xformOp:translate:offset"]
+    }
+}
+"#;
+
+fn translation(body: &Json) -> Vec<f64> {
+    at(body, &["reference", "placement", "translation_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect()
+}
+
+fn unsigned(json: &Json, path: &[&str]) -> u64 {
+    at(json, path).unsigned().unwrap()
+}
+
+/// The measured volume of one comparison side contains this exact value.
+fn volume_contains(side: &Json, value: f64) {
+    let enclosure = at(side, &["measurement", "mesh", "volume_mm3"]);
+    assert!(at(enclosure, &["lo"]).float().unwrap() <= value);
+    assert!(at(enclosure, &["hi"]).float().unwrap() >= value);
+}
+
+fn side(body: &Json, which: &str) -> Json {
+    at(body, &["comparison", which]).clone()
+}
+
+#[test]
+fn an_explicit_update_moves_the_wrapper_to_the_next_version_and_compares_the_snapshots() {
+    let f = Fixture::new();
+    let v1 = f.source("site.usda", SITE);
+    let v2 = f.source("site-v2.usda", SITE_V2);
+    let id = "019a7bf0-0000-7000-8000-000000000137";
+    f.attach(&v1, &["--new-id", id, "--translation", "100,200,300"]);
+    f.ok(
+        "correct-reference-units",
+        &["--id", id, "--meters-per-unit", "1", "--up-axis", "Y"],
+    );
+    let v1_digest = sha(SITE.as_bytes());
+    let v2_digest = sha(SITE_V2.as_bytes());
+    let mtime_v1 = fs::metadata(&v1).unwrap().modified().unwrap();
+    let mtime_v2 = fs::metadata(&v2).unwrap().modified().unwrap();
+    let updated = f.ok("update-reference", &["--id", id, "--source", &v2]);
+    assert_eq!(text(&updated, "outcome"), "reference_source_updated");
+    // The wrapper kept everything the owner placed on it; only the pin moved.
+    let reference = at(&updated, &["reference"]);
+    assert_eq!(text(reference, "id"), id);
+    assert_eq!(text(reference, "name"), "site.usda");
+    assert_eq!(translation(&updated), [100.0, 200.0, 300.0]);
+    let source = at(reference, &["source"]);
+    assert_eq!(text(source, "digest"), v2_digest);
+    assert_eq!(unsigned(source, &["version"]), 2);
+    assert_eq!(text(source, "label"), "site-v2.usda");
+    // The correction was made for version 1: the update cleared it and says so.
+    assert!(matches!(at(reference, &["units"]), Json::Null));
+    assert_eq!(text(reference, "units_status"), "needs_correction");
+    assert!(
+        at(&updated, &["comparison", "units_cleared"])
+            .boolean()
+            .unwrap()
+    );
+    // The comparison: the two snapshots, their properties and their measured geometry.
+    let before = side(&updated, "before");
+    assert_eq!(text(&before, "digest"), v1_digest);
+    assert_eq!(unsigned(&before, &["version"]), 1);
+    assert_eq!(text(&before, "default_prim"), "Site");
+    assert_eq!(unsigned(&before, &["foreign_prim_count"]), 3);
+    // The before side was measured with the correction it carried: 2 x 1 x 3 metres.
+    volume_contains(&before, 6_000_000_000.0);
+    let after = side(&updated, "after");
+    assert_eq!(text(&after, "digest"), v2_digest);
+    assert_eq!(unsigned(&after, &["version"]), 2);
+    // The new snapshot starts uncorrected: metres are taken as stored, and the grown block
+    // plus the annex cube sum to 13 cubic units.
+    assert_eq!(unsigned(&after, &["foreign_prim_count"]), 4);
+    volume_contains(&after, 13.0);
+    assert!(matches!(at(&after, &["unsupported"]), Json::Null));
+    // The composed prim tree gained exactly the annex.
+    let added: Vec<_> = at(&updated, &["comparison", "added_prims"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(added, ["/Site/Annex"]);
+    let removed = at(&updated, &["comparison", "removed_prims"])
+        .array()
+        .unwrap()
+        .len();
+    assert_eq!(removed, 0);
+    // Both snapshots are in the revision, and both blobs hold the exact file bytes.
+    let foreign: Vec<_> = at(&updated, &["foreign_layers"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|l| text(l, "digest"))
+        .collect();
+    assert!(foreign.contains(&v1_digest) && foreign.contains(&v2_digest));
+    assert_eq!(fs::read(f.blob_path(&v1_digest)).unwrap(), SITE.as_bytes());
+    assert_eq!(
+        fs::read(f.blob_path(&v2_digest)).unwrap(),
+        SITE_V2.as_bytes()
+    );
+    assert_eq!(
+        text(&f.ok("verify-blob", &["--digest", &v1_digest]), "outcome"),
+        "blob_verified"
+    );
+    // Only the owned authored layer changed.
+    let changed: Vec<_> = at(&updated, &["changed_layers"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(changed, ["authored.usda"]);
+    // The source files were only ever read.
+    assert_eq!(fs::read(&v1).unwrap(), SITE.as_bytes());
+    assert_eq!(fs::read(&v2).unwrap(), SITE_V2.as_bytes());
+    assert_eq!(fs::metadata(&v1).unwrap().modified().unwrap(), mtime_v1);
+    assert_eq!(fs::metadata(&v2).unwrap().modified().unwrap(), mtime_v2);
+    // The head now pins version 2 and the view draws the new content, as stored.
+    let inspected = f.inspect();
+    let wrapper = &at(&inspected, &["references"]).array().unwrap()[0];
+    assert_eq!(text(at(wrapper, &["source"]), "digest"), v2_digest);
+    assert_eq!(
+        unsigned(at(wrapper, &["source"]), &["version"]),
+        2,
+        "the head pins the new snapshot"
+    );
+    let snapshot = view(&f);
+    assert_eq!(snapshot.len(), 1);
+    // The block and the annex, as stored: the annex cube reaches half a unit below the block.
+    assert_eq!(
+        snapshot.elements()[0].full.world_bounds.min,
+        [100.0, 199.5, 300.0]
+    );
+    assert_eq!(
+        snapshot.elements()[0].full.world_bounds.max,
+        [105.5, 202.0, 303.0]
+    );
+}
+
+#[test]
+fn nothing_updates_automatically_and_a_refused_update_writes_nothing() {
+    let f = Fixture::new();
+    let source = f.source("site.usda", SITE);
+    let id = "019a7bf0-0000-7000-8000-000000000137";
+    f.attach(&source, &["--new-id", id]);
+    let digest = sha(SITE.as_bytes());
+    // The owner rewrites the file on the disk: nothing notices, and the head keeps its pin.
+    fs::write(&source, SITE_V2).unwrap();
+    let inspected = f.inspect();
+    let wrapper = &at(&inspected, &["references"]).array().unwrap()[0];
+    assert_eq!(text(at(wrapper, &["source"]), "digest"), digest);
+    assert_eq!(unsigned(at(wrapper, &["source"]), &["version"]), 1);
+    // Updating to the pinned bytes themselves is refused: that is the current version.
+    let pinned = f.source("pinned-copy.usda", SITE);
+    let listing = f.listing();
+    assert_eq!(
+        f.rejected("update-reference", &["--id", id, "--source", &pinned]),
+        "INVALID_ARGUMENT"
+    );
+    // Unknown wrapper, network path, missing file, directory.
+    assert_eq!(
+        f.rejected(
+            "update-reference",
+            &[
+                "--id",
+                "019a7bf0-0000-7000-8000-0000000000ff",
+                "--source",
+                &f.source("new.usda", SITE_V2)
+            ]
+        ),
+        "NOT_FOUND"
+    );
+    let missing = f.root.join("sources").join("missing.usda");
+    assert_eq!(
+        f.rejected(
+            "update-reference",
+            &["--id", id, "--source", missing.to_str().unwrap()]
+        ),
+        "NOT_FOUND"
+    );
+    let dir = f.root.join("sources");
+    assert_eq!(
+        f.rejected(
+            "update-reference",
+            &["--id", id, "--source", dir.to_str().unwrap()]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    let (code, body) = f.run(
+        "update-reference",
+        &["--id", id, "--source", "https://example.invalid/v2.usda"],
+    );
+    assert_eq!(
+        (code, text(&body, "code")),
+        (2, "PERMISSION_DENIED".to_owned())
+    );
+    // No option is accepted twice and unknown ones are refused.
+    assert_eq!(
+        f.rejected(
+            "update-reference",
+            &["--id", id, "--source", &pinned, "--nonsense", "1"]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        f.rejected("update-reference", &["--id", id]),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(f.listing(), listing, "the refusals wrote nothing");
+    assert_eq!(unsigned(at(wrapper, &["source"]), &["version"]), 1);
+}
+
+#[test]
+fn an_update_replays_by_operation_id_and_keeps_the_head() {
+    let f = Fixture::new();
+    let v1 = f.source("site.usda", SITE);
+    let v2 = f.source("site-v2.usda", SITE_V2);
+    let id = "019a7bf0-0000-7000-8000-000000000137";
+    f.attach(&v1, &["--new-id", id]);
+    let op = "019a7bf0-0000-7000-8000-0000000000e1";
+    let args = ["--id", id, "--source", v2.as_str(), "--op-id", op];
+    let first = f.ok("update-reference", &args);
+    assert_eq!(text(&first, "outcome"), "reference_source_updated");
+    let listing = f.listing();
+    let again = f.ok("update-reference", &args);
+    assert_eq!(text(&again, "outcome"), "reference_source_update_replayed");
+    // A replay answers from the head: the same state on both sides of the comparison.
+    assert_eq!(
+        at(&again, &["comparison", "before", "digest"])
+            .string()
+            .unwrap(),
+        at(&again, &["comparison", "after", "digest"])
+            .string()
+            .unwrap()
+    );
+    assert_eq!(f.listing(), listing, "a replay writes nothing");
+    // The same operation with other content is refused.
+    let v3 = f.source(
+        "site-v3.usda",
+        SITE_V2.replace("updated by the owner", "third"),
+    );
+    assert_eq!(
+        f.rejected(
+            "update-reference",
+            &["--id", id, "--source", &v3, "--op-id", op]
+        ),
+        "OP_ID_REUSE"
+    );
+}
+
+#[test]
+fn two_wrappers_sharing_bytes_share_one_layer_and_each_counts_its_own_versions() {
+    let f = Fixture::new();
+    let v1 = f.source("site.usda", SITE);
+    let other = f.source("other.usda", SITE_V2);
+    let a = "019a7bf0-0000-7000-8000-000000000137";
+    let b = "019a7bf0-0000-7000-8000-000000000138";
+    f.attach(&v1, &["--new-id", a]);
+    f.attach(&other, &["--new-id", b]);
+    // Wrapper B moves to the bytes wrapper A already pins: one stored layer for both, and B's
+    // own counter moves to its second snapshot.
+    let copy = f.source("site-copy.usda", SITE);
+    let updated = f.ok("update-reference", &["--id", b, "--source", &copy]);
+    let source = at(at(&updated, &["reference"]), &["source"]);
+    let digest = sha(SITE.as_bytes());
+    assert_eq!(text(source, "digest"), digest);
+    assert_eq!(unsigned(source, &["version"]), 2);
+    // The foreign layers of the revision hold both snapshots, stored once.
+    let blobs: Vec<_> = f
+        .listing()
+        .into_keys()
+        .filter(|name| name.contains(&digest))
+        .collect();
+    assert_eq!(blobs.len(), 1, "one blob for the shared snapshot");
+    let inspected = f.inspect();
+    let wrappers = at(&inspected, &["references"]).array().unwrap();
+    assert_eq!(wrappers.len(), 2);
+    for (wrapper, version) in wrappers.iter().zip([1u64, 2]) {
+        assert_eq!(
+            unsigned(at(wrapper, &["source"]), &["version"]),
+            version,
+            "each wrapper counts its own snapshots"
+        );
+    }
+}
+
+#[test]
+fn an_update_to_geometry_the_profile_cannot_measure_is_marked_not_blocked() {
+    let f = Fixture::new();
+    let v1 = f.source("site.usda", SITE);
+    let unsupported = r#"#usda 1.0
+(
+    defaultPrim = "Site"
+    metersPerUnit = 1.0
+    upAxis = "Y"
+)
+def Xform "Site"
+{
+    def Sphere "Ball"
+    {
+        double radius = 3
+    }
+}
+"#;
+    let v2 = f.source("sphere.usda", unsupported);
+    let id = "019a7bf0-0000-7000-8000-000000000137";
+    f.attach(&v1, &["--new-id", id]);
+    f.ok(
+        "correct-reference-units",
+        &["--id", id, "--meters-per-unit", "1", "--up-axis", "Y"],
+    );
+    let updated = f.ok("update-reference", &["--id", id, "--source", &v2]);
+    assert_eq!(text(&updated, "outcome"), "reference_source_updated");
+    // The properties are compared; the geometry that the supported profile cannot measure is
+    // marked, not guessed and not a blocker.
+    let before = side(&updated, "before");
+    volume_contains(&before, 6_000_000_000.0);
+    let after = side(&updated, "after");
+    assert!(
+        matches!(at(&after, &["measurement"]), Json::Null),
+        "no measurement is invented"
+    );
+    assert_eq!(text(&after, "unsupported"), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(unsigned(&after, &["foreign_prim_count"]), 2);
+    let added: Vec<_> = at(&updated, &["comparison", "added_prims"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(added, ["/Site/Ball"]);
+    // The wrapper is fully usable after the update.
+    assert_eq!(
+        f.inspect()
+            .get("reference_count")
+            .unwrap()
+            .unsigned()
+            .unwrap(),
+        1
+    );
+}
+
 #[test]
 fn unknown_options_and_missing_arguments_are_invalid_arguments() {
     let f = Fixture::new();

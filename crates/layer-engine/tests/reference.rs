@@ -460,6 +460,168 @@ fn moving_and_renaming_a_wrapper_never_touches_the_foreign_content() {
     assert_eq!(writes, vec![Group::Label, Group::Placement, Group::Derived]);
 }
 
+/// The next version of the invented model: another default prim, another declaration, less
+/// content. Nothing of it is carried over automatically except the wrapper itself.
+const UPDATED: &str = r#"#usda 1.0
+(
+    defaultPrim = "Site2"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+def Xform "Site2"
+{
+    def Cube "Block"
+    {
+        double size = 4
+    }
+}
+"#;
+
+fn updated_pin() -> SourcePin {
+    SourcePin {
+        digest: digest(UPDATED.as_bytes()),
+        bytes: UPDATED.len() as u64,
+        format: SourceFormat::Usda,
+        default_prim: "Site2".into(),
+        version: 2,
+        label: "site-v2.usda".into(),
+        declared_meters_per_unit: Some(0.01),
+        declared_up_axis: Some(UpAxis::Z),
+    }
+}
+
+#[test]
+fn an_explicit_source_update_repoints_the_wrapper_and_clears_the_correction() {
+    let metres_y = UnitsInterpretation {
+        meters_per_unit: 1.0,
+        up_axis: UpAxis::Y,
+    };
+    // Version 1, with an explicit correction made for it.
+    let (mut a, o) = attached();
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::ReferenceUnits {
+                    id: WRAPPER.into(),
+                    interpretation: Some(metres_y),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = install(&mut a, &o.context, &p);
+    // The update carries the new snapshot as a manifest asset, as a host would.
+    let mut assets = exported(&a, &o.context);
+    let new_layer = updated_pin().layer_name();
+    assets.push(asset(&new_layer, UPDATED));
+    let (mut a, o) = open(request(assets, &OWNED));
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::ReferenceSource {
+                    id: WRAPPER.into(),
+                    source: updated_pin(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    // The declared writes are the shape inputs and the derived results, nothing else.
+    let writes: Vec<_> = p.writes.iter().map(|f| f.group).collect();
+    assert_eq!(writes, vec![Group::ShapeInputs, Group::Derived]);
+    assert!(
+        p.opinions
+            .iter()
+            .any(|i| i.attribute == "bim:reference:sourceVersion"
+                && i.opinion == Opinion::Value(Value::Int(2)))
+    );
+    // Both snapshots are retained foreign layers: the old bytes are never dropped.
+    let mut retained: Vec<_> = p.retained.iter().map(|l| l.name.as_str()).collect();
+    retained.sort_unstable();
+    let mut expected_layers = [pin().layer_name(), new_layer.clone()];
+    expected_layers.sort();
+    assert_eq!(retained, expected_layers);
+    let o = install(&mut a, &o.context, &p);
+    let prims = snapshot(&a, &o.context);
+    let view = &read_references(&prims).unwrap()[0];
+    assert_eq!(view.source, updated_pin());
+    // The correction was made for version 1: the new snapshot starts uncorrected.
+    assert_eq!(view.units, None);
+    assert_eq!(view.placement, pose());
+    assert_eq!(view.name, "Architect site");
+    // The wrapper now composes the new snapshot, under its own default prim.
+    let holder = prims
+        .iter()
+        .find(|p| p.path == source_path(WRAPPER))
+        .unwrap();
+    let foreign: Vec<_> = holder.sources.iter().filter(|s| !s.owned).collect();
+    assert_eq!(foreign.len(), 1);
+    assert_eq!(foreign[0].layer, new_layer);
+    assert_eq!(foreign[0].digest, updated_pin().digest);
+    assert_eq!(foreign[0].path, "/Site2");
+    assert_eq!(
+        view.foreign
+            .iter()
+            .map(|f| f.source_path.as_str())
+            .collect::<Vec<_>>(),
+        ["/Site2", "/Site2/Block"]
+    );
+    // The units level is back to its cleared shape.
+    let correction = format!("{}/Correction", path(WRAPPER));
+    for name in [
+        "bim:reference:correctionMetersPerUnit",
+        "bim:reference:correctionUpAxis",
+        "bim:reference:correctionSourceDigest",
+        "xformOp:rotateX:bimUpAxis",
+        "xformOp:scale:bimUnits",
+    ] {
+        assert_eq!(prop(&prims, &correction, name), None, "{name}");
+    }
+    assert_eq!(
+        prop(&prims, &correction, "xformOpOrder"),
+        Some(&Value::Array(Vec::new()))
+    );
+    // Both foreign layers survive the export, byte for byte, and everything validates.
+    let assets = exported(&a, &o.context);
+    assert_eq!(named(&assets, &new_layer).bytes, UPDATED.as_bytes());
+    assert_eq!(
+        named(&assets, &pin().layer_name()).bytes,
+        FOREIGN.as_bytes()
+    );
+    assert!(validate(assets).is_ok());
+}
+
+#[test]
+fn a_source_update_refuses_a_layer_that_is_missing_or_differs_from_its_pin() {
+    let (mut a, o) = attached();
+    let update = |a: &mut Author, o: &Opened, pin: SourcePin| {
+        a.prepare(
+            batch(
+                &o.context,
+                vec![Change::ReferenceSource {
+                    id: WRAPPER.into(),
+                    source: pin,
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err()
+    };
+    // The new layer is not in the manifest at all.
+    refused(
+        update(&mut a, &o, updated_pin()),
+        ErrorCode::DependencyUnavailable,
+    );
+    // The manifest holds the layer, but not with the pinned bytes.
+    let mut assets = exported(&a, &o.context);
+    let lies = format!("{}\n# tampered\n", UPDATED);
+    assets.push(asset(&updated_pin().layer_name(), &lies));
+    let (mut a, o) = open(request(assets, &OWNED));
+    refused(update(&mut a, &o, updated_pin()), ErrorCode::IntegrityError);
+}
+
 #[test]
 fn the_units_correction_is_an_explicit_operation_on_the_wrapper_only() {
     let (mut a, o) = attached();
