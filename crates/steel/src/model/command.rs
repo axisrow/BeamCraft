@@ -1643,6 +1643,37 @@ pub struct HoleRecord {
     pub owner: Option<ElementId>,
 }
 
+/// What one member-hole record authors: a fastener hole (A04.2) or a member polygon cut
+/// (A13, epic #556 slice 1). Both replay through the same certified member prism subtraction
+/// and share the per-member ordinal counter and the `cut:f.h<ordinal>` wall ids; the kind keeps
+/// the operations distinct for numbering and reports, exactly as the plate records' kind does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberHoleKind {
+    /// A through hole authored by `AddHole` (A04.2).
+    Hole,
+    /// A member polygon cut authored by `CutByPolygon` (A13); a through cut only.
+    PolygonCut,
+}
+
+impl MemberHoleKind {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hole => "hole",
+            Self::PolygonCut => "polygon_cut",
+        }
+    }
+
+    /// Parses the wire token; anything else is `None`.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "hole" => Some(Self::Hole),
+            "polygon_cut" => Some(Self::PolygonCut),
+            _ => None,
+        }
+    }
+}
+
 /// One member-hole operation record of a member (A04.2, the F06 member-hole amendment): an
 /// owned record with an engine-assigned ordinal, stored entirely in the member frame, so it
 /// follows the member when it is moved or rotated. The records of one member are replayed from
@@ -1673,6 +1704,8 @@ pub struct MemberHoleRecord {
     /// record is owned by its group: it is created, regenerated and removed with the group as
     /// one unit, and `UpdateHole`/`RemoveHole` refuse it with `DEPENDENCY_CONFLICT`.
     pub owner: Option<ElementId>,
+    /// Whether the record is a hole (A04.2) or a member polygon cut (A13).
+    pub kind: MemberHoleKind,
 }
 
 /// Replace one existing hole's authoritative polygon, preserving its identity and ordinal.
@@ -2178,24 +2211,76 @@ impl CutByLine {
 }
 
 /// F04 section 7 `CutByPolygon` (A13): cuts a valid plate with the prism of a closed polygon in
-/// plate-local XY swept through the whole thickness, removing the material inside it. The
-/// polygon admission is the kernel's (clockwise, simple, strictly inside the outline, clear of
-/// every other record), exactly as for a hole; the record is a cut, not a hole.
+/// plate-local XY swept through the whole thickness, removing the material inside it — or, since
+/// the member slice of epic #556, a valid member with the prism of a closed polygon in the
+/// member-hole frame swept through the whole body along a section-plane direction. The polygon
+/// admission is the kernel's (clockwise, simple, strictly inside the walls, clear of every other
+/// record), exactly as for a hole; the record is a cut, not a hole. A member cut is a through
+/// cut only, and its frame fields must be present exactly when the target is a member.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CutByPolygon {
-    /// The plate to cut; a member target is `UNSUPPORTED_GEOMETRY` (the kernel subtracts
-    /// Z-prisms only).
+    /// The plate or member to cut.
     pub target_id: ElementId,
     /// Full UUIDv7 of the new record; unused in the project.
     pub operation_id: OpId,
-    /// The clockwise polygon in plate-local XY, 3 to 1024 points, closure implicit.
+    /// The clockwise polygon: plate-local XY for a plate target, hole-frame XY relative to the
+    /// axis point for a member target, 3 to 1024 points, closure implicit.
     pub polygon_mm: Vec<[f64; 2]>,
+    /// A point `(u, v, w)` on the cut axis in the member frame; present exactly for a member
+    /// target.
+    pub axis_point_mm: Option<[f64; 3]>,
+    /// The direction of the cut axis in the member frame: any section-plane direction
+    /// `(u, v, 0)` with a nonzero transverse part (G14.2); present exactly for a member target.
+    pub axis_direction: Option<[f64; 3]>,
 }
 
+/// The member frame fields of a member-form `CutByPolygon`: the axis point and the axis
+/// direction, both in the member frame.
+pub(crate) type MemberCutFrame = ([f64; 3], [f64; 3]);
+
 impl CutByPolygon {
-    /// Admits the polygon shape (count, finiteness, caps) as [`HoleSpec::validate`] does.
+    /// The member frame fields of the command: `None` for the plate form, the axis point and
+    /// direction for the member form. Both-or-neither, and the member rules of
+    /// [`MemberHole::validate`] without a diameter or extent.
+    pub(crate) fn member_frame(&self) -> Result<Option<MemberCutFrame>, CommandError> {
+        match (self.axis_point_mm, self.axis_direction) {
+            (None, None) => Ok(None),
+            (Some(axis_point_mm), Some(axis_direction)) => {
+                hole_values_finite(axis_point_mm.iter().copied())?;
+                hole_values_in_cap(axis_point_mm.iter().copied())?;
+                hole_values_finite(axis_direction.iter().copied())?;
+                hole_values_in_cap(axis_direction.iter().copied())?;
+                let [u, v, w] = axis_direction;
+                if w != 0.0 {
+                    return Err(CommandError::new(
+                        ErrorCode::UnsupportedGeometry,
+                        "axis_direction",
+                        "the cut axis must stay in the member's section plane (no axial component)",
+                    ));
+                }
+                if u == 0.0 && v == 0.0 {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "axis_direction",
+                        "the cut axis direction needs a nonzero transverse part",
+                    ));
+                }
+                Ok(Some((axis_point_mm, axis_direction)))
+            }
+            _ => Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "axis_point_mm",
+                "a member cut takes --axis-point and --axis-direction together",
+            )),
+        }
+    }
+
+    /// Admits the polygon shape (count, finiteness, caps) as [`HoleSpec::validate`] does, and
+    /// the member frame fields when they are present (the [`MemberHole`] rules without a
+    /// diameter).
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
-        HoleSpec::Polygon(self.polygon_mm.clone()).validate()
+        HoleSpec::Polygon(self.polygon_mm.clone()).validate()?;
+        self.member_frame().map(|_| ())
     }
 
     /// The clockwise polygon this command authors; the stored polygon is authoritative.
@@ -2204,17 +2289,28 @@ impl CutByPolygon {
     }
 
     /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
-    /// for [`CutByPlane::content_fingerprint`].
+    /// for [`CutByPlane::content_fingerprint`]. The v2 encoding carries the member frame fields
+    /// (present or absent) after the polygon.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         let polygon = self.polygon()?;
+        let frame = self.member_frame()?;
         fingerprint_cut(
-            b"BeamCraft/A13/CutByPolygon/v1",
+            b"BeamCraft/A13/CutByPolygon/v2",
             self.target_id,
             self.operation_id,
             self.validate_arguments(),
             |bytes| {
                 for value in polygon.iter().flatten().copied() {
                     push_f64(bytes, value)?;
+                }
+                match frame {
+                    None => bytes.push(0),
+                    Some((axis_point_mm, axis_direction)) => {
+                        bytes.push(1);
+                        for value in axis_point_mm.into_iter().chain(axis_direction) {
+                            push_f64(bytes, value)?;
+                        }
+                    }
                 }
                 Ok(())
             },

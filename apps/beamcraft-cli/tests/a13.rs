@@ -973,3 +973,393 @@ fn a_polygon_cut_takes_the_persistent_hole_counter_and_refuses_retired_ids() {
     let authored = f.authored_text(&cut);
     assert!(authored.contains("steel:hole:ordinals = [1]"), "{authored}");
 }
+
+/// The volume of the one member an `inspect-elements` reply lists.
+fn first_member_volume(inspected: &Json) -> f64 {
+    let members = at(inspected, &["members"]).array().unwrap();
+    num(&members[0], &["quantities", "volume", "mm3"])
+}
+
+/// The volume of the named member in an `inspect-elements` reply.
+fn member_volume(inspected: &Json, id: &str) -> f64 {
+    let members = at(inspected, &["members"]).array().unwrap();
+    let member = members
+        .iter()
+        .find(|m| text(m, "element_id") == id)
+        .unwrap_or_else(|| panic!("{id} missing from the inspection"));
+    num(member, &["quantities", "volume", "mm3"])
+}
+
+#[test]
+fn a_member_polygon_cut_slots_an_shs_end_to_end() {
+    let f = Fixture::new();
+    // A square hollow section with sharp corners (a zero radius): the wall set is all flat
+    // faces, which the certified member replay serves. A filleted hollow section (a
+    // hot-rolled RHS with r > 0) stays refused with the standing G14.2 wall-mix refusal;
+    // `steel::engine::member_hole` regression-tests that refusal.
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--family", "rhs", "--h", "100", "--b", "100", "--t", "4", "--r", "0",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let created = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            "01b00000-0000-7000-8000-0000000000f1",
+        ],
+    );
+    let member = text(at(&created, &["member"]), "element_id");
+    let gross = first_member_volume(&f.inspected());
+
+    // The member form: a 20 x 20 slot through both walls normal to element Z, through the
+    // whole body (the section direction the records compose along). Both openings sit clear
+    // of the section corners, so the certified removed volume is the exact parallel-wall
+    // identity, slot area x 2 x t = 3200 mm3.
+    let cut = f.ok(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            OP_A,
+            "--op-id",
+            OP_A,
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "0,1,0",
+            "--polygon",
+            "-10,-10;-10,10;10,10;10,-10",
+        ],
+    );
+    assert_eq!(text(&cut, "outcome"), "a13_applied");
+    let net = f.volume_of(&cut, "element");
+    assert!((net - (gross - 3200.0)).abs() <= 0.001, "{net} vs {gross}");
+
+    // The record is a member polygon cut: the eleventh record attribute carries the kind, and
+    // the inspect response names it.
+    let authored = f.authored_text(&cut);
+    assert!(
+        authored.contains("steel:mhole:kinds = [\"polygon_cut\"]"),
+        "{authored}"
+    );
+    let records = at(at(&cut, &["element"]), &["hole_records"])
+        .array()
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(at(&records[0], &["ordinal"]).unsigned().unwrap(), 0);
+    assert_eq!(text(&records[0], "kind"), "polygon_cut");
+    assert_eq!(text(&records[0], "extent"), "through");
+
+    // A retry is a replay; a removal through the hole command is refused: the record is a
+    // polygon cut, not a hole.
+    let again = f.ok(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            OP_A,
+            "--op-id",
+            OP_A,
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "0,1,0",
+            "--polygon",
+            "-10,-10;-10,10;10,10;10,-10",
+        ],
+    );
+    assert_eq!(text(&again, "outcome"), "a13_replayed");
+    let kind = f.rejected("remove-hole", &["--id", &member, "--operation-id", OP_A]);
+    assert_eq!(kind, "INVALID_ARGUMENT");
+
+    // The undo returns the head member; the redo restores both cuts (the draft's own slot at
+    // another axis position composes with the head's along the same section direction).
+    let draft = f.draft();
+    f.ok_in(
+        &draft,
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            OP_B,
+            "--axis-point",
+            "0,0,4000",
+            "--axis-direction",
+            "0,1,0",
+            "--polygon",
+            "-10,-10;-10,10;10,10;10,-10",
+        ],
+    );
+    f.history(&draft, "undo-workspace");
+    let (_, undone) = f.run_in(&draft, "inspect-elements", &[]);
+    assert!((first_member_volume(&undone) - (gross - 3200.0)).abs() <= 0.001);
+    f.history(&draft, "redo-workspace");
+    let (_, redone) = f.run_in(&draft, "inspect-elements", &[]);
+    assert!((first_member_volume(&redone) - (gross - 6400.0)).abs() <= 0.001);
+}
+
+#[test]
+fn a_member_polygon_cut_refuses_the_wrong_forms_and_coexists_with_a_hole() {
+    let f = Fixture::new();
+    let profile = f.beam_profile();
+    let created = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            "01b00000-0000-7000-8000-0000000000f2",
+        ],
+    );
+    let member = text(at(&created, &["member"]), "element_id");
+    // The plate form on a member is an argument error, not the old unsupported-geometry
+    // refusal; an axial direction stays unsupported; the member form on a plate is the
+    // mirrored argument error.
+    let kind = f.rejected(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            OP_A,
+            "--polygon",
+            "-50,-100;-50,100;50,100;50,-100",
+        ],
+    );
+    assert_eq!(kind, "INVALID_ARGUMENT");
+    let kind = f.rejected(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            OP_A,
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "0,0,1",
+            "--polygon",
+            "-50,-100;-50,100;50,100;50,-100",
+        ],
+    );
+    assert_eq!(kind, "UNSUPPORTED_GEOMETRY");
+
+    // A hand-placed round hole joins the same record list and replays with the cut: both
+    // records run along the same section direction (the one the records compose along), the
+    // hole first, the cut beside it.
+    let added = f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            "01b00000-0000-7000-8000-0000000000f3",
+            "--axis-point",
+            "0,0,4500",
+            "--axis-direction",
+            "0,1,0",
+            "--diameter",
+            "40",
+        ],
+    );
+    let holed = f.volume_of(&added, "element");
+    let records = at(at(&added, &["element"]), &["hole_records"])
+        .array()
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(text(&records[0], "kind"), "hole");
+
+    // The cut: a 20 x 20 slot through the solid section, composing with the hole. The cutter
+    // crosses the 300 mm section in one chord, so the certified removed volume is the exact
+    // parallel-wall identity, slot area x 300 = 120,000 mm3.
+    let cut = f.ok(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            OP_A,
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "0,1,0",
+            "--polygon",
+            "-10,-10;-10,10;10,10;10,-10",
+        ],
+    );
+    let net = f.volume_of(&cut, "element");
+    assert!(
+        (net - (holed - 120_000.0)).abs() <= 0.001,
+        "{net} vs {holed}"
+    );
+
+    let records = at(at(&cut, &["element"]), &["hole_records"])
+        .array()
+        .unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(text(&records[0], "kind"), "hole");
+    assert_eq!(text(&records[1], "kind"), "polygon_cut");
+
+    // A fresh process reopens and re-verifies the two records.
+    let inspected = f.inspected();
+    let members = at(&inspected, &["members"]).array().unwrap();
+    assert_eq!(num(&members[0], &["quantities", "volume", "mm3"]), net,);
+
+    // The oblique cut on its own member: a 100 x 50 slot through the solid section at 45
+    // degrees in the section plane (the footprint's transverse band must stay inside both
+    // crossed faces). Both crossed walls are parallel, so the certified removed volume is the
+    // exact parallel-wall identity, slot area x 200 / cos(45 deg) = 1,414,213.5624 mm3.
+    let second = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,2000,0",
+            "--end",
+            "6000,2000,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            "01b00000-0000-7000-8000-0000000000f5",
+        ],
+    );
+    let other = text(at(&second, &["member"]), "element_id");
+    let gross_other = member_volume(&f.inspected(), &other);
+    let oblique = f.ok(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &other,
+            "--operation-id",
+            OP_B,
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,1,0",
+            "--polygon",
+            "-50,-25;-50,25;50,25;50,-25",
+        ],
+    );
+    let removed = 5000.0 * 200.0 / (0.5f64.sqrt());
+    let net_other = f.volume_of(&oblique, "element");
+    assert!(
+        (net_other - (gross_other - removed)).abs() <= 0.01,
+        "{net_other} vs {gross_other}"
+    );
+
+    // The member form on a plate target is refused symmetrically.
+    let plate = text(at(&f.plate(&[]), &["plate"]), "element_id");
+    let kind = f.rejected(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &plate,
+            "--operation-id",
+            "01b00000-0000-7000-8000-0000000000f6",
+            "--axis-point",
+            "0,0,0",
+            "--axis-direction",
+            "1,0,0",
+            "--polygon",
+            "100,100;100,200;200,200;200,100",
+        ],
+    );
+    assert_eq!(kind, "INVALID_ARGUMENT");
+}
+
+#[test]
+fn a_member_polygon_cut_slots_a_chs_and_undoes() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &["--family", "chs", "--d", "168", "--t", "5"],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let created = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3000",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            "01b00000-0000-7000-8000-0000000000f4",
+        ],
+    );
+    let member = text(at(&created, &["member"]), "element_id");
+    let gross = first_member_volume(&f.inspected());
+
+    // The slot lives in a personal draft (one member-hole record per tube: a faceted wall's
+    // band walls keep the standing re-cut refusal of the G14.2 note, so the head stays gross
+    // and the draft carries the one cut). The faceted wall strips are tilted against the
+    // cutter, so the certified removed volume is the clip pieces' moment enclosure around the
+    // naive area x 2 x t = 1440 mm3; the assertion proves material left through both walls of
+    // one certified replay.
+    let draft = f.draft();
+    let cut = f.ok_in(
+        &draft,
+        "cut-by-polygon",
+        &[
+            "--id",
+            &member,
+            "--operation-id",
+            OP_A,
+            "--axis-point",
+            "0,0,1500",
+            "--axis-direction",
+            "0,1,0",
+            "--polygon",
+            "-6,-6;-6,6;6,6;6,-6",
+        ],
+    );
+    assert_eq!(text(&cut, "outcome"), "a13_applied");
+    let net = f.volume_of(&cut, "element");
+    assert!((gross - net - 1440.0).abs() <= 0.001, "{net} vs {gross}");
+    let records = at(at(&cut, &["element"]), &["hole_records"])
+        .array()
+        .unwrap();
+    assert_eq!(text(&records[0], "kind"), "polygon_cut");
+
+    // The undo returns the gross tube; the redo reproduces the certified cut.
+    f.history(&draft, "undo-workspace");
+    let (_, undone) = f.run_in(&draft, "inspect-elements", &[]);
+    assert!((first_member_volume(&undone) - gross).abs() <= 0.001);
+    f.history(&draft, "redo-workspace");
+    let (_, redone) = f.run_in(&draft, "inspect-elements", &[]);
+    assert!((first_member_volume(&redone) - net).abs() <= 0.001);
+}

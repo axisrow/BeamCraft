@@ -346,7 +346,12 @@ a13_options!(
     "--axis",
     "--keep"
 );
-a13_options!(A13_POLYGON_OPTIONS_ALL, "--polygon");
+a13_options!(
+    A13_POLYGON_OPTIONS_ALL,
+    "--polygon",
+    "--axis-point",
+    "--axis-direction"
+);
 a13_options!(A13_PART_OPTIONS_ALL, "--tool");
 a13_options!(A13_FIT_OPTIONS_ALL, "--tool");
 a13_options!(
@@ -2069,13 +2074,37 @@ fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>
             axis: translation(given("--axis").ok_or_else(|| invalid("--axis is required"))?)?,
             keep: keep_side(options)?,
         }),
-        "cut-by-polygon" => A13Command::Polygon(CutByPolygon {
-            target_id: element("--id")?,
-            operation_id,
-            polygon_mm: polygon_pairs(
-                given("--polygon").ok_or_else(|| invalid("--polygon is required"))?,
-            )?,
-        }),
+        "cut-by-polygon" => {
+            // The member form (epic #556 slice 1): `--axis-point "U,V,W"` and
+            // `--axis-direction "X,Y,Z"` name the member-hole frame the polygon lives in,
+            // through-cut only; the plate form takes neither.
+            let member_frame = match (given("--axis-point"), given("--axis-direction")) {
+                (None, None) => (None, None),
+                (Some(point), Some(direction)) => {
+                    let triple = |text: &str| -> Run<[f64; 3]> {
+                        match numbers_list(text, 3)?[..] {
+                            [a, b, c] => Ok([a, b, c]),
+                            _ => Err(invalid("a member cut has the wrong number of values")),
+                        }
+                    };
+                    (Some(triple(point)?), Some(triple(direction)?))
+                }
+                _ => {
+                    return Err(invalid(
+                        "--axis-point and --axis-direction are required together",
+                    ));
+                }
+            };
+            A13Command::Polygon(CutByPolygon {
+                target_id: element("--id")?,
+                operation_id,
+                polygon_mm: polygon_pairs(
+                    given("--polygon").ok_or_else(|| invalid("--polygon is required"))?,
+                )?,
+                axis_point_mm: member_frame.0,
+                axis_direction: member_frame.1,
+            })
+        }
         "cut-by-part" => A13Command::Part(CutByPart {
             target_id: element("--id")?,
             operation_id,
@@ -3934,6 +3963,9 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
                             ("operation_id", Json::text(r.operation_id.to_string())),
                             ("ordinal", Json::uint(r.ordinal as u64)),
                             ("extent", Json::text(r.extent.as_str())),
+                            // The record kind: a fastener hole (A04.2) or a member polygon
+                            // cut (A13).
+                            ("kind", Json::text(r.kind.as_str())),
                             // The generating bolt group (the F06 member-hole amendment);
                             // null for a hand-placed hole.
                             (
