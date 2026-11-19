@@ -389,8 +389,9 @@ cut-by-line --store ROOT --id UUID --operation-id UUID --point-a X,Y,Z --point-b
 write.
 
 ```text
-cut-by-polygon --store ROOT --id UUID --operation-id UUID --polygon X,Y;X,Y;... [--op-id UUID]
-    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+cut-by-polygon --store ROOT --id UUID --operation-id UUID --polygon X,Y;X,Y;...
+    [--axis-point U,V,W] [--axis-direction X,Y,Z] [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### cut-by-part

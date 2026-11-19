@@ -58,8 +58,9 @@ impl AuthoredPart {
 /// Everything one accepted `CutByPolygon` or `CutByPart` produces for the adapter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolygonCutOutcome {
-    /// The target's authored state with the record appended.
-    pub authored: AuthoredPlate,
+    /// The target's authored state with the record appended: a plate's through-cut record for
+    /// the plate form, a member's polygon-cut record for the member form.
+    pub authored: AuthoredPart,
     /// The ordinal the record took in the shared through-cut counter.
     pub ordinal: usize,
     /// Declared read and write sets.
@@ -227,9 +228,13 @@ fn admit_through_polygon(
 }
 
 /// Applies `CutByPolygon` to the plate's authored state in memory: the polygon is appended as a
-/// through-cut record. The kernel decides at replay whether the polygon is clockwise, simple,
-/// strictly inside the outline and clear of the other records; a refusal refuses the whole
-/// command and changes nothing.
+/// Applies `CutByPolygon`: the plate form cuts a plate with the prism of the polygon in its
+/// local XY; the member form (the member frame fields present) cuts a member with the prism of
+/// the polygon in the member-hole frame along a section-plane direction — an owned record of
+/// kind `polygon_cut` replayed by the certified member prism subtraction (epic #556 slice 1).
+/// The kernel decides at replay whether the polygon is clockwise, simple, strictly inside the
+/// walls or outline and clear of the other records; a refusal refuses the whole command and
+/// changes nothing.
 pub fn cut_by_polygon(
     command: &CutByPolygon,
     plate: Option<&AuthoredPlate>,
@@ -238,22 +243,85 @@ pub fn cut_by_polygon(
     next_ordinal: u16,
 ) -> Result<PolygonCutOutcome, CommandError> {
     command.validate_arguments()?;
-    let head = found_plate(plate, member, command.target_id)?;
-    let (authored, ordinal, footprint) = admit_through_polygon(
-        head,
-        command.operation_id,
-        command.polygon()?,
-        HoleKind::PolygonCut,
-        None,
-        operation_used,
-        next_ordinal,
-    )?;
-    Ok(PolygonCutOutcome {
-        authored,
-        ordinal,
-        footprint,
-        fingerprint: command.content_fingerprint()?,
-    })
+    let frame = command.member_frame()?;
+    let head = found_cut_target(plate, member, command.target_id)?;
+    let fingerprint = command.content_fingerprint()?;
+    match (head, frame) {
+        (CutHead::Plate(head), None) => {
+            let (authored, ordinal, footprint) = admit_through_polygon(
+                head,
+                command.operation_id,
+                command.polygon()?,
+                HoleKind::PolygonCut,
+                None,
+                operation_used,
+                next_ordinal,
+            )?;
+            Ok(PolygonCutOutcome {
+                authored: AuthoredPart::Plate(authored),
+                ordinal,
+                footprint,
+                fingerprint,
+            })
+        }
+        (CutHead::Member(head), Some((axis_point_mm, axis_direction))) => {
+            let outcome = crate::engine::member_hole::admit_member_polygon_cut(
+                command.target_id,
+                command.operation_id,
+                head,
+                axis_point_mm,
+                axis_direction,
+                command.polygon()?,
+                fingerprint,
+                &|id: OpId| operation_used(&id),
+                usize::from(next_ordinal),
+            )?;
+            Ok(PolygonCutOutcome {
+                authored: AuthoredPart::Member(outcome.authored),
+                ordinal: outcome.ordinal,
+                footprint: outcome.footprint,
+                fingerprint: outcome.fingerprint,
+            })
+        }
+        // The frame fields must name the target's kind: a member form on a plate and a plate
+        // form on a member are argument errors, not geometry ones.
+        (CutHead::Plate(_), Some(_)) => Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "axis_point_mm",
+            "a plate cut takes no --axis-point or --axis-direction",
+        )),
+        (CutHead::Member(_), None) => Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "axis_point_mm",
+            "a member cut takes --axis-point and --axis-direction",
+        )),
+    }
+}
+
+/// The cut target resolved to its authored state: the plate with the given identity, or the
+/// member with it. An absent element is `NOT_FOUND`; the form checks between the two kinds are
+/// the caller's (`cut_by_polygon` pairs the target with the command's frame fields).
+enum CutHead<'a> {
+    Plate(&'a AuthoredPlate),
+    Member(&'a AuthoredMember),
+}
+
+fn found_cut_target<'a>(
+    plate: Option<&'a AuthoredPlate>,
+    member: Option<&'a AuthoredMember>,
+    target_id: ElementId,
+) -> Result<CutHead<'a>, CommandError> {
+    if let Some(head) = plate.filter(|head| head.id == target_id) {
+        return Ok(CutHead::Plate(head));
+    }
+    if let Some(head) = member.filter(|head| head.id == target_id) {
+        return Ok(CutHead::Member(head));
+    }
+    Err(CommandError::new(
+        ErrorCode::NotFound,
+        "target_id",
+        "the element is not in the head revision",
+    ))
 }
 
 /// The plate with the given identity, or the typed refusal: a member target is the documented
@@ -327,7 +395,7 @@ pub fn cut_by_part(
         next_ordinal,
     )?;
     Ok(PolygonCutOutcome {
-        authored,
+        authored: AuthoredPart::Plate(authored),
         ordinal,
         footprint,
         fingerprint: command.content_fingerprint()?,
@@ -1102,6 +1170,7 @@ fn quat_multiply(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
 mod tests {
     use super::*;
     use crate::engine::command::evaluate_plate;
+    use crate::model::command::{HoleExtent, MemberHoleKind};
     use beamcraft_model::digest::Sha256;
 
     fn id(byte: u8) -> ElementId {
@@ -1272,10 +1341,13 @@ mod tests {
             target_id: id(5),
             operation_id: op(201),
             polygon_mm: square(100.0, 100.0, 100.0),
+            axis_point_mm: None,
+            axis_direction: None,
         };
         let outcome = cut_by_polygon(&command, Some(&source), None, &none, 0).unwrap();
         assert_eq!(outcome.ordinal, 0);
-        // A member target is the documented unsupported geometry, never a missing element.
+        // A member target needs the member form: the plate form on a member is an argument
+        // error, not the old unsupported-geometry refusal (epic #556 slice 1).
         let beam = member(6, 6000.0, [0.0; 3], digest(b"profile"));
         let on_member = CutByPolygon {
             target_id: id(6),
@@ -1285,10 +1357,13 @@ mod tests {
             cut_by_polygon(&on_member, Some(&source), Some(&beam), &none, 0)
                 .unwrap_err()
                 .code,
-            ErrorCode::UnsupportedGeometry
+            ErrorCode::InvalidArgument
         );
-        assert_eq!(outcome.authored.hole_records[0].kind, HoleKind::PolygonCut);
-        let body = evaluate_plate(&outcome.authored).unwrap();
+        let AuthoredPart::Plate(authored) = &outcome.authored else {
+            panic!("expected the plate target");
+        };
+        assert_eq!(authored.hole_records[0].kind, HoleKind::PolygonCut);
+        let body = evaluate_plate(authored).unwrap();
         assert!((body.quantities().volume_mm3 - 4_900_000.0).abs() <= 1e-6);
         // A second record takes the next ordinal of the shared through-cut counter.
         let next = CutByPolygon {
@@ -1297,7 +1372,7 @@ mod tests {
             ..command.clone()
         };
         assert_eq!(
-            cut_by_polygon(&next, Some(&outcome.authored), None, &none, 1)
+            cut_by_polygon(&next, Some(authored), None, &none, 1)
                 .unwrap()
                 .ordinal,
             1
@@ -1309,7 +1384,77 @@ mod tests {
             ..command.clone()
         };
         let attempted = cut_by_polygon(&crossing, Some(&source), None, &none, 0).unwrap();
-        assert!(evaluate_plate(&attempted.authored).is_err());
+        let AuthoredPart::Plate(attempted) = attempted.authored else {
+            panic!("expected the plate target");
+        };
+        assert!(evaluate_plate(&attempted).is_err());
+        // The plate form on a plate refuses the member frame fields, both together.
+        let plate_frame = CutByPolygon {
+            axis_point_mm: Some([0.0; 3]),
+            axis_direction: Some([0.0, 1.0, 0.0]),
+            ..command.clone()
+        };
+        assert_eq!(
+            cut_by_polygon(&plate_frame, Some(&source), None, &none, 0)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn a_member_polygon_cut_admits_an_owned_polygon_cut_record() {
+        let beam = member(6, 6000.0, [0.0; 3], digest(b"profile"));
+        // The member form: a slot through both walls of the section along +Y, through the body.
+        let command = CutByPolygon {
+            target_id: id(6),
+            operation_id: op(205),
+            polygon_mm: square(100.0, 100.0, 100.0),
+            axis_point_mm: Some([500.0, 0.0, 0.0]),
+            axis_direction: Some([0.0, 1.0, 0.0]),
+        };
+        let outcome = cut_by_polygon(&command, None, Some(&beam), &none, 0).unwrap();
+        let AuthoredPart::Member(authored) = &outcome.authored else {
+            panic!("expected the member target");
+        };
+        assert_eq!(outcome.ordinal, 0);
+        assert_eq!(authored.hole_records.len(), 1);
+        let record = &authored.hole_records[0];
+        assert_eq!(record.kind, MemberHoleKind::PolygonCut);
+        assert_eq!(record.extent, HoleExtent::Through);
+        assert_eq!(record.owner, None);
+        assert_eq!(record.polygon_mm, command.polygon_mm);
+        // The plate form on the cut member is the argument error, and the duplicate id is the
+        // shared record-identity refusal.
+        let plate_form = CutByPolygon {
+            axis_point_mm: None,
+            axis_direction: None,
+            ..command.clone()
+        };
+        assert_eq!(
+            cut_by_polygon(&plate_form, None, Some(authored), &none, 1)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            cut_by_polygon(&command, None, Some(&beam), &|o: &OpId| *o == op(205), 0)
+                .unwrap_err()
+                .code,
+            ErrorCode::DuplicateId
+        );
+        // An axial cut direction (a component along the member axis) is refused at the model
+        // admission; the kernel cutter is perpendicular to the axis.
+        let axial = CutByPolygon {
+            axis_direction: Some([0.0, 0.0, 1.0]),
+            ..command.clone()
+        };
+        assert_eq!(
+            cut_by_polygon(&axial, None, Some(&beam), &none, 0)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
     }
 
     #[test]
@@ -1332,7 +1477,10 @@ mod tests {
         };
         let outcome = cut_by_part(&command, Some(&source), None, Some(&cutter), &none, 0).unwrap();
         assert_eq!(outcome.ordinal, 0);
-        let body = evaluate_plate(&outcome.authored).unwrap();
+        let AuthoredPart::Plate(authored) = &outcome.authored else {
+            panic!("expected the plate target");
+        };
+        let body = evaluate_plate(authored).unwrap();
         assert!((body.quantities().volume_mm3 - 4_900_000.0).abs() <= 1e-6);
         // The tool's footprint read is declared.
         assert!(

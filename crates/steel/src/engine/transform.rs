@@ -1146,6 +1146,7 @@ mod tests {
             extent: crate::model::command::HoleExtent::Through,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
             owner: None,
+            kind: crate::model::command::MemberHoleKind::Hole,
         }];
         assert_eq!(
             mirror_member_local(&mut drilled).unwrap_err().code,

@@ -11,7 +11,9 @@ the engine kind guards stay, and member records live in their own typed list on
 `update-hole`/`remove-hole`; record identities remain one project-wide space. Storage is
 the `steel:mhole:*` attribute set plus its own `steel:mhole:nextOrdinal`/
 `retiredOperationIds` history (a third record family next to `steel:cut:*` and
-`steel:hole:*`); the canonical instance group replays as one atomic unit, as for cuts.
+`steel:hole:*`); since the A13 member slice the set carries the eleventh attribute
+`steel:mhole:kinds` (`hole` / `polygon_cut`, the member polygon cuts of epic #556 slice 1);
+the canonical instance group replays as one atomic unit, as for cuts.
 
 The replay cuts each record with the kernel's certified section-aware member-hole
 operation (G14.1, with the directed cutters of G14.2), mapped into the hole frame by an

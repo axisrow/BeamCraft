@@ -969,6 +969,7 @@ fn regenerated_holes(
                 extent: hole.extent,
                 polygon_mm,
                 owner: Some(group),
+                kind: steel::model::command::MemberHoleKind::Hole,
             });
         }
         next.hole_records.sort_by_key(|r| r.ordinal);

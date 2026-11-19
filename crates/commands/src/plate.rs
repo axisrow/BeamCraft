@@ -77,8 +77,8 @@ use steel::layer as steel_layer;
 use steel::layer::PlateShape;
 use steel::model::command::{
     BendRecord, BendSpec, CornerTreatment, CreatePlate, CutRecord, HoleExtent, HoleKind,
-    HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner, PlateSide,
-    SectionDepthPosition, SectionPlacement, SectionPlanePosition,
+    HoleRecord, KeepSide, MAX_BENDS, MemberHoleKind, MemberHoleRecord, MemberKind, PlateCorner,
+    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
 
 /// Derived mesh as read back from a derived layer.
@@ -771,12 +771,12 @@ fn decode_cut(prim: &Prim) -> Result<Vec<CutRecord>, Refusal> {
         .collect()
 }
 
-/// The member-hole operation records of a committed member (A04.2): all nine attributes or
+/// The member-hole operation records of a committed member (A04.2): all eleven attributes or
 /// none, aligned with each other, the polygons cut by the vertex counts, every ordinal strictly
 /// increasing and every id a full UUIDv7. A damaged or half-authored record is an integrity
 /// error, never a default.
 fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refusal> {
-    const FIELDS: [&str; 10] = [
+    const FIELDS: [&str; 11] = [
         "steel:mhole:pointsMm",
         "steel:mhole:vertexCounts",
         "steel:mhole:operationIds",
@@ -787,6 +787,7 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         "steel:mhole:extentFromMm",
         "steel:mhole:extentToMm",
         "steel:mhole:generatedBy",
+        "steel:mhole:kinds",
     ];
     let bad = || integrity("committed member has inconsistent hole record attributes");
     let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
@@ -867,10 +868,18 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         Some(Value::Array(values)) => values
             .iter()
             .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
-            .collect::<Result<_, _>>()?,
+            .collect::<Result<Vec<_>, _>>()?,
         _ => return Err(bad()),
     };
-    if polygons.len() != owners.len() {
+    // The record kind of each record (A13): a fastener hole or a member polygon cut.
+    let kinds: Vec<MemberHoleKind> = match property(prim, FIELDS[10]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| MemberHoleKind::parse(text(v).ok_or_else(bad)?).ok_or_else(bad))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(bad()),
+    };
+    if polygons.len() != owners.len() || polygons.len() != kinds.len() {
         return Err(bad());
     }
     polygons
@@ -881,8 +890,12 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         .zip(directions)
         .zip(extents)
         .zip(owners)
+        .zip(kinds)
         .map(
-            |((((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent), owner)| {
+            |(
+                ((((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent), owner),
+                kind,
+            )| {
                 Ok(MemberHoleRecord {
                     operation_id: OpId::parse(&id).map_err(|_| bad())?,
                     ordinal,
@@ -894,6 +907,7 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
                         "" => None,
                         text => Some(ElementId::parse(text).map_err(|_| bad())?),
                     },
+                    kind,
                 })
             },
         )
