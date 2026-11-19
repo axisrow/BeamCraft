@@ -112,7 +112,7 @@ determinism (same bytes for the same revision, header time from the RevisionId);
 file by the own reader; the volume recomputed from every face set against the stored volume;
 placement relative to the building; storey containment and building containment; optional entities
 only with content (`IFCX-EMIT-001`); material grade, `Unspecified`, density; quantity sets and the
-plate mass as properties; gross values only without holes; unknown, stale and missing quantities
+plate mass as properties; gross values only without operations; unknown, stale and missing quantities
 omitted, listed and never zero; deactivated elements; a copy gets its own GlobalId; GlobalIds
 survive a rename; export changes nothing in the store and writes no `ifcGlobalId`; refusals
 (version, schema, format, ids, unknown revision, no revision, no recorded ProjectId, integrity,

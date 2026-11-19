@@ -320,6 +320,9 @@ struct Body<'a> {
     material: Option<ContentDigest>,
     profile: Option<ContentDigest>,
     holes: Option<u32>,
+    /// Whether the element carries operation records: IFCX-QTY-004 gives the gross quantities
+    /// only to an element without operations, so a cut or holed element publishes net only.
+    operations: bool,
     quantities: &'a steel::engine::command::Quantities,
 }
 
@@ -336,7 +339,9 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
                 profile: None,
                 // The body's count covers create-authored and AddHole holes alike; the
                 // deprecated create-authored attribute alone misses every AddHole (issue 598).
+                // The plane cuts of A03 are operations too (issue 556).
                 holes: u32::try_from(r.body.hole_count).ok(),
+                operations: r.body.hole_count != 0 || !r.authored.cuts.is_empty(),
                 quantities: &r.quantities,
             },
         );
@@ -355,6 +360,9 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
                 material: r.authored.material,
                 profile: Some(r.authored.profile),
                 holes: None,
+                // A03 plane cuts and the A04.2 member holes are operations too (issue 556);
+                // `holes` stays None because the HoleCount property is a plate's alone.
+                operations: !r.authored.cuts.is_empty() || !r.authored.hole_records.is_empty(),
                 quantities: &r.quantities,
             },
         );
@@ -608,8 +616,6 @@ fn body_element(
             None
         }
     };
-    // Gross quantities only for an element without operations (IFCX-QTY-004).
-    let without_operations = body.holes.unwrap_or(0) == 0;
     let quantities = QuantityData {
         volume_status: volume.into(),
         mass_status: mass.into(),
@@ -617,9 +623,9 @@ fn body_element(
         mass_signature: report.stored.as_ref().map(|s| s.mass_signature),
         algorithm: report.stored.as_ref().map(|s| s.algorithm.clone()),
         net_volume_m3: net_volume,
-        gross_volume_m3: net_volume.filter(|_| without_operations),
+        gross_volume_m3: net_volume.filter(|_| !body.operations),
         net_weight_kg: net_weight,
-        gross_weight_kg: net_weight.filter(|_| without_operations),
+        gross_weight_kg: net_weight.filter(|_| !body.operations),
     };
     let declared = match body.profile {
         Some(digest) => Some(
