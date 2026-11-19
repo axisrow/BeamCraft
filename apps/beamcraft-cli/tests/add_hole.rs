@@ -628,6 +628,203 @@ fn a_member_hole_that_no_longer_fits_refuses_a_ranged_one_cuts_and_a_blind_one_r
 }
 
 #[test]
+fn a_member_hole_lives_the_full_lifecycle_off_the_origin() {
+    // The hand-placed half of G14.1 through the binary, mirroring the #756 member test:
+    // create, verbatim retry, the member guards (polybeam, roll), edit, delete and undo.
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "300"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    // The member sits at y = 250, z = 45, off the world origin: the replay resolves the
+    // stored member-frame point through the frame origin.
+    let member = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,250,45",
+            "--end",
+            "6000,250,45",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    let member_id = text(at(&member, &["member"]), "element_id");
+    let args = [
+        "--id",
+        member_id.as_str(),
+        "--operation-id",
+        "019a7bf0-0000-7000-8000-0000000000e1",
+        "--axis-point",
+        "0,0,3000",
+        "--axis-direction",
+        "1,0,0",
+        "--diameter",
+        "100",
+    ];
+    let added = f.ok("add-hole", &args);
+    assert_eq!(text(&added, "outcome"), "hole_added");
+    // The X-axis frame is X_r = element +Y, Y_r = element +Z: the hole removes the 72-gon
+    // area of r = 50 times the 200 mm section width from the 360,000,000 gross.
+    let element = at(&added, &["element"]);
+    assert_eq!(at(element, &["hole_records"]).array().unwrap().len(), 1);
+    assert!((num(element, &["quantities", "volume", "mm3"]) - 358_431_196.6).abs() <= 10.0);
+    // A verbatim retry replays over its own record.
+    let again = f.ok("add-hole", &args);
+    assert_eq!(text(&again, "outcome"), "hole_add_replayed");
+
+    // The member guards through the binary: a polybeam and a rolled member refuse, and
+    // neither refusal wrote anything on its own member.
+    let polybeam = f.ok(
+        "create-polybeam",
+        &[
+            "--points",
+            "0,0,0;1000,0,0;2000,500,0",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    let code = f.rejected(
+        "add-hole",
+        &[
+            "--id",
+            &text(at(&polybeam, &["member"]), "element_id"),
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000e2",
+            "--axis-point",
+            "0,0,1000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    assert_eq!(code, "UNSUPPORTED_GEOMETRY");
+    let rolled = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--roll",
+            "0.5",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    let code = f.rejected(
+        "add-hole",
+        &[
+            "--id",
+            &text(at(&rolled, &["member"]), "element_id"),
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000e3",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    assert_eq!(code, "UNSUPPORTED_GEOMETRY");
+
+    // The edit keeps the identity and the ordinal and changes the volume; the delete
+    // restores the gross end to end.
+    let updated = f.ok(
+        "update-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000e1",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "200",
+        ],
+    );
+    let element = at(&updated, &["element"]);
+    let records = at(element, &["hole_records"]).array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(num(&records[0], &["ordinal"]), 0.0);
+    assert!((num(element, &["quantities", "volume", "mm3"]) - 353_720_948.0).abs() <= 10.0);
+    let removed = f.ok(
+        "remove-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000e1",
+        ],
+    );
+    let element = at(&removed, &["element"]);
+    assert!(at(element, &["hole_records"]).array().unwrap().is_empty());
+    assert_eq!(
+        num(element, &["quantities", "volume", "mm3"]),
+        360_000_000.0
+    );
+
+    // Undo on a workspace fork removes the record and restores the volume as one unit.
+    let workspace = f.shared.root.join("ws").to_str().unwrap().to_owned();
+    fs::create_dir(&workspace).unwrap();
+    f.ok(
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &workspace,
+            "--user-id",
+            "019a7bf0-0000-7000-8000-0000000000e0",
+        ],
+    );
+    let raw = vec![
+        "add-hole",
+        "--store",
+        workspace.as_str(),
+        "--id",
+        member_id.as_str(),
+        "--operation-id",
+        "019a7bf0-0000-7000-8000-0000000000e4",
+        "--axis-point",
+        "0,0,3000",
+        "--axis-direction",
+        "1,0,0",
+        "--diameter",
+        "100",
+    ];
+    let added = f.ok_raw(&raw);
+    assert_eq!(text(&added, "outcome"), "hole_added");
+    let undone = f.ok_raw(&["undo-workspace", "--workspace-dir", &workspace]);
+    assert_eq!(text(&undone, "outcome"), "workspace_undone");
+    let inspected = f.ok_raw(&[
+        "inspect-elements",
+        "--store",
+        &workspace,
+        "--element",
+        &member_id,
+    ]);
+    let element = at(&inspected, &["members"]).array().unwrap()[0].clone();
+    assert!(
+        at(&element, &["hole_records"]).array().unwrap().is_empty(),
+        "undo restores the exact previous state"
+    );
+    assert_eq!(
+        num(&element, &["quantities", "volume", "mm3"]),
+        360_000_000.0
+    );
+}
+
+#[test]
 fn undo_removes_the_record_and_the_volume_returns() {
     let f = Fixture::new();
     let user = "019a7bf0-0000-7000-8000-0000000000e0";
