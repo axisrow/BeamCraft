@@ -7,26 +7,21 @@
 retries = 0
 slow-timeout = { period = "30s", terminate-after = 4, grace-period = "5s", on-timeout = "fail" }
 
-# One deliberate exception to the 120-second per-test budget: the R01 bounding test
-# reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has
-# attaches a 9,500-prim source on purpose (46-90 s in isolation), so on a shared machine
-# under concurrent heavy local builds it can outgrow the standard budget and die on the
-# deadline, which reads as a regression. It alone gets 240 seconds; every other test keeps
-# the default. Custom profiles inherit default's settings, so the gate, fast and ci
-# profiles enforce this too. The filter matches the exact test name only: override
-# filters are validated against the workspace's own binaries at parse time, and the
-# gate's fixture workspaces reuse this file without the cli test binary (issue #529).
+# The slow tier (#738 P6, resolving the P1 stopgap): the default budget is the 120-second
+# table in docs/plan/test-gate.md, and the only exceptions are these named overrides, each
+# 30 s x 8 = 240 seconds - the R01 founding budget. Membership is for tests that must stay
+# at deliberate scale or deliberately attach a large fixture, measured green well below the
+# default cap unloaded, but load-sensitive enough on the shared machine (2-3.5x inflation is
+# the recorded evidence) that a budget kill would read as a regression. Every entry is an
+# exact-name filter, validated against the workspace's own binaries at parse time, and is
+# reviewed like code; the gate report lists the budgets. Additions need a measured median
+# and a note naming what the scale is for. Custom profiles inherit default's settings, so
+# the gate, fast and ci profiles enforce this too. The gate's fixture workspaces reuse this
+# file without the cli test binary (issue #529).
 [[profile.default.overrides]]
 filter = 'test(=reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has)'
 slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
 
-# The #738 P1 stopgap, owner-approved 2026-11-17: the run-script-converted budget tests
-# measure 15-75 s green on this machine, but a shared-Mac gate racing another worker's
-# builds inflated one of them 3.4x and clamped it at the default 120 s (two gate runs
-# killed, identical code each time). The same R01 reasoning applies: a deliberate
-# budget kill under load reads as a regression. 30 s x 8 = 240 s, exactly the R01
-# budget; every other test keeps the default. Revisit with the #738 P6 slow-tier
-# decision.
 [[profile.default.overrides]]
 filter = 'test(=alpha_scenario_expanded::expanded_alpha_runs_tools_views_regressions_and_exact_outputs)'
 slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
@@ -59,19 +54,20 @@ path = "junit.xml"
 
 [profile.fast]
 # Inner-loop default: everything except the integration suites that each measure
-# at least ~40 s of serial time on the reference Mac (baseline 2026-10-25):
-# cli export_ifc, numbering_approval, numbering, libraries,
-# environments and pick (modules of the one `cli` test binary); host recovery,
-# revision and compaction (modules of the one `host` test binary); kernel
-# g09_budget_fuzz and g05_profile_extrusion (modules of the one `kernel` test binary).
-# Nothing is removed: the skipped suites run in the default profile and in CI.
+# at least ~40 s of serial time on the reference Mac (baseline re-measured 2026-11-20,
+# the #738 P6 line move): cli alpha_scenario_expanded, offline_clients, model_checks,
+# export_ifc, numbering_approval, numbering, libraries, environments and pick (modules of
+# the one `cli` test binary); host operation_evidence, recovery, revision and compaction
+# (modules of the one `host` test binary); kernel g09_budget_fuzz and g05_profile_extrusion
+# (modules of the one `kernel` test binary). Nothing is removed: the skipped suites run in
+# the default profile and in CI.
 # Re-measure and move the line when a suite outgrows this list; an explicit
 # filter on the command line overrides default-filter, so any skipped test stays
 # reachable in this profile.
 default-filter = '''not (
     (package(beamcraft-cli) and binary(cli) and test(
-        /^(export_ifc|numbering_approval|numbering|libraries|environments|pick)::/))
-    or (package(beamcraft-host) and binary(host) and test(/^(recovery|revision|compaction)::/))
+        /^(alpha_scenario_expanded|offline_clients|model_checks|export_ifc|numbering_approval|numbering|libraries|environments|pick)::/))
+    or (package(beamcraft-host) and binary(host) and test(/^(operation_evidence|recovery|revision|compaction)::/))
     or (package(beamcraft-kernel) and binary(kernel) and test(/^(g09_budget_fuzz|g05_profile_extrusion)::/))
 )'''
 
