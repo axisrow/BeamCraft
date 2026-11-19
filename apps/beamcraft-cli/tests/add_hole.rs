@@ -921,3 +921,125 @@ fn a_copy_takes_fresh_operation_ids_and_the_same_ordinals() {
         num(&source, &["quantities", "volume", "mm3"])
     );
 }
+
+#[test]
+fn a_member_net_signature_binds_its_record_content_not_just_its_values() {
+    // The P-Mass net signature binds the digests of the authored operation records (issue 556
+    // item 4): two members whose records remove the same volume but sit at different stations
+    // carry different stored net signatures, and a member whose records are gone carries the
+    // signature of a never-operated one again.
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "300"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let beam = |name: &str, op: &str| {
+        text(
+            at(
+                &f.ok(
+                    "create-member",
+                    &[
+                        "--kind",
+                        "beam",
+                        "--start",
+                        "0,0,0",
+                        "--end",
+                        "6000,0,0",
+                        "--profile-digest",
+                        &profile,
+                        "--name",
+                        name,
+                        "--op-id",
+                        op,
+                    ],
+                ),
+                &["member"],
+            ),
+            "element_id",
+        )
+    };
+    let intact = beam("B1", "019a7bf0-0000-7000-8000-000000ab0101");
+    let at_1000 = beam("B2", "019a7bf0-0000-7000-8000-000000ab0102");
+    let at_2000 = beam("B3", "019a7bf0-0000-7000-8000-000000ab0103");
+    for (id, op, station) in [
+        (&at_1000, "019a7bf0-0000-7000-8000-000000ab0201", "1000"),
+        (&at_2000, "019a7bf0-0000-7000-8000-000000ab0202", "2000"),
+    ] {
+        f.ok(
+            "add-hole",
+            &[
+                "--id",
+                id,
+                "--operation-id",
+                op,
+                "--axis-point",
+                &format!("0,0,{station}"),
+                "--axis-direction",
+                "1,0,0",
+                "--diameter",
+                "40",
+            ],
+        );
+    }
+    let member_of = |id: &str| {
+        let inspected = f.inspect(Some(id));
+        let members = inspected.get("members").unwrap().array().unwrap();
+        assert_eq!(members.len(), 1, "{id}");
+        members[0].clone()
+    };
+    let stored_of = |element: &Json| {
+        let stored = at(element, &["stored_quantities"]);
+        (
+            text(stored, "expected_shape_signature"),
+            text(stored, "expected_gross_signature"),
+            text(stored, "stored_shape_signature"),
+            text(stored, "stored_algorithm"),
+            text(at(stored, &["volume"]), "freshness"),
+        )
+    };
+    let plain_element = member_of(&intact);
+    let first_element = member_of(&at_1000);
+    let second_element = member_of(&at_2000);
+    let plain = stored_of(&plain_element);
+    let first = stored_of(&first_element);
+    let second = stored_of(&second_element);
+    // The values cannot tell the two holed members apart (a through cutter takes the same
+    // column at both stations), but the record content can.
+    assert_eq!(
+        num(&first_element, &["quantities", "volume", "mm3"]),
+        num(&second_element, &["quantities", "volume", "mm3"]),
+    );
+    assert_eq!(first.1, second.1, "the gross signature stays the member's");
+    assert_ne!(first.0, second.0, "the station is a net-signature input");
+    assert_ne!(plain.0, first.0, "a record changes the net signature");
+    // Fresh stored records carry the generation-2 cut label and read current.
+    assert_eq!(
+        first.3,
+        "kernel-a03-plane-cut-volume/2;ops-signed;tolerance-policy-3"
+    );
+    assert_eq!(first.4, "current");
+    assert_eq!(first.2, first.0, "the stored signature is the expected one");
+    // Removing the record returns the member to the never-operated signature.
+    let records = at(&second_element, &["hole_records"])
+        .array()
+        .unwrap()
+        .to_vec();
+    assert_eq!(records.len(), 1);
+    f.ok(
+        "remove-hole",
+        &[
+            "--id",
+            &at_2000,
+            "--operation-id",
+            &text(&records[0], "operation_id"),
+        ],
+    );
+    assert_eq!(
+        stored_of(&member_of(&at_2000)).0,
+        plain.0,
+        "no record, no net-signature delta"
+    );
+}

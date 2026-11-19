@@ -441,6 +441,109 @@ fn a_cut_member_reports_the_length_that_remains_and_a_tiny_mass_is_never_zero() 
 }
 
 #[test]
+fn a_holed_member_reports_its_net_numbers_in_the_bom() {
+    // Issue 556 item 4: a member with a member-hole record reports the net volume and mass of
+    // the drilled body and the derived net area, closed form: the 200x300x4000 box minus the
+    // d = 40 N-gon (N = 48 per the 0.05 mm chord bound, F06 section 2 A-2) prism through the
+    // 300 mm height.
+    let f = Fixture::new();
+    f.ok("define-material", &["--grade", "S355", "--density", "7850"]);
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--width",
+                    "200",
+                    "--height",
+                    "300",
+                    "--designation",
+                    "RECT200x300",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let beam = text(
+        at(
+            &f.ok(
+                "create-member",
+                &[
+                    "--start",
+                    "0,0,0",
+                    "--end",
+                    "4000,0,0",
+                    "--profile-digest",
+                    &profile,
+                    "--material",
+                    "S355",
+                ],
+            ),
+            &["member"],
+        ),
+        "element_id",
+    );
+    f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &beam,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-000000ab0044",
+            "--axis-point",
+            "0,0,2000",
+            "--axis-direction",
+            "0,1,0",
+            "--diameter",
+            "40",
+        ],
+    );
+
+    let ngon_area = (48.0 / 2.0) * 20.0 * 20.0 * (2.0 * std::f64::consts::PI / 48.0).sin();
+    let gross = 200.0 * 300.0 * 4000.0;
+    let net = gross - ngon_area * 300.0;
+
+    let elements_path = f.out("holed-elements.csv");
+    let summary_path = f.out("holed-summary.csv");
+    f.ok(
+        "export-bom",
+        &["--out", &elements_path, "--summary", &summary_path],
+    );
+    let elements_text = f.read("holed-elements.csv");
+    let lines: Vec<&str> = elements_text.lines().collect();
+    assert_eq!(lines.len(), 2, "one beam: {lines:?}");
+    let row = cells(lines[1]);
+    // The cells print the shared display precision, so compare at it.
+    assert_eq!(row[6], "4000", "a through hole does not change the length");
+    let area: f64 = row[7].parse().unwrap();
+    assert!(
+        (area - net / 4000.0).abs() <= 0.01,
+        "area = net volume / length: {area} vs {}",
+        net / 4000.0
+    );
+    let volume: f64 = row[8].parse().unwrap();
+    assert!((volume - net).abs() <= 0.01, "{volume} vs {net}");
+    let mass: f64 = row[10].parse().unwrap();
+    let net_mass = net * 7850.0 / 1e9;
+    assert!((mass - net_mass).abs() <= 0.01, "{mass} vs {net_mass}");
+
+    let summary_text = f.read("holed-summary.csv");
+    let summary_lines: Vec<&str> = summary_text.lines().collect();
+    let group = cells(summary_lines[1]);
+    assert_eq!(group[0], "beam");
+    assert_eq!(group[4], "4000", "the total length counts the whole member");
+    let total_volume: f64 = group[6].parse().unwrap();
+    assert!(
+        (total_volume - net / 1e9).abs() <= 1e-8,
+        "{total_volume} vs {}",
+        net / 1e9
+    );
+    let total_mass: f64 = group[7].parse().unwrap();
+    assert!((total_mass - net_mass).abs() <= 0.01, "{total_mass}");
+}
+
+#[test]
 fn refusals_write_nothing() {
     let f = Fixture::new();
     // A store without a revision has nothing to report.

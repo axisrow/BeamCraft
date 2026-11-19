@@ -134,7 +134,7 @@ fn a_cut_plate_has_the_exact_volume_and_mass_and_reopens_verified() {
     assert!((mass - 1_250_000.0 * 7850.0 / 1e9).abs() <= 1e-9, "{mass}");
     assert_eq!(
         text(at(plate, &["quantities", "volume"]), "algorithm"),
-        "kernel-a03-plane-cut-volume/1;tolerance-policy-3"
+        "kernel-a03-plane-cut-volume/2;ops-signed;tolerance-policy-3"
     );
     assert!(num(plate, &["triangles"]) > 12.0);
     let record = first_cut(plate);

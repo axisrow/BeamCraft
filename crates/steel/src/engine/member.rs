@@ -66,10 +66,13 @@ pub const POLYBEAM_VOLUME_ALGORITHM: &str =
 
 /// Labels that earlier slices stored for members. A stored record that carries one is a
 /// superseded value: it reads as `stale` and is recomputed by the next edit that rewrites the
-/// record; it is not corruption.
-pub const SUPERSEDED_MEMBER_ALGORITHMS: [&str; 2] = [
+/// record; it is not corruption. The first two predate the P-Mass volume; the third is the
+/// first-generation cut label, whose generation moved the operation digests into the member's
+/// net signature.
+pub const SUPERSEDED_MEMBER_ALGORITHMS: [&str; 3] = [
     "kernel-p03-straight-member-volume/1;tolerance-policy-3",
     "kernel-a07-section-member-volume/1;detailed-arcs-max(0.25mm,0.5%r);tolerance-policy-3",
+    "kernel-a03-plane-cut-volume/1;tolerance-policy-3",
 ];
 
 /// The content of a resolved immutable profile definition.
