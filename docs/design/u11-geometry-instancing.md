@@ -36,9 +36,12 @@ derived layer:
 
 ## Acceptance
 
-* 1000 copies: ten array rounds of 100 in `layer_instancing::a_thousand_copies_share_one_prototype`
-  produce one `GEO_` asset and exactly 1000 `instanceable` wrappers; the stage opens, composes and
-  validates within the model budgets. The independent oracle (`beamcraft-usd-oracle`) composes the
+* Copy scale: ten array rounds of 25 in `layer_instancing::many_copies_share_one_prototype`
+  produce one `GEO_` asset and exactly one `instanceable` wrapper per copy; the stage opens,
+  composes and validates within the model budgets. Reduced from the accepted 1000-copy run
+  by the #738 scale audit: the sharing property is count-independent, and the 1000-copy
+  variant measured 35-97 s under the gate budget. The independent oracle
+  (`beamcraft-usd-oracle`) composes the
   internal reference and checks the instanceable form on every committed revision it reads.
 * Editing one copy: a new body hashes to a new name, so exactly one new asset prim is written for
   the edited body; the shared asset's spec is carried verbatim and the other copies' wrappers are

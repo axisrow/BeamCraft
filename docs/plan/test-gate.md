@@ -50,11 +50,20 @@ tests were omitted. Publishing is a separate explicit operation.
 | Local workspace nextest run | 600 seconds |
 | Doctest command after dependency preparation | 120 seconds |
 
-One documented exception: the R01 bounding test
-`reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
-deliberately attaches a 9,500-prim source and is load-sensitive, so a versioned nextest
-override in `.config/nextest.toml` gives it alone a 240-second budget. Every other test
-keeps the table's budgets.
+Slow tier (#738 P6, owner decision 2026-11-17 on the P1 stopgap): the only exceptions to
+the table's budgets are the named overrides in `.config/nextest.toml`, each a 240-second
+budget (30 s × 8, the R01 founding budget) for a test that must stay at deliberate scale or
+deliberately attaches a large fixture, measures green well below the default cap unloaded,
+and is load-sensitive enough on the shared machine that a budget kill would read as a
+regression. Membership is an exact-name filter validated at parse time, is reviewed like
+code, and needs a measured median plus a note naming what the scale is for; the founding
+member is the R01 bounding test with its 9,500-prim source, and the run-script-converted
+#738 budget tests are members too. Every other test keeps the table's budgets.
+
+On the shared machine, run the recorded gate in a quiet window: the recorded evidence shows
+2-3.5× load inflation while a neighbour's heavy build runs, and every recorded budget
+failure to date is a loaded run (#738 R7). Quiet-window discipline applies before
+publishing receipts.
 
 Timeouts fail, terminate the affected process tree, and retain available diagnostics. Keep the
 per-test and global nextest settings in versioned profiles. Changing budgets requires review;
