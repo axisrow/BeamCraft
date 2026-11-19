@@ -50,7 +50,7 @@ eframe = { version = "=0.37.0", default-features = false, features = ["wgpu_no_d
 # smithay-clipboard. Without it eframe 0.37 links libwayland-client at build time, so the
 # build needs its development package and the binary cannot start on a machine without it.
 winit = { version = "=0.30.13", default-features = false, features = ["wayland-dlopen"] }
-wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
+wgpu = { version = "=30.0.2", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
 pollster = "=1.0.1"
 # Decode and resize the runtime application icon; PNG only.
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
