@@ -1364,6 +1364,9 @@ pub(super) fn changes(
                     Change::Discipline(hook) => hook.0.targets_kind(kind),
                     Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
+                    // An explicit source update is an operation on the wrapper; the foreign
+                    // content it now composes is never written.
+                    Change::ReferenceSource { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
                     Change::Placement { .. } => {

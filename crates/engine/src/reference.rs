@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! R01 engine API: attach a foreign USD source as a read-only reference, move or re-read the
-//! wrapper, and refuse every write aimed at foreign content.
+//! R01/R03 engine API: attach a foreign USD source as a read-only reference, move or re-read the
+//! wrapper, replace its pinned snapshot with a newer version (explicitly, never automatically),
+//! and refuse every write aimed at foreign content.
 //!
 //! The engine decides; it reads no file and composes no stage. The source bytes are admitted
 //! earlier (their digest, size, default prim and declared units arrive as a
@@ -31,7 +32,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::reference::{
     AttachReference, CorrectReferenceUnits, ForeignTarget, MoveReference, PROJECT_METERS_PER_UNIT,
-    SourcePin, UnitsInterpretation, UpAxis, WriteForeign,
+    SourcePin, UnitsInterpretation, UpAxis, UpdateReferenceSource, WriteForeign,
 };
 use core::convert::Infallible;
 
@@ -258,7 +259,6 @@ pub struct CorrectionOutcome {
     /// Content fingerprint of the request.
     pub fingerprint: ContentDigest,
 }
-
 /// Admits a `CorrectReferenceUnits` against the wrapper as it is now.
 pub fn correct_units(
     record: &ReferenceRecord,
@@ -270,6 +270,57 @@ pub fn correct_units(
     corrected.units = command.interpretation;
     Ok(CorrectionOutcome {
         record: corrected,
+        footprint: Footprint::for_update(record.id, false, false, true, false, None)?,
+        fingerprint: command.content_fingerprint()?,
+    })
+}
+
+/// An admitted `UpdateReferenceSource`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateOutcome {
+    /// The wrapper after the update: the new pin at its new version, and no units
+    /// interpretation (an interpretation is stored with the digest it was made for, so a new
+    /// snapshot starts uncorrected; the owner re-states it explicitly if it still applies).
+    pub record: ReferenceRecord,
+    /// Declared reads and writes: the source-input group and the derived group (the composed
+    /// content changes, so every derived result of the wrapper is stale).
+    pub footprint: Footprint,
+    /// Content fingerprint of the request.
+    pub fingerprint: ContentDigest,
+}
+
+/// Admits an `UpdateReferenceSource` against the wrapper as it is now.
+///
+/// The version must move forward (`INVALID_ARGUMENT` otherwise): the counter counts snapshots,
+/// never re-numbers them. The pinned bytes themselves are refused as the update target: they are
+/// the current version, not a new one. An *earlier* snapshot may be pinned again, with a new
+/// version — that is an explicit rollback, not an automatic one. The placement, the label and
+/// the stored foreign bytes of the current revision are not part of the result's writes.
+pub fn update_source(
+    record: &ReferenceRecord,
+    command: &UpdateReferenceSource,
+) -> Result<UpdateOutcome, CommandError> {
+    same_wrapper(record, command.target_id)?;
+    command.validate_arguments()?;
+    if command.source.version <= record.source.version {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "source.version",
+            "the version must be greater than the pinned one",
+        ));
+    }
+    if command.source.digest == record.source.digest {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "source.digest",
+            "the source bytes are the pinned version",
+        ));
+    }
+    let mut updated = record.clone();
+    updated.source = command.source.clone();
+    updated.units = None;
+    Ok(UpdateOutcome {
+        record: updated,
         footprint: Footprint::for_update(record.id, false, false, true, false, None)?,
         fingerprint: command.content_fingerprint()?,
     })
@@ -520,6 +571,107 @@ mod tests {
                 .unwrap_err()
                 .code,
             ErrorCode::NonFiniteNumber
+        );
+    }
+
+    #[test]
+    fn an_update_moves_the_pin_forward_and_resets_the_interpretation() {
+        let mut newer = pin();
+        newer.version = 2;
+        newer.digest = Sha256::digest(b"newer").unwrap();
+        // A corrected wrapper: the correction was made for version 1.
+        let mut corrected = record();
+        corrected.units = Some(UnitsInterpretation {
+            meters_per_unit: 1.0,
+            up_axis: UpAxis::Y,
+        });
+        let outcome = update_source(
+            &corrected,
+            &UpdateReferenceSource {
+                target_id: id(0xa1),
+                source: newer.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome.record.source, newer);
+        assert_eq!(outcome.record.source.version, 2);
+        assert_eq!(outcome.record.units, None);
+        assert_eq!(outcome.record.placement, corrected.placement);
+        assert_eq!(outcome.record.name, corrected.name);
+        use crate::footprint::Group as G;
+        let groups: Vec<_> = outcome.footprint.writes().iter().map(|e| e.group).collect();
+        assert_eq!(groups, vec![G::ShapeInputs, G::Derived]);
+        let reads: Vec<_> = outcome.footprint.reads().iter().map(|e| e.group).collect();
+        assert!(reads.contains(&G::Lifecycle) && reads.contains(&G::ShapeInputs));
+        assert_eq!(
+            outcome.fingerprint,
+            UpdateReferenceSource {
+                target_id: id(0xa1),
+                source: newer,
+            }
+            .content_fingerprint()
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn an_update_refuses_a_stalled_version_and_the_pinned_bytes() {
+        let mut stale = pin();
+        stale.version = 1;
+        stale.digest = Sha256::digest(b"newer").unwrap();
+        let stalled = update_source(
+            &record(),
+            &UpdateReferenceSource {
+                target_id: id(0xa1),
+                source: stale.clone(),
+            },
+        );
+        assert_eq!(stalled.unwrap_err().code, ErrorCode::InvalidArgument);
+        // The pinned bytes at any version are the current snapshot, not a new one.
+        let mut same = pin();
+        same.version = 5;
+        assert_eq!(
+            update_source(
+                &record(),
+                &UpdateReferenceSource {
+                    target_id: id(0xa1),
+                    source: same,
+                },
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        // Another snapshot's bytes may be pinned again, explicitly: a rollback is a new version
+        // of a snapshot the wrapper held earlier.
+        let mut rolled_back = pin();
+        rolled_back.version = 4;
+        rolled_back.digest = Sha256::digest(b"original").unwrap();
+        let outcome = update_source(
+            &record(),
+            &UpdateReferenceSource {
+                target_id: id(0xa1),
+                source: rolled_back,
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome.record.source.version, 4);
+        // Another wrapper is not this one.
+        assert_eq!(
+            update_source(
+                &record(),
+                &UpdateReferenceSource {
+                    target_id: id(0xa9),
+                    source: {
+                        let mut p = pin();
+                        p.version = 2;
+                        p
+                    },
+                },
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::NotFound
         );
     }
 

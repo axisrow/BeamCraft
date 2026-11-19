@@ -1590,6 +1590,10 @@ pub(super) fn apply(
                     reference::recorded_digest(wrapper)?,
                 )?;
             }
+            Change::ReferenceSource { source, .. } => {
+                reference::check_source_asset(original, targets, source)?;
+                reference::update_source(&mut authored, id, source)?;
+            }
             Change::Delete { .. } => {
                 let inside = format!("{p}/");
                 let layer_name = element_layer(id)?;
@@ -1928,6 +1932,17 @@ fn capture(
                 }
             }
             Change::ReferenceUnits { .. } => {
+                for &(name, ty) in reference::UNITS_FIELDS {
+                    add(name, ty, 2);
+                }
+            }
+            // The pin is replaced as a whole: every pin attribute is inventoried, the optional
+            // declared ones as removals when the new snapshot declares less. The interpretation
+            // is always cleared, so the units level is inventoried too.
+            Change::ReferenceSource { .. } => {
+                for &(name, ty) in reference::SOURCE_FIELDS {
+                    add(name, ty, 0);
+                }
                 for &(name, ty) in reference::UNITS_FIELDS {
                     add(name, ty, 2);
                 }

@@ -17,9 +17,10 @@ use crate::plate_cmd::{
 };
 use crate::report::report;
 use beamcraft_commands::reference::{
-    AttachRequest, Attached, Edited, Ids, MeasuredReference, ReferenceInspection, Wrapper,
-    attach_reference, correct_wrapper_units, inspect_references, measure_references, move_wrapper,
-    refuse_foreign_write,
+    AttachRequest, Attached, Comparison, Edited, Ids, MeasuredReference, ReferenceInspection,
+    SourceSide, UpdateRequest, Wrapper, attach_reference, correct_wrapper_units,
+    inspect_references, measure_references, move_wrapper, refuse_foreign_write,
+    update_wrapper_source,
 };
 use beamcraft_engine::measure::{MeshReading, ReferenceMeasurement};
 use beamcraft_host::{
@@ -58,6 +59,7 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
             "--new-id",
         ],
         "move-reference" => &["--id", "--translation", "--rotation-z-deg"],
+        "update-reference" => &["--id", "--source"],
         "correct-reference-units" => &["--id", "--meters-per-unit", "--up-axis", "--clear"],
         "write-reference" => &["--id", "--target", "--prim", "--attribute"],
         "inspect-reference" => &[],
@@ -68,7 +70,7 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
     all.extend_from_slice(own);
     if matches!(
         command,
-        "attach-reference" | "move-reference" | "correct-reference-units"
+        "attach-reference" | "move-reference" | "correct-reference-units" | "update-reference"
     ) {
         all.extend_from_slice(&CONTEXT_OPTIONS);
     }
@@ -98,7 +100,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             return Err(invalid("unknown or repeated option"));
         }
     }
-    if *command == "attach-reference" {
+    if *command == "attach-reference" || *command == "update-reference" {
         // Before the store, the file system or a resolver is touched: a URL or a network path
         // is refused on its text alone.
         let source = options
@@ -119,6 +121,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     match *command {
         "attach-reference" => attach_command(&store, &options),
         "move-reference" => move_command(&store, &options),
+        "update-reference" => update_command(&store, &options),
         "correct-reference-units" => correct_command(&store, &options),
         "write-reference" => write_command(&store, &options),
         "measure-reference" => measure_command(&store, &options),
@@ -275,6 +278,116 @@ fn correct_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run
         &mut NoFault,
     )?;
     edited_json(&edited, ids.op_id, "reference_units_corrected")
+}
+
+/// `update-reference`: replaces the pinned snapshot of one wrapper with the named file, as the
+/// next version. The reply carries the updated wrapper and the comparison of the two snapshots:
+/// the supported properties on both sides, the R02 measurement where the profile certifies one
+/// (`unsupported` names the refusal code where it does not), and the prim-tree diff.
+fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let ids = ids(options)?;
+    let updated = update_wrapper_source(
+        store,
+        &UpdateRequest {
+            ids: ids.clone(),
+            target_id: element_id(options, "--id")?,
+            source_path: options
+                .get("--source")
+                .ok_or_else(|| invalid("--source is required"))?
+                .to_string(),
+        },
+        &mut NoFault,
+    )?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if updated.replayed {
+                "reference_source_update_replayed"
+            } else {
+                "reference_source_updated"
+            }),
+        ),
+        ("op_id", Json::text(ids.op_id.to_string())),
+        ("reference", wrapper_json(&updated.wrapper)?),
+        ("comparison", comparison_json(&updated.comparison)?),
+        (
+            "changed_layers",
+            Json::Array(updated.changed_layers.iter().map(Json::text).collect()),
+        ),
+        (
+            "foreign_layers",
+            Json::Array(
+                updated
+                    .foreign_layers
+                    .iter()
+                    .map(|(name, digest)| {
+                        Json::object([
+                            ("name", Json::text(name.clone())),
+                            ("digest", Json::text(digest.to_string())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        ("revision", revision_json(&updated.revision)),
+        ("footprint", footprint_json(updated.footprint.as_ref())),
+    ]))
+}
+
+/// One side of the comparison: the pinned properties and the measurement or its explicit
+/// `unsupported` mark.
+fn side_json(side: &SourceSide) -> Run<Json> {
+    let optional = |value: Option<f64>| value.map_or(Ok(Json::Null), num);
+    Ok(Json::object([
+        ("digest", Json::text(side.digest.to_string())),
+        ("version", Json::uint(u64::from(side.version))),
+        ("default_prim", Json::text(side.default_prim.clone())),
+        (
+            "declared_meters_per_unit",
+            optional(side.declared_meters_per_unit)?,
+        ),
+        (
+            "declared_up_axis",
+            side.declared_up_axis
+                .map_or(Json::Null, |a| Json::text(a.as_str())),
+        ),
+        (
+            "foreign_prim_count",
+            Json::uint(side.foreign_prim_count as u64),
+        ),
+        (
+            "measurement",
+            match &side.measurement {
+                None => Json::Null,
+                Some(measurement) => measurement_json(measurement)?,
+            },
+        ),
+        (
+            "unsupported",
+            side.unsupported
+                .map_or(Json::Null, |code| Json::text(code.to_string())),
+        ),
+    ]))
+}
+
+fn comparison_json(comparison: &Comparison) -> Run<Json> {
+    Ok(Json::object([
+        ("before", side_json(&comparison.before)?),
+        ("after", side_json(&comparison.after)?),
+        (
+            "added_prims",
+            Json::Array(comparison.added_prims.iter().map(Json::text).collect()),
+        ),
+        (
+            "removed_prims",
+            Json::Array(comparison.removed_prims.iter().map(Json::text).collect()),
+        ),
+        (
+            "prim_diff_truncated",
+            Json::Bool(comparison.prim_diff_truncated),
+        ),
+        ("units_cleared", Json::Bool(comparison.units_cleared)),
+    ]))
 }
 
 fn edited_json(edited: &Edited, op_id: OpId, done: &'static str) -> Run<Json> {

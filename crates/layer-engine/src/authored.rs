@@ -205,7 +205,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "color3f[] primvars:displayColor=[one linear sRGB->linear palette triple];i=unsigned|class| mod 8;both properties replaced together with steel:class\n",
     "looks=/World/Looks=Scope;PartClass0..7=Material;outputs:surface=token connected to the child shader;child=Shader PreviewSurface;",
     "info:id=token(UsdPreviewSurface);inputs:diffuseColor=color3f(palette entry,linear);outputs:surface=token;no other owned prim under /World/Looks\n",
-    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Bends|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Bends|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|ReferenceSource|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -572,6 +572,17 @@ pub enum Change {
         /// The interpretation to store, or `None` to clear it.
         interpretation: Option<UnitsInterpretation>,
     },
+    /// R03: replace the pinned snapshot of an existing wrapper with a newer version of its
+    /// source. The pin attributes and the arc are replaced as a whole; the units interpretation
+    /// is cleared (it is stored with the digest it was made for); the placement, the label and
+    /// the foreign content are not touched. The new source layer must already be a non-owned
+    /// manifest entry with exactly the pinned bytes.
+    ReferenceSource {
+        /// Full target UUIDv7 of the wrapper.
+        id: String,
+        /// The new snapshot, at its new version.
+        source: SourcePin,
+    },
     /// Set or remove the one `bim:partOf` record of an element (A01). The target must be an owned
     /// assembly; kinds, cardinality, self-links and cycles are re-checked on the candidate.
     PartOf {
@@ -672,6 +683,7 @@ impl Change {
             Self::Mesh(m) => (&m.id, "derived"),
             Self::AttachReference(r) => (&r.id, "lifecycle"),
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
+            Self::ReferenceSource { id, .. } => (id, "reference:source"),
             Self::PartOf { id, .. } => (id, "bim:partOf"),
             Self::MainPart { id, .. } => (id, "bim:mainPart"),
             Self::Level { id, .. } => (id, "bim:level"),

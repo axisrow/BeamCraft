@@ -283,6 +283,87 @@ pub(super) fn units(
     )
 }
 
+/// R03: replaces the pin of an existing wrapper and re-points its arc at the new snapshot.
+///
+/// The pin attributes are replaced as a whole; the declared units are removed first, so a
+/// snapshot that declares less records exactly that and never the earlier declaration. The units
+/// interpretation is cleared: it is stored with the digest it was made for, and the revision
+/// that recorded it keeps it. The new source layer must already be a non-owned manifest entry
+/// with exactly the pinned bytes ([`check_source_asset`]), as for a new wrapper.
+pub(super) fn update_source(
+    data: &mut sdf::Data,
+    id: &str,
+    source: &SourcePin,
+) -> Result<(), Diagnostic> {
+    let p = element_path(id, ElementCategory::Reference)?;
+    let int = |v: u64| i32::try_from(v).map_err(|_| limit());
+    for (name, ty, value) in [
+        (
+            SOURCE_DIGEST,
+            "string",
+            sdf::Value::String(source.digest.to_string()),
+        ),
+        (SOURCE_BYTES, "int", sdf::Value::Int(int(source.bytes)?)),
+        (
+            SOURCE_FORMAT,
+            "token",
+            sdf::Value::token(source.format.as_str()),
+        ),
+        (
+            SOURCE_VERSION,
+            "int",
+            sdf::Value::Int(int(u64::from(source.version))?),
+        ),
+        (
+            SOURCE_LABEL,
+            "string",
+            sdf::Value::String(source.label.clone()),
+        ),
+        (
+            SOURCE_DEFAULT_PRIM,
+            "string",
+            sdf::Value::String(source.default_prim.clone()),
+        ),
+    ] {
+        attr(data, &p, name, ty, value)?;
+    }
+    for (name, ty) in [(DECLARED_UNITS, "double"), (DECLARED_UP_AXIS, "token")] {
+        attribute(data, &p, name, ty, Opinion::Remove, true)?;
+    }
+    if let Some(units) = source.declared_meters_per_unit {
+        attr(
+            data,
+            &p,
+            DECLARED_UNITS,
+            "double",
+            sdf::Value::Double(units),
+        )?;
+    }
+    if let Some(axis) = source.declared_up_axis {
+        attr(
+            data,
+            &p,
+            DECLARED_UP_AXIS,
+            "token",
+            sdf::Value::token(axis.as_str()),
+        )?;
+    }
+    // The interpretation was made for the earlier digest; a new snapshot starts uncorrected.
+    units(data, id, &None, source.digest)?;
+    let s = format!("{p}/{CORRECTION}/{SOURCE}");
+    field(
+        data,
+        &s,
+        "references",
+        sdf::Value::ReferenceListOp(sdf::ListOp::prepended([sdf::Reference {
+            asset_path: source.layer_name(),
+            prim_path: path(&format!("/{}", source.default_prim))?,
+            layer_offset: sdf::LayerOffset::IDENTITY,
+            custom_data: Default::default(),
+        }])),
+    )
+}
+
 /// Reads the pin of a wrapper back from its attributes and re-admits it.
 pub(super) fn read_pin(p: &Prim) -> Result<SourcePin, Diagnostic> {
     let int = |name: &str| -> Result<i64, Diagnostic> {
@@ -584,6 +665,20 @@ pub(super) const UNITS_FIELDS: &[(&str, &str)] = &[
     (OP_ROTATE, "double"),
     (OP_SCALE, "double3"),
     ("xformOpOrder", "token[]"),
+];
+
+/// The fixed attribute names (and USD types) that a source update (R03) replaces on the element:
+/// the pin as a whole, with the optional declared units always inventoried, because an update
+/// may remove them.
+pub(super) const SOURCE_FIELDS: &[(&str, &str)] = &[
+    (SOURCE_DIGEST, "string"),
+    (SOURCE_BYTES, "int"),
+    (SOURCE_FORMAT, "token"),
+    (SOURCE_VERSION, "int"),
+    (SOURCE_LABEL, "string"),
+    (SOURCE_DEFAULT_PRIM, "string"),
+    (DECLARED_UNITS, "double"),
+    (DECLARED_UP_AXIS, "token"),
 ];
 
 /// One prim of the foreign content, as composed below a wrapper.

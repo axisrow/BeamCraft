@@ -479,6 +479,61 @@ impl CorrectReferenceUnits {
     }
 }
 
+/// R03 `UpdateReferenceSource`: replaces the pinned snapshot of an existing wrapper with a newer
+/// version of its source. Nothing is automatic: the owner names the file, and the version moves
+/// only when this command is admitted. The wrapper keeps its identity, label, placement and
+/// history; an explicit units interpretation is never carried across (it is stored with the
+/// digest it was made for), so the update starts the wrapper uncorrected. The source file is
+/// only ever read, and the earlier snapshot stays pinned in the revisions that recorded it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateReferenceSource {
+    /// The wrapper whose source is replaced.
+    pub target_id: ElementId,
+    /// The new snapshot. Its `version` is the wrapper's own counter of accepted snapshots: the
+    /// engine admits only a greater one (`INVALID_ARGUMENT` otherwise), and the caller assigns
+    /// exactly the next one. The same bytes as the pinned snapshot are refused: they are that
+    /// version, not a new one.
+    pub source: SourcePin,
+}
+
+impl UpdateReferenceSource {
+    /// Admits the new pin (`SourcePin::validate`). The version rules need the wrapper as it is
+    /// now, so they are the engine's (`beamcraft_engine::reference::update_source`).
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.source.validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request. The file name
+    /// and path of the new source are not part of it; its label and digest are.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/R03/UpdateReferenceSource/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.source.digest.as_bytes());
+        bytes.extend_from_slice(&self.source.bytes.to_le_bytes());
+        push_text(&mut bytes, self.source.format.as_str());
+        push_text(&mut bytes, &self.source.default_prim);
+        bytes.extend_from_slice(&self.source.version.to_le_bytes());
+        push_text(&mut bytes, &self.source.label);
+        match self.source.declared_meters_per_unit {
+            Some(v) => {
+                bytes.push(1);
+                push_f64(&mut bytes, v, "source.declared_meters_per_unit")?;
+            }
+            None => bytes.push(0),
+        }
+        match self.source.declared_up_axis {
+            Some(axis) => {
+                bytes.push(1);
+                push_text(&mut bytes, axis.as_str());
+            }
+            None => bytes.push(0),
+        }
+        Sha256::digest(&bytes).map_err(|_| digest_error())
+    }
+}
+
 /// What a refused write was aimed at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForeignTarget {
@@ -830,6 +885,70 @@ mod tests {
             }),
         };
         assert!(bad.content_fingerprint().is_err());
+    }
+
+    #[test]
+    fn update_source_rules_and_fingerprint() {
+        let id = ElementId::parse("019a7bf0-0000-7000-8000-000000000a01").unwrap();
+        let mut next = pin();
+        next.version = 2;
+        next.digest = Sha256::digest(b"newer").unwrap();
+        let command = UpdateReferenceSource {
+            target_id: id,
+            source: next.clone(),
+        };
+        assert!(command.validate_arguments().is_ok());
+        let base = command.content_fingerprint().unwrap();
+        assert_eq!(base, command.content_fingerprint().unwrap());
+        // Every part of the pin is part of the request.
+        let mut other = next.clone();
+        other.label = "elsewhere.usda".into();
+        assert_ne!(
+            base,
+            (UpdateReferenceSource {
+                target_id: id,
+                source: other,
+            })
+            .content_fingerprint()
+            .unwrap()
+        );
+        let mut other = next.clone();
+        other.version += 1;
+        assert_ne!(
+            base,
+            (UpdateReferenceSource {
+                target_id: id,
+                source: other,
+            })
+            .content_fingerprint()
+            .unwrap()
+        );
+        let mut other = next.clone();
+        other.digest = Sha256::digest(b"different").unwrap();
+        assert_ne!(
+            base,
+            (UpdateReferenceSource {
+                target_id: id,
+                source: other,
+            })
+            .content_fingerprint()
+            .unwrap()
+        );
+        // The path text itself is never stored, but the source label (the file name, as
+        // `pin_source` derives it) is part of the request, as the two asserts above show.
+        // A pin that is not admitted is refused before any digest exists.
+        let mut bad = next;
+        bad.bytes = 0;
+        assert_eq!(
+            (UpdateReferenceSource {
+                target_id: id,
+                source: bad,
+            })
+            .validate_arguments()
+            .unwrap_err()
+            .code,
+            ErrorCode::LimitExceeded
+        );
     }
 
     #[test]

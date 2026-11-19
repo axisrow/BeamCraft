@@ -620,6 +620,15 @@ move-reference --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg DE
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
+### update-reference
+
+write.
+
+```text
+update-reference --store ROOT --id UUID --source FILE [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
 ### correct-reference-units
 
 write.
