@@ -1668,6 +1668,11 @@ pub struct MemberHoleRecord {
     /// perpendicular to the axis, hole-frame XY (x along `+Z_m`, y along `axis_direction x
     /// +Z_m`), vertex 0 on `+Z_m`.
     pub polygon_mm: Vec<[f64; 2]>,
+    /// The bolt group that generated the record (the F06 member-hole amendment section 3, the
+    /// member side of the bolt amendment section 5); `None` for a hand-placed hole. A generated
+    /// record is owned by its group: it is created, regenerated and removed with the group as
+    /// one unit, and `UpdateHole`/`RemoveHole` refuse it with `DEPENDENCY_CONFLICT`.
+    pub owner: Option<ElementId>,
 }
 
 /// Replace one existing hole's authoritative polygon, preserving its identity and ordinal.

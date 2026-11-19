@@ -249,15 +249,17 @@ pub fn delete_element(
     let mut changes = vec![Change::Delete {
         id: id_text.clone(),
     }];
-    // A14.4: deleting a generating bolt group removes its hole records from every plate in the
-    // same revision and undo unit (bolt amendment section 5); the parts themselves stay. An
-    // A05 annotation group and a quiet A14.3 group touch no part.
+    // A14.4 and the F06 member-hole amendment: deleting a generating bolt group removes its
+    // hole records from every plate and member in the same revision and undo unit (bolt
+    // amendment section 5); the parts themselves stay. An A05 annotation group and a quiet
+    // A14.3 group touch no part.
     if kind == DeletedKind::Bolt {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
-        let (plates, _) = evaluate_decoded(&decoded)?;
+        let (plates, members) = evaluate_decoded(&decoded)?;
         let materials = material_lookup(&decoded.definitions);
+        let profiles = crate::definition::profile_lookup(&decoded.definitions);
         for plate in &plates {
             if !plate
                 .authored
@@ -279,6 +281,37 @@ pub fn delete_element(
                 quantities,
             };
             changes.push(steel_layer::hole_records(
+                next.id.to_string(),
+                next.hole_records.clone(),
+            ));
+            changes.push(part_mesh_change(&record)?);
+            footprint = footprint.union(Footprint::for_update(
+                next.id, false, false, true, false, None,
+            )?)?;
+        }
+        for member in &members {
+            if !member
+                .authored
+                .hole_records
+                .iter()
+                .any(|r| r.owner == Some(command.target_id))
+            {
+                continue;
+            }
+            let mut next = member.authored.clone();
+            next.hole_records
+                .retain(|r| r.owner != Some(command.target_id));
+            let body = steel::engine::member::evaluate_member(&next, profiles(&next.profile)?)?;
+            let quantities = steel::engine::member::member_quantities(
+                &body,
+                next.material.as_ref().map(&materials).transpose()?,
+            )?;
+            let record = steel::engine::committed::MemberRecord {
+                authored: next.clone(),
+                body: body.clone(),
+                quantities,
+            };
+            changes.push(steel_layer::member_holes(
                 next.id.to_string(),
                 next.hole_records.clone(),
             ));

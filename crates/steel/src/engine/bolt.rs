@@ -28,8 +28,9 @@
 //! defect B): a rotated part no longer inflates the requirement past every real library length.
 //! A14.4 adds the hole decision ([`generate_holes`]): with `hole_mode = generate` every
 //! connected plate takes one ordinary A04 hole record per crossing fastener, owned by the
-//! group; a member part refuses until the G14 contract lands, a plate with a rotated placement
-//! refuses with it, and `hole_mode = none` writes no part.
+//! group; member parts are skipped there and decided by [`generate_member_holes`], which
+//! writes the same records on connected members (the F06 member-hole amendment section 3),
+//! each bound to the stack its fastener crosses. `hole_mode = none` writes no part.
 
 use crate::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, CreateBolt, CreateBoltGroup, UpdateBoltGroup,
@@ -176,6 +177,12 @@ pub struct BoltGroupPlaced {
     pub washer_under_head: bool,
     /// The resolved washer switch under the nut.
     pub washer_under_nut: bool,
+    /// The far seat of every fastener's clamped pack, in bearing order: the distance from
+    /// the bearing plane to the last material face the fastener crosses (the face its nut
+    /// seats on), from the same face-exact intervals the grip reads. A bearing whose
+    /// fastener grips nothing carries 0. A stored re-derivation carries none: the seat is
+    /// the creation-time geometry decision, not a stored value.
+    pub seats_mm: Vec<f64>,
 }
 
 /// Expands the spacing pattern to the authoritative list (bolt amendment section 4): the list
@@ -612,6 +619,7 @@ pub fn place_bolt_group(
     let mut crossed = vec![false; inputs.parts.len()];
     let mut clamped = vec![false; inputs.parts.len()];
     let mut max_grip = 0.0_f64;
+    let mut seats = Vec::with_capacity(bearings.len());
     for bearing in &bearings {
         let mut intervals = Vec::new();
         for (index, part) in inputs.parts.iter().enumerate() {
@@ -633,6 +641,15 @@ pub fn place_bolt_group(
             }
             intervals.extend(found);
         }
+        // The far seat of this fastener's pack: the last material face its clamped stack
+        // reaches, exactly what the generated member holes bound their extent by (the F06
+        // member-hole amendment: the extent covers only the stack the fastener crosses).
+        seats.push(
+            intervals
+                .iter()
+                .map(|interval| interval.1)
+                .fold(0.0, f64::max),
+        );
         max_grip = max_grip.max(grip_of(intervals));
     }
     if crossed.iter().any(|done| !done) {
@@ -704,6 +721,7 @@ pub fn place_bolt_group(
         length_mm: length,
         washer_under_head,
         washer_under_nut,
+        seats_mm: seats,
     })
 }
 
@@ -799,6 +817,9 @@ impl BoltGroupPlaced {
             length_mm: stored.length_mm,
             washer_under_head: stored.washer_under_head,
             washer_under_nut: stored.washer_under_nut,
+            // The seat is the creation-time geometry decision, not a stored value; a
+            // re-derivation carries none and consumers that need it re-measure.
+            seats_mm: Vec::new(),
         })
     }
 }
@@ -879,10 +900,12 @@ pub const MIN_HOLE_AXIS_COSINE: f64 = 0.5;
 /// plate-local box `slabs` gives (the contour's extents and the material band of its
 /// `thickness_side`, [`crate::engine::command::AuthoredPlate::local_box_mm`]), and the centre
 /// is the local point of the axis on the band's mid-plane. A shank axis more than 60 degrees
-/// off the plate normal ([`MIN_HOLE_AXIS_COSINE`]) is refused with `UNSUPPORTED_GEOMETRY`. A
-/// beam or a column is refused with it too: generated member holes need the kernel slice
-/// G14.1. `hole_mode = none` writes no part. The decision is pure: the same inputs give the
-/// same holes.
+/// off the plate normal ([`MIN_HOLE_AXIS_COSINE`]) is refused with `UNSUPPORTED_GEOMETRY`.
+/// A part named in `members` is skipped here: those are the member parts another decision
+/// handles — a caller that decides members itself passes them and takes them through
+/// [`generate_member_holes`], and a caller without that decision passes them too and draws
+/// no member holes. `hole_mode = none` writes no part. The decision is pure: the same
+/// inputs give the same holes.
 pub fn generate_holes(
     inputs: &BoltGroupInputs,
     row: &BoltRow,
@@ -897,11 +920,7 @@ pub fn generate_holes(
     let mut holes = Vec::new();
     for part in &inputs.parts {
         if members.contains(part) {
-            return Err(CommandError::new(
-                ErrorCode::UnsupportedGeometry,
-                "hole_mode",
-                "a generated hole in a member needs the kernel slice G14.1",
-            ));
+            continue;
         }
         let slab = slabs.get(part).ok_or_else(|| {
             CommandError::new(
@@ -942,6 +961,181 @@ pub fn generate_holes(
                     diameter_mm: diameter,
                 }
                 .polygon()?,
+            });
+        }
+    }
+    Ok(holes)
+}
+
+/// The member-side facts the generated-hole decision reads for one member part (this slice):
+/// its world faces (the same face-exact geometry the grip reads, issue 519 defect B), its
+/// member frame — the unit axes `X_r`, `Y_r`, `Z_m` in world coordinates and the world
+/// position of the frame origin (the member's first axis point) — and the frame the replay
+/// serves (the same axes in element coordinates, which must be the signed coordinate axes,
+/// plus the straight-member requirement).
+#[derive(Debug, Clone)]
+pub struct MemberHoleInput {
+    /// World-space triangles of the member's stored scene mesh.
+    pub faces: Faces,
+    /// The member frame axes `X_r`, `Y_r`, `Z_m` in world coordinates.
+    pub frame: [[f64; 3]; 3],
+    /// The world position of the frame origin (the member's first axis point).
+    pub origin_mm: [f64; 3],
+    /// The same axes in element coordinates (the replay's servability frame).
+    pub element_frame: [[f64; 3]; 3],
+    /// Whether the member is a straight single-chord member (a curved member or polybeam
+    /// has no straight body for the replay).
+    pub straight: bool,
+}
+
+/// One generated hole decision on a member part (the F06 member-hole amendment section 3):
+/// the member-frame parameters of one transverse round record whose extent covers only the
+/// stack the fastener crosses, so a bolt through one flange does not cut the opposite
+/// flange. The adapter appends it as an ordinary member-hole record owned by the group and
+/// replays the member, so a hole that does not fit refuses the whole command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratedMemberHole {
+    /// The member that will own the record.
+    pub part: ElementId,
+    /// A point on the hole axis in the member frame: where the shank axis crosses the
+    /// crossed stack's mid.
+    pub axis_point_mm: [f64; 3],
+    /// The direction of the hole axis in the member frame: the shank's section-plane
+    /// projection, normalized, with no axial component.
+    pub axis_direction: [f64; 3],
+    /// How far the cutter reaches: a range that spans the crossed stack past both faces.
+    pub extent: crate::model::command::HoleExtent,
+    /// The round generator's diameter: `nominal + clearance`.
+    pub diameter_mm: f64,
+}
+
+/// Decides the generated holes of a placed group on its connected members (the F06
+/// member-hole amendment section 3, the member side of the bolt amendment section 5): with
+/// `hole_mode = generate`, one round record per fastener whose shank crosses the member's
+/// material at the axis, of diameter `nominal + clearance`, cut along the shank's
+/// section-plane projection. The record's extent is a range that covers only the stack the
+/// fastener crosses — the axis-ray material intervals of the member within the fastener's
+/// far seat [`place_bolt_group`] measured — so a bolt through one flange does not cut the
+/// opposite flange and a hollow section's two walls cut in one record (the amendment's
+/// acceptance cases 2 and 3).
+///
+/// The decision runs in the member's own frame (the records follow the member when it
+/// moves): the bearing and the shank direction are carried into member-frame coordinates
+/// through the frame the adapter supplies. A shank axis more than 60 degrees off its
+/// section-plane projection ([`MIN_HOLE_AXIS_COSINE`], the plate ceiling mirrored) is
+/// refused; within the ceiling the record is a transverse hole centred on the axis — the
+/// known A04 ceiling, shared with every hand-placed hole. A curved member or polybeam and
+/// a member whose element frame is not the coordinate axes (a roll, a skew) refuse with
+/// `UNSUPPORTED_GEOMETRY`, exactly the cases the replay refuses a stored record with.
+/// `hole_mode = none` writes no part. The decision is pure: the same inputs give the same
+/// holes.
+pub fn generate_member_holes(
+    inputs: &BoltGroupInputs,
+    row: &BoltRow,
+    seats: &[f64],
+    members: &BTreeMap<ElementId, MemberHoleInput>,
+) -> Result<Vec<GeneratedMemberHole>, CommandError> {
+    if inputs.resolved_hole_mode() == HoleMode::None {
+        return Ok(Vec::new());
+    }
+    if seats.len() != row.bearings_mm.len() {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "seats",
+            "the far seat of every fastener is needed to bound the stack",
+        ));
+    }
+    let diameter = inputs.fastener.nominal_diameter_mm + inputs.resolved_hole_clearance_mm();
+    let mut holes = Vec::new();
+    for part in &inputs.parts {
+        let Some(member) = members.get(part) else {
+            continue;
+        };
+        if !member.straight {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole_mode",
+                "a member hole needs a straight member; curved members and polybeams are \
+                 not served",
+            ));
+        }
+        if !crate::engine::member_hole::is_coordinate_frame(&member.element_frame) {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole_mode",
+                "a member hole needs a member frame whose axes are the coordinate axes, \
+                 without roll",
+            ));
+        }
+        // The shank direction in the member frame, and its section-plane projection: the
+        // record's own axis direction (the replay refuses an axial component, so the
+        // projection is the record — the plate decision's normal-direction ceiling).
+        let axis = [
+            dot(row.z, member.frame[0]),
+            dot(row.z, member.frame[1]),
+            dot(row.z, member.frame[2]),
+        ];
+        let transverse = (axis[0] * axis[0] + axis[1] * axis[1]).sqrt();
+        if !(transverse.is_finite() && transverse >= MIN_HOLE_AXIS_COSINE) {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole_mode",
+                "the shank axis is more than 60 degrees off the member's section plane",
+            ));
+        }
+        let (du, dv) = (axis[0] / transverse, axis[1] / transverse);
+        // A world point in the member frame: the origin removed, then the frame's axes.
+        let local = |world: [f64; 3]| {
+            let d = [
+                world[0] - member.origin_mm[0],
+                world[1] - member.origin_mm[1],
+                world[2] - member.origin_mm[2],
+            ];
+            [
+                dot(d, member.frame[0]),
+                dot(d, member.frame[1]),
+                dot(d, member.frame[2]),
+            ]
+        };
+        for (bearing, seat) in row.bearings_mm.iter().zip(seats) {
+            if !seat.is_finite() || *seat <= 0.0 {
+                continue;
+            }
+            // The material the shank crosses at this fastener's axis, bounded by the far
+            // seat: the fastener's nut seats there, so material past it is not crossed.
+            let stack: Vec<(f64, f64)> = face_intervals(bearing, &row.z, &member.faces)
+                .into_iter()
+                .filter(|(start, _)| *start < *seat)
+                .map(|(start, end)| (start, end.min(*seat)))
+                .collect();
+            let (Some(first), Some(last)) = (stack.first(), stack.last()) else {
+                continue;
+            };
+            // The record's axis point sits at the stack's mid; the range runs from there
+            // along the projected direction past both stack faces. The axial tilt of the
+            // shank drops out of the extent exactly: the projection is orthogonal to the
+            // record direction, so the endpoints' frame coordinates decide it.
+            let at = |t: f64| {
+                [
+                    bearing[0] + row.z[0] * t,
+                    bearing[1] + row.z[1] * t,
+                    bearing[2] + row.z[2] * t,
+                ]
+            };
+            let centre = local(at(0.5 * (first.0 + last.1)));
+            let reach = |world: [f64; 3]| {
+                let p = local(world);
+                (p[0] - centre[0]) * du + (p[1] - centre[1]) * dv
+            };
+            holes.push(GeneratedMemberHole {
+                part: *part,
+                axis_point_mm: centre,
+                axis_direction: [du, dv, 0.0],
+                extent: crate::model::command::HoleExtent::Range {
+                    from_mm: reach(at(first.0)) - crate::engine::member_hole::CUTTER_OVERSHOOT_MM,
+                    to_mm: reach(at(last.1)) + crate::engine::member_hole::CUTTER_OVERSHOOT_MM,
+                },
+                diameter_mm: diameter,
             });
         }
     }
@@ -1634,14 +1828,13 @@ mod tests {
         let bounds = group_bounds(1000.0);
         let placed = place(&inputs, &bounds).unwrap();
         let translations = hole_args(&inputs);
-        // A member part is refused wholesale until G14.1 (nothing is written).
+        // A member part is skipped by the plate decision: the caller decides it through
+        // generate_member_holes, so the plates keep only their own holes.
         let members = BTreeSet::from([id(2)]);
-        assert_eq!(
-            generate_holes(&inputs, &placed.row(), &bounds, &translations, &members)
-                .unwrap_err()
-                .code,
-            ErrorCode::UnsupportedGeometry
-        );
+        let skipped =
+            generate_holes(&inputs, &placed.row(), &bounds, &translations, &members).unwrap();
+        assert_eq!(skipped.len(), 3, "the first plate only");
+        assert!(skipped.iter().all(|h| h.part == id(1)));
         // A shank axis lying in the plate's plane (more than 60 degrees off its normal) is
         // refused: a through hole along the normal would not hold the shank.
         let mut flat = translations.clone();
@@ -1678,6 +1871,202 @@ mod tests {
             partial.len(),
             4,
             "three holes on the long plate, one on the short"
+        );
+    }
+
+    /// A bolt through one flange of a member the fastener never reaches across: the
+    /// clamped pack is a gusset plate (z 0..10) and the member's lower flange
+    /// (z 10..30), so the far seat sits on the flange's top face, 30 mm from the bearing
+    /// plane. The member's opposite flange (z 280..300) stands past the row's stations
+    /// (x 700..1000), so it is on no shank path at all, yet the body still spans the full
+    /// depth there — a `through` record would cut it, the seat-bound one does not. The
+    /// member runs along X, its frame the certified one of an X-axis member (X_r = +Y,
+    /// Y_r = +Z, Z_m = +X), origin at the world origin of its axis line.
+    fn flanged_member_inputs(member: ElementId) -> BTreeMap<ElementId, MemberHoleInput> {
+        let mut faces = box_faces([0.0, -100.0, 10.0], [1000.0, 100.0, 30.0]);
+        faces.extend(box_faces([700.0, -100.0, 280.0], [1000.0, 100.0, 300.0]));
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            member,
+            MemberHoleInput {
+                faces,
+                frame: [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]],
+                origin_mm: [0.0, 0.0, 0.0],
+                element_frame: [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]],
+                straight: true,
+            },
+        );
+        inputs
+    }
+
+    /// The inputs of a group whose parts are one gusset plate under the member: the row
+    /// along X at the plate's bottom face, the shank up.
+    fn member_group_inputs(member: ElementId) -> BoltGroupInputs {
+        let mut inputs = group_inputs();
+        inputs.parts = vec![id(1), member];
+        inputs
+    }
+
+    #[test]
+    fn a_generated_member_hole_covers_only_the_stack_its_fastener_crosses() {
+        let member = id(3);
+        let inputs = member_group_inputs(member);
+        let mut bounds = group_bounds(1000.0);
+        bounds.insert(member, [[0.0, -100.0, 10.0], [1000.0, 100.0, 300.0]]);
+        let mut faces = box_faces_of(&bounds);
+        faces.insert(id(1), box_faces([0.0, -250.0, 0.0], [1000.0, 250.0, 10.0]));
+        // The member's faces are its two flanges, not the filled box.
+        faces.insert(member, {
+            let mut flanges = box_faces([0.0, -100.0, 10.0], [1000.0, 100.0, 30.0]);
+            flanges.extend(box_faces([700.0, -100.0, 280.0], [1000.0, 100.0, 300.0]));
+            flanges
+        });
+        let placed = place_bolt_group(&inputs, &bounds, &faces).unwrap();
+        // The pack is the gusset plus the lower flange: the far seat sits on the flange's
+        // top face, 30 mm from the bearing plane, for every fastener.
+        assert_eq!(placed.seats_mm, vec![30.0, 30.0, 30.0]);
+        let member_inputs = flanged_member_inputs(member);
+        let holes = generate_member_holes(&inputs, &placed.row(), &placed.seats_mm, &member_inputs)
+            .unwrap();
+        // One record per crossing fastener, each covering only the lower flange: the
+        // opposite flange (v runs 280..300 in frame coordinates at its own stations) is on
+        // no record — the extent ends 1 mm past the crossed stack.
+        assert_eq!(holes.len(), 3);
+        for (index, hole) in holes.iter().enumerate() {
+            assert_eq!(hole.part, member);
+            assert_eq!(hole.diameter_mm, 18.0);
+            assert_eq!(hole.axis_direction, [0.0, 1.0, 0.0], "along +Y_r");
+            // The axis point sits on the stack's mid: 30 mm from the bearing plane along
+            // the shank, at the fastener's own station. In frame coordinates: u = 0 (the
+            // row runs along Z_m), v = 20, w = the station.
+            let w = [50.0, 130.0, 220.0][index];
+            assert!(
+                hole.axis_point_mm[0].abs() <= 1e-9
+                    && (hole.axis_point_mm[1] - 20.0).abs() <= 1e-9
+                    && (hole.axis_point_mm[2] - w).abs() <= 1e-9,
+                "axis point {:?}",
+                hole.axis_point_mm
+            );
+            // The range reaches 1 mm past both stack faces, and never into the opposite
+            // flange (v runs 280..300 there, far past +11).
+            let crate::model::command::HoleExtent::Range { from_mm, to_mm } = &hole.extent else {
+                panic!("a generated member hole is a ranged record");
+            };
+            assert!((from_mm + 11.0).abs() <= 1e-9, "from {from_mm}");
+            assert!((to_mm - 11.0).abs() <= 1e-9, "to {to_mm}");
+        }
+    }
+
+    #[test]
+    fn a_generated_member_hole_spans_both_walls_of_a_hollow_stack() {
+        // The member's material along the shank within the seat: two walls with a cavity
+        // between (z 10..25 and 35..50). One record spans entry to exit; the cavity is
+        // free space, so the removed material is both walls (the amendment's case 3).
+        let member = id(3);
+        let inputs = member_group_inputs(member);
+        let mut bounds = group_bounds(1000.0);
+        bounds.insert(member, [[0.0, -100.0, 10.0], [1000.0, 100.0, 50.0]]);
+        let mut faces = box_faces_of(&bounds);
+        faces.insert(id(1), box_faces([0.0, -250.0, 0.0], [1000.0, 250.0, 10.0]));
+        faces.insert(member, {
+            let mut walls = box_faces([0.0, -100.0, 10.0], [1000.0, 100.0, 25.0]);
+            walls.extend(box_faces([0.0, -100.0, 35.0], [1000.0, 100.0, 50.0]));
+            walls
+        });
+        let placed = place_bolt_group(&inputs, &bounds, &faces).unwrap();
+        assert_eq!(placed.seats_mm, vec![50.0, 50.0, 50.0]);
+        let mut member_inputs = flanged_member_inputs(member);
+        let input = member_inputs.get_mut(&member).unwrap();
+        input.faces = faces.get(&member).unwrap().clone();
+        let holes = generate_member_holes(&inputs, &placed.row(), &placed.seats_mm, &member_inputs)
+            .unwrap();
+        assert_eq!(holes.len(), 3);
+        let crate::model::command::HoleExtent::Range { from_mm, to_mm } = &holes[0].extent else {
+            panic!("a generated member hole is a ranged record");
+        };
+        // The mid of 10..50 is 30; both ends reach 1 mm past the walls.
+        assert!((from_mm + 21.0).abs() <= 1e-9, "from {from_mm}");
+        assert!((to_mm - 21.0).abs() <= 1e-9, "to {to_mm}");
+    }
+
+    #[test]
+    fn a_member_the_fastener_never_crosses_takes_no_hole_and_the_unserved_refuse() {
+        let member = id(3);
+        let inputs = member_group_inputs(member);
+        let row = BoltRow {
+            x: [1.0, 0.0, 0.0],
+            y: [0.0, 1.0, 0.0],
+            z: [0.0, 0.0, 1.0],
+            bearings_mm: vec![[50.0, 0.0, 0.0], [130.0, 0.0, 0.0], [220.0, 0.0, 0.0]],
+            spacings_mm: vec![80.0, 90.0],
+        };
+        // No material on the axis past the seat: the stack is empty and the member takes
+        // no record, exactly like a bearing that misses a plate's slab.
+        let mut member_inputs = flanged_member_inputs(member);
+        let input = member_inputs.get_mut(&member).unwrap();
+        input.faces = box_faces([0.0, -100.0, 40.0], [1000.0, 100.0, 300.0]);
+        let holes =
+            generate_member_holes(&inputs, &row, &[30.0, 30.0, 30.0], &member_inputs).unwrap();
+        assert!(holes.is_empty());
+        // A seat of zero (the fastener grips nothing at that bearing) writes no record.
+        let holes = generate_member_holes(&inputs, &row, &[0.0, 0.0, 0.0], &member_inputs).unwrap();
+        assert!(holes.is_empty());
+        // A curved member or polybeam refuses: the replay has no straight body for it.
+        let input = member_inputs.get_mut(&member).unwrap();
+        input.straight = false;
+        assert_eq!(
+            generate_member_holes(&inputs, &row, &[30.0, 30.0, 30.0], &member_inputs)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
+        // A roll (a non-coordinate element frame) refuses, the replay's own refusal named
+        // at the decision.
+        let input = member_inputs.get_mut(&member).unwrap();
+        input.straight = true;
+        input.element_frame = [[0.0, 1.0, 0.0], [0.0, 0.5, 0.5], [0.0, 0.5, -0.5]];
+        assert_eq!(
+            generate_member_holes(&inputs, &row, &[30.0, 30.0, 30.0], &member_inputs)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
+        // A shank more than 60 degrees off the section plane (here: purely axial)
+        // refuses before any bearing is read, the plate ceiling mirrored.
+        let axial = BoltRow {
+            z: [1.0, 0.0, 0.0],
+            ..row.clone()
+        };
+        assert_eq!(
+            generate_member_holes(
+                &inputs,
+                &axial,
+                &[30.0, 30.0, 30.0],
+                &flanged_member_inputs(member)
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::UnsupportedGeometry
+        );
+        // Seat distances misaligned with the bearings refuse loudly.
+        assert_eq!(
+            generate_member_holes(&inputs, &row, &[30.0], &flanged_member_inputs(member))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        // hole_mode none writes no part.
+        let mut quiet = inputs.clone();
+        quiet.hole_mode = Some(HoleMode::None);
+        assert!(
+            generate_member_holes(
+                &quiet,
+                &row,
+                &[30.0, 30.0, 30.0],
+                &flanged_member_inputs(member)
+            )
+            .unwrap()
+            .is_empty()
         );
     }
 
@@ -2101,6 +2490,7 @@ mod tests {
             length_mm: 200.0,
             washer_under_head: true,
             washer_under_nut: true,
+            seats_mm: Vec::new(),
         };
         // One part: the stem under the whole ring, the plate at the bearing and the flange
         // past the gap on the +X side only.
@@ -2321,7 +2711,12 @@ mod tests {
             washer_under_head: placed.washer_under_head,
             washer_under_nut: placed.washer_under_nut,
         };
-        assert_eq!(BoltGroupPlaced::from_stored(&stored).unwrap(), placed);
+        // Every stored field re-derives exactly; the seat is the creation-time geometry
+        // decision, not a stored value, so a re-derivation carries none.
+        let mut re_derived = BoltGroupPlaced::from_stored(&stored).unwrap();
+        assert_eq!(re_derived.seats_mm, Vec::new());
+        re_derived.seats_mm = placed.seats_mm.clone();
+        assert_eq!(re_derived, placed);
         // The arithmetic also agrees for a turned, slid and sunk row with a generator pattern.
         let turned = place(
             &BoltGroupInputs {
@@ -2347,7 +2742,9 @@ mod tests {
             washer_under_head: turned.washer_under_head,
             washer_under_nut: turned.washer_under_nut,
         };
-        assert_eq!(BoltGroupPlaced::from_stored(&stored).unwrap(), turned);
+        let mut re_derived = BoltGroupPlaced::from_stored(&stored).unwrap();
+        re_derived.seats_mm = turned.seats_mm.clone();
+        assert_eq!(re_derived, turned);
         // A committed row that gives no frame is refused, never guessed: a degenerate row and
         // a normal parallel to the row are the creation's own refusals.
         let degenerate = crate::engine::bolt::StoredPlacement {

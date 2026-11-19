@@ -416,6 +416,7 @@ pub(super) const MHOLE_FIELDS: &[(&str, &str)] = &[
     ("steel:mhole:extents", "token[]"),
     ("steel:mhole:extentFromMm", "double[]"),
     ("steel:mhole:extentToMm", "double[]"),
+    ("steel:mhole:generatedBy", "string[]"),
     (cut_history::MHOLE_NEXT, "int"),
     (cut_history::MHOLE_RETIRED, "string[]"),
 ];

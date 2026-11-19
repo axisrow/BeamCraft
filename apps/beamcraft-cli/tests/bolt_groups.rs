@@ -804,16 +804,17 @@ fn none_writes_no_part_and_a_member_part_refuses_generate() {
         Ok(Json::String(_))
     ));
 
-    // A member part refuses generate wholesale (G14.1). With hole_mode none the length is
-    // face-exact (issue 519 defect B): the beam's solid grips 30 mm along the shank (from the
-    // bearing on its surface to its far face, the plates inside that span), so the screw's
-    // requirement is 30 + protrusion 2 = 32 and the 40 mm standard covers it. Its conservative
-    // box claimed over 60 mm of grip, which refused every listed length before the fix.
+    // A member the decision cannot serve refuses generate wholesale (the F06 member-hole
+    // amendment): a polybeam has no straight body for the records, so the group is refused
+    // with nothing written, plates included. With hole_mode none the length is face-exact
+    // (issue 519 defect B): the pack grips 30 mm along the shank (the plates inside that
+    // span), so the screw's requirement is 30 + head 6 + protrusion 2 = 38 and the 40 mm
+    // standard covers it.
     let profile = text(
         at(
             &f.ok(&owned(
                 "define-profile",
-                &["--width", "100", "--height", "50"],
+                &["--width", "100", "--height", "10"],
             )),
             &["definition"],
         ),
@@ -822,12 +823,10 @@ fn none_writes_no_part_and_a_member_part_refuses_generate() {
     let beam = text(
         at(
             &f.ok(&owned(
-                "create-member",
+                "create-polybeam",
                 &[
-                    "--start",
-                    "0,250,5",
-                    "--end",
-                    "3000,250,5",
+                    "--points",
+                    "0,250,25;500,250,25;1000,125,25",
                     "--profile-digest",
                     &profile,
                 ],
@@ -865,7 +864,7 @@ fn none_writes_no_part_and_a_member_part_refuses_generate() {
         .groups()
         .into_iter()
         .find(|g| text(g, "id") == "019a7bf0-0000-7000-8000-000000710003")
-        .expect("the screw group over the beam lists back");
+        .expect("the screw group over the polybeam lists back");
     assert_eq!(text(&group, "length_mm"), "40");
 }
 
@@ -947,6 +946,198 @@ fn holes_are_removed_with_the_group_and_refuse_separate_edits() {
     for hole in &holes {
         assert!(matches!(hole.get("generated_by"), Ok(Json::Null)));
     }
+}
+
+/// The hole records of one member as `inspect-elements` lists them.
+fn member_holes_of(f: &Fixture, member: &str) -> Vec<Json> {
+    let inspected = f.ok(&strs("inspect-elements", &[]));
+    let members = at(&inspected, &["members"]).array().unwrap().to_vec();
+    let record = members
+        .iter()
+        .find(|p| text(p, "element_id") == member)
+        .expect("inspected member is present");
+    at(record, &["hole_records"]).array().unwrap().to_vec()
+}
+
+/// The mesh digest of one member, so a generated hole shows in the derived layer.
+fn member_mesh_of(f: &Fixture, member: &str) -> String {
+    let inspected = f.ok(&strs("inspect-elements", &[]));
+    let members = at(&inspected, &["members"]).array().unwrap().to_vec();
+    let record = members
+        .iter()
+        .find(|p| text(p, "element_id") == member)
+        .expect("inspected member is present");
+    text(record, "mesh_digest")
+}
+
+/// The generating groups of one inspected element's records: `None` for a hand-placed one.
+fn owners_of(records: &[Json]) -> Vec<Option<String>> {
+    records
+        .iter()
+        .map(|r| {
+            r.get("generated_by")
+                .unwrap()
+                .string()
+                .ok()
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+#[test]
+fn a_straight_member_takes_generated_holes_through_its_wall() {
+    let mut f = Fixture::new();
+    let parts = f.parts();
+    let plate = parts[0].clone();
+
+    // The member: a 100 x 20 bar along X at y = 250, its wall z 35..55 sits 15 mm above
+    // the plates. The shank crosses plates then the wall, and the nut seats on the wall's
+    // top face 40 mm from the bearing plane.
+    let profile = text(
+        at(
+            &f.ok(&owned(
+                "define-profile",
+                &["--width", "100", "--height", "20"],
+            )),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let beam = text(
+        at(
+            &f.ok(&owned(
+                "create-member",
+                &[
+                    "--start",
+                    "0,250,45",
+                    "--end",
+                    "3000,250,45",
+                    "--profile-digest",
+                    &profile,
+                ],
+            )),
+            &["member"],
+        ),
+        "element_id",
+    );
+    let mesh_before = member_mesh_of(&f, &beam);
+    let mut joint = parts.clone();
+    joint.push(beam.clone());
+
+    // The create writes one range record per crossing fastener on the member in the same
+    // revision, owned by the group, and rewrites the member's derived mesh.
+    let mut args = f.group_args(GROUP, &joint, WASHERED, &["--spacings", "150"]);
+    args.extend([
+        "--op-id".to_owned(),
+        "019a7bf0-0000-7000-8000-0000007100d3".to_owned(),
+    ]);
+    f.ok(&strs("create-bolt-group", &args));
+    let records = member_holes_of(&f, &beam);
+    assert_eq!(records.len(), 2, "one per fastener at x = 100, 250");
+    for (ordinal, record) in records.iter().enumerate() {
+        assert_eq!(text(record, "generated_by"), GROUP);
+        assert_eq!(text(record, "extent"), "range", "only the crossed wall");
+        assert_eq!(at(record, &["ordinal"]).unsigned().unwrap(), ordinal as u64);
+    }
+    assert_ne!(member_mesh_of(&f, &beam), mesh_before);
+    // The plates keep their own records: nothing spilled over.
+    assert_eq!(
+        owners_of(&holes_of(&f, &plate)),
+        vec![Some(GROUP.to_owned()), Some(GROUP.to_owned())]
+    );
+
+    // A retry of the accepted operation replays over its own member records.
+    let again = f.ok(&strs("create-bolt-group", &args));
+    assert_eq!(text(&again, "outcome"), "bolt_group_replayed");
+
+    // A generated member record refuses its own edit and removal (DV-REL-009); a
+    // hand-placed hole on the same member still works.
+    let record = text(&records[0], "operation_id");
+    assert_eq!(
+        f.rejected(&owned(
+            "remove-hole",
+            &["--id", &beam, "--operation-id", &record]
+        )),
+        "DEPENDENCY_CONFLICT"
+    );
+    assert_eq!(
+        f.rejected(&owned(
+            "update-hole",
+            &[
+                "--id",
+                &beam,
+                "--operation-id",
+                &record,
+                "--axis-point",
+                "0,0,200",
+                "--axis-direction",
+                "0,1,0",
+                "--diameter",
+                "20"
+            ]
+        )),
+        "DEPENDENCY_CONFLICT"
+    );
+    f.ok(&owned(
+        "add-hole",
+        &[
+            "--id",
+            &beam,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000007100e1",
+            "--axis-point",
+            "0,0,200",
+            "--axis-direction",
+            "0,1,0",
+            "--diameter",
+            "10",
+        ],
+    ));
+    let records = member_holes_of(&f, &beam);
+    assert_eq!(records.len(), 3);
+    assert_eq!(owners_of(&records)[2], None);
+
+    // The edit regenerates the member's records at the new stations and keeps the
+    // hand-placed one; the identities are new and the ordinals fresh, so the replay
+    // order puts the manual record first.
+    f.ok(&f_args_edit(GROUP, &["--offset-start", "300"], &[]));
+    let records = member_holes_of(&f, &beam);
+    assert_eq!(records.len(), 3);
+    assert_eq!(owners_of(&records)[0], None);
+    assert_eq!(owners_of(&records)[1], Some(GROUP.to_owned()));
+    assert_ne!(text(&records[1], "operation_id"), record);
+
+    // Turning generate off removes exactly the group's member records and keeps the
+    // hand-placed one; the group's plate records go with it.
+    f.ok(&f_args_edit(GROUP, &["--hole-mode", "none"], &[]));
+    let records = member_holes_of(&f, &beam);
+    assert_eq!(records.len(), 1);
+    assert!(matches!(records[0].get("generated_by"), Ok(Json::Null)));
+    assert!(holes_of(&f, &plate).is_empty());
+
+    // A second generating group over the plate and the member drills both again; deleting
+    // it removes its member records in the same revision, and undo brings them back as
+    // one unit.
+    let joint2 = vec![plate.clone(), beam.clone()];
+    let mut args = f.group_args(GROUP2, &joint2, WASHERED, &["--spacings", "150"]);
+    args.extend([
+        "--op-id".to_owned(),
+        "019a7bf0-0000-7000-8000-0000007100d4".to_owned(),
+    ]);
+    f.ok(&strs("create-bolt-group", &args));
+    let records = member_holes_of(&f, &beam);
+    assert_eq!(records.len(), 3);
+    assert_eq!(owners_of(&records)[2], Some(GROUP2.to_owned()));
+    f.ok(&owned("delete-element", &["--id", GROUP2]));
+    let records = member_holes_of(&f, &beam);
+    assert_eq!(records.len(), 1, "only the manual hole stays");
+    f.undo();
+    let records = member_holes_of(&f, &beam);
+    assert_eq!(records.len(), 3, "undo restores the group's member records");
+    // The records replay in ordinal order: the manual hole predates the second group's.
+    assert_eq!(owners_of(&records)[0], None);
+    assert_eq!(owners_of(&records)[1], Some(GROUP2.to_owned()));
+    assert_eq!(owners_of(&records)[2], Some(GROUP2.to_owned()));
 }
 
 /// The knee brace of #505: a beam whose placement turns it 40 degrees off the vertical and a

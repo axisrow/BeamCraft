@@ -707,6 +707,81 @@ pub fn declared_section_area_warning(spec: &SectionProfileSpec) -> Option<Declar
     spec.declared_area_warning(reference)
 }
 
+/// The member-side facts the generated-hole decision of a bolt group reads (the F06
+/// member-hole amendment section 3, [`crate::engine::bolt::MemberHoleInput`]): the certified
+/// frame of the member's straight chord — the same construction [`evaluate_member`] replays
+/// hole records through — in element coordinates and turned into world coordinates by the
+/// placement, with the world position of the frame origin and the world faces the adapter
+/// carries. `faces` may be empty: the decision then finds no crossed material and writes no
+/// record. A curved member or polybeam reports `straight = false`, and its decision refuses
+/// honestly instead of reading a frame its replay would refuse.
+pub fn member_hole_input(
+    authored: &AuthoredMember,
+    profile: &ProfileInfo,
+    faces: crate::engine::bolt::Faces,
+) -> Result<crate::engine::bolt::MemberHoleInput, CommandError> {
+    authored.placement.validate()?;
+    let straight = !authored.curved && authored.axis_points_mm.len() == 2;
+    let element_frame = if straight {
+        let (Some(start), Some(end)) = (
+            authored.axis_points_mm.first(),
+            authored.axis_points_mm.get(1),
+        ) else {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "axis_points_mm",
+                "member frame could not be built",
+            ));
+        };
+        let (width_mm, height_mm) = profile.extent_mm();
+        let frame = MemberFrame::new(
+            Point3::new(start[0], start[1], start[2]),
+            Point3::new(end[0], end[1], end[2]),
+            width_mm,
+            height_mm,
+            authored.roll_rad,
+        )
+        .map_err(|_| {
+            CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "axis_points_mm",
+                "member frame could not be built",
+            )
+        })?;
+        let frame = frame.frame();
+        let axis = |v: &beamcraft_geom::Vec3| [v.x(), v.y(), v.z()];
+        [axis(&frame.x()), axis(&frame.y()), axis(&frame.z())]
+    } else {
+        [[0.0; 3]; 3]
+    };
+    let turn = |v: [f64; 3]| {
+        beamcraft_engine::solid::rotate_vector(v, authored.placement.orientation_xyzw)
+    };
+    let [tx, ty, tz] = authored.placement.translation_mm;
+    let world = |[x, y, z]: [f64; 3]| {
+        let t = turn([x, y, z]);
+        [t[0] + tx, t[1] + ty, t[2] + tz]
+    };
+    let origin = authored.axis_points_mm.first().copied().ok_or_else(|| {
+        CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "axis_points_mm",
+            "member frame could not be built",
+        )
+    })?;
+    Ok(crate::engine::bolt::MemberHoleInput {
+        faces,
+        frame: [
+            turn(element_frame[0]),
+            turn(element_frame[1]),
+            turn(element_frame[2]),
+        ],
+        origin_mm: world(origin),
+        element_frame,
+        straight,
+    })
+}
+
 /// Evaluates an authored member with its resolved profile. The profile values are re-admitted
 /// because a committed definition is untrusted input. A rectangle keeps the P03 box builder (and
 /// its exact bytes); a section family or custom outline is the kernel's detailed A07.1 outline
