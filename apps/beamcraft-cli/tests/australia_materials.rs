@@ -16,7 +16,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use crate::support::{self, at, list, text};
+use crate::support::{self, Scripted, at, list, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -61,20 +61,17 @@ impl Fixture {
         assert_eq!(code, 2, "{args:?}: {body:?}");
         text(&body, "code")
     }
+    /// One `run-script` invocation with the same clean environment `raw` gives its spawns:
+    /// the store commands amortize the environment copy's library parse into one process
+    /// (#738 P7), the commands' own work unchanged.
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines_without_config(&self.shared.root, store, lines)
+    }
 }
 
 #[test]
 fn the_australia_environment_lists_and_carries_its_material_library() {
     let f = Fixture::new();
-
-    // The environment listing names the material library beside the profile and fastener ones.
-    let listed = f.ok(&["list-library", "--environment", ENVIRONMENT]);
-    assert_eq!(
-        at(&listed, &["environment", "material_libraries"])
-            .array()
-            .unwrap(),
-        [Json::text("materials-as-nzs-3678.usda")]
-    );
 
     // The project carries the material library in its own environment copy.
     let created = f.ok(&[
@@ -99,90 +96,63 @@ fn the_australia_environment_lists_and_carries_its_material_library() {
         "the project copy holds the AS/NZS 3678 material library"
     );
 
-    // Every shipped grade is listed for pickers until the model defines it: the five base
-    // grades, first and last in the loader's designation order.
-    let before = f.ok(&["definitions", "--store", &store]);
-    let available = list(&before, "environment_materials");
-    assert_eq!(available.len(), 5);
-    assert_eq!(text(&available[0], "grade"), "250");
-    assert_eq!(text(&available[4], "grade"), "450");
-
-    // A grade of the set resolves through the project's own environment copy, with no option
-    // naming any file, and the mass math uses the catalogue entry's density: a 610UB125 beam
-    // of 6 m at the declared catalogue area 16000 mm2 and 7850 kg/m3 weighs 753.6 kg.
-    let beam = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "0,0,0",
-        "--end",
-        "6000,0,0",
-        "--profile",
-        "610UB125",
-        "--material",
-        "350",
-    ]);
-    let mass = at(&beam, &["member", "quantities", "mass"]);
-    assert_eq!(text(mass, "status"), "current");
-    let kg = at(mass, &["kg"]).float().unwrap();
-    assert!((kg - 753.6).abs() < 0.01, "mass {kg} kg");
-
-    // The pinned definition is the catalogue entry itself: the declared grade, standard and
-    // density ride into the model, which never needs the library file again.
-    let after = f.ok(&["definitions", "--store", &store, "--name", "350"]);
-    let pinned = list(&after, "definitions");
-    assert_eq!(pinned.len(), 1);
-    assert_eq!(text(&pinned[0], "kind"), "material");
-    assert_eq!(text(&pinned[0], "grade"), "350");
-    assert_eq!(text(&pinned[0], "standard"), "AS/NZS 3678-2016");
-    assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
-    // The spent grade is no longer offered to pickers; the other four still are.
-    let spent = f.ok(&["definitions", "--store", &store]);
-    let remaining = list(&spent, "environment_materials");
-    assert_eq!(remaining.len(), 4);
-    assert!(
-        remaining.iter().all(|g| text(g, "grade") != "350"),
-        "350 is spent"
-    );
-
-    // The seeded constants stay the neutral fallback: Steel still answers by name.
-    let column = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "3000,0,0",
-        "--end",
-        "3000,0,4000",
-        "--profile",
-        "610UB125",
-        "--material",
-        "Steel",
-    ]);
-    let steel_mass = at(&column, &["member", "quantities", "mass"]);
-    let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
-    assert!(
-        (steel_kg - 16000.0 * 4000.0 * 7850.0 / 1.0e9).abs() < 0.01,
-        "Steel mass {steel_kg} kg"
-    );
-    let steel = f.ok(&["definitions", "--store", &store, "--name", "Steel"]);
-    let pinned_steel = list(&steel, "definitions");
-    assert_eq!(pinned_steel.len(), 1);
-    assert!(
-        at(&pinned_steel[0], &["grade"]).string().is_err(),
-        "the neutral Steel declares no grade"
-    );
-
+    // The listing and the store round ride one process (#738 P7): the library listing, the
+    // offered-grade reads, the two members whose mass math uses the catalogue density, and
+    // the refusals in their authored order.
+    let mut lines = vec![
+        // The environment listing names the material library beside the profile and
+        // fastener ones.
+        Scripted::ok(&["list-library", "--environment", ENVIRONMENT]),
+        // Every shipped grade is listed for pickers until the model defines it: the five
+        // base grades, first and last in the loader's designation order.
+        Scripted::ok(&["definitions", "--store", &store]),
+        // A grade of the set resolves through the project's own environment copy, with no
+        // option naming any file, and the mass math uses the catalogue entry's density: a
+        // 610UB125 beam of 6 m at the declared catalogue area 16000 mm2 and 7850 kg/m3
+        // weighs 753.6 kg.
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            "610UB125",
+            "--material",
+            "350",
+        ]),
+        // The pinned definition is the catalogue entry itself: the declared grade, standard
+        // and density ride into the model, which never needs the library file again.
+        Scripted::ok(&["definitions", "--store", &store, "--name", "350"]),
+        // The spent grade is no longer offered to pickers; the other four still are.
+        Scripted::ok(&["definitions", "--store", &store]),
+        // The seeded constants stay the neutral fallback: Steel still answers by name.
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "column",
+            "--start",
+            "3000,0,0",
+            "--end",
+            "3000,0,4000",
+            "--profile",
+            "610UB125",
+            "--material",
+            "Steel",
+        ]),
+        Scripted::ok(&["definitions", "--store", &store, "--name", "Steel"]),
+    ];
     // A grade the set does not publish stays NOT_FOUND, never a near match: no qualifier
     // forms (the NZ catalogue G-prefix and the Grade word, the AS/NZS 1594 HA form), no
     // impact suffix, no Z value, no lighter grade outside the shipped set and no grade of
     // another standard.
-    for absent in [
+    let absent = [
         "G350",
         "Grade 350",
         "HA250",
@@ -193,25 +163,73 @@ fn the_australia_environment_lists_and_carries_its_material_library() {
         "200",
         "500",
         "A36",
-    ] {
+    ];
+    for designation in absent {
+        lines.push(Scripted::refused(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,6000,0",
+            "--profile",
+            "610UB125",
+            "--material",
+            designation,
+        ]));
+    }
+    let replies = f.script(&store, &lines);
+    let listed = &replies[0];
+    assert_eq!(
+        at(listed, &["environment", "material_libraries"])
+            .array()
+            .unwrap(),
+        [Json::text("materials-as-nzs-3678.usda")]
+    );
+    let available = list(&replies[1], "environment_materials");
+    assert_eq!(available.len(), 5);
+    assert_eq!(text(&available[0], "grade"), "250");
+    assert_eq!(text(&available[4], "grade"), "450");
+    let beam = &replies[2];
+    let mass = at(beam, &["member", "quantities", "mass"]);
+    assert_eq!(text(mass, "status"), "current");
+    let kg = at(mass, &["kg"]).float().unwrap();
+    assert!((kg - 753.6).abs() < 0.01, "mass {kg} kg");
+    let pinned = list(&replies[3], "definitions");
+    assert_eq!(pinned.len(), 1);
+    assert_eq!(text(&pinned[0], "kind"), "material");
+    assert_eq!(text(&pinned[0], "grade"), "350");
+    assert_eq!(text(&pinned[0], "standard"), "AS/NZS 3678-2016");
+    assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
+    let remaining = list(&replies[4], "environment_materials");
+    assert_eq!(remaining.len(), 4);
+    assert!(
+        remaining.iter().all(|g| text(g, "grade") != "350"),
+        "350 is spent"
+    );
+    let column = &replies[5];
+    let steel_mass = at(column, &["member", "quantities", "mass"]);
+    let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
+    assert!(
+        (steel_kg - 16000.0 * 4000.0 * 7850.0 / 1.0e9).abs() < 0.01,
+        "Steel mass {steel_kg} kg"
+    );
+    let pinned_steel = list(&replies[6], "definitions");
+    assert_eq!(pinned_steel.len(), 1);
+    assert!(
+        at(&pinned_steel[0], &["grade"]).string().is_err(),
+        "the neutral Steel declares no grade"
+    );
+
+    // Replies 7..17 carry the refusals in the authored order.
+    for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            f.code(&[
-                "create-member",
-                "--store",
-                &store,
-                "--kind",
-                "beam",
-                "--start",
-                "0,0,0",
-                "--end",
-                "0,6000,0",
-                "--profile",
-                "610UB125",
-                "--material",
-                absent,
-            ]),
+            text(&replies[7 + index], "code"),
             "NOT_FOUND",
-            "{absent}"
+            "{designation}"
         );
     }
 }

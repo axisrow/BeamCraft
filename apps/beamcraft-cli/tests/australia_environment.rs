@@ -14,7 +14,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -54,10 +54,11 @@ impl Fixture {
         assert_eq!(code, 0, "{args:?}: {body:?}");
         body
     }
-    fn code(&self, args: &[&str]) -> String {
-        let (code, body) = self.raw(args);
-        assert_eq!(code, 2, "{args:?}: {body:?}");
-        text(&body, "code")
+    /// One `run-script` invocation with the same clean environment `raw` gives its spawns:
+    /// the store commands amortize the environment copy's library parse into one process
+    /// (#738 P7), the commands' own work unchanged.
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines_without_config(&self.shared.root, store, lines)
     }
 }
 
@@ -151,100 +152,68 @@ fn a_project_created_with_the_australia_environment_resolves_its_designations() 
     ]);
     let store = text(at(&created, &["project"]), "path");
 
-    // A designation of the pack resolves through the project's own environment copy, with no
-    // --library option naming any file.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "0,0,0",
-        "--end",
-        "6000,0,0",
-        "--profile",
-        "310UB32.0",
-        "--material",
-        "Steel",
-    ]);
-    assert_eq!(text(&made, "outcome"), "member_created");
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 4080.0);
-    // 4080 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 192.168, 1e-9);
-
-    // A heavy column-series designation: 310UC158, catalogue area 20100 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "4000,0,0",
-        "--end",
-        "4000,0,6000",
-        "--profile",
-        "310UC158",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 20100.0);
-    close(num(&q, &["mass", "kg"]), 946.71, 1e-9);
-
-    // A hollow-series designation: SHS100x100x3.0, catalogue area 1140 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "0,4000,0",
-        "--end",
-        "0,4000,6000",
-        "--profile",
-        "SHS100x100x3",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 1140.0);
-    // 1140 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 53.694, 1e-9);
-
-    // A circular hollow designation: CHS76.1x3.2, catalogue area 733 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "0,0,6000",
-        "--end",
-        "6000,0,6000",
-        "--profile",
-        "CHS76.1x3.2",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 733.0);
-    close(num(&q, &["mass", "kg"]), 34.5243, 1e-9);
-
+    // The designation round rides one process: a designation of the pack resolves through
+    // the project's own environment copy, with no --library option naming any file, and
+    // every catalogue figure below is the published value.
+    let cases: [(&str, &str, &str, &str, f64, f64); 4] = [
+        // profile, start, end, kind, catalogue area mm2, mass kg (area x length x 7850 kg/m3).
+        ("310UB32.0", "0,0,0", "6000,0,0", "beam", 4080.0, 192.168),
+        // A heavy column-series designation.
+        (
+            "310UC158",
+            "4000,0,0",
+            "4000,0,6000",
+            "column",
+            20100.0,
+            946.71,
+        ),
+        // A hollow-series designation.
+        (
+            "SHS100x100x3",
+            "0,4000,0",
+            "0,4000,6000",
+            "column",
+            1140.0,
+            53.694,
+        ),
+        // A circular hollow designation.
+        (
+            "CHS76.1x3.2",
+            "0,0,6000",
+            "6000,0,6000",
+            "beam",
+            733.0,
+            34.5243,
+        ),
+    ];
     // A designation the shipped series does not publish is refused, not silently substituted:
     // 530UB72.4 and the 350UC sizes are no longer rolled, the older designation generation
     // (310UC97.7, 150UB17.1) has been renamed in the 2016 assortment, and the hollow sizes the
     // mill lists stock but the standard's Appendix D does not publish stay out of the pack.
-    assert_eq!(
-        f.code(&[
+    let absent = ["530UB72.4", "SHS300x300x8"];
+    let member = |profile: &str, kind: &str, start: &str, end: &str| {
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            kind,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--profile",
+            profile,
+            "--material",
+            "Steel",
+        ])
+    };
+    let mut lines: Vec<Scripted> = cases
+        .iter()
+        .map(|(profile, start, end, kind, _, _)| member(profile, kind, start, end))
+        .collect();
+    for designation in absent {
+        lines.push(Scripted::refused(&[
             "create-member",
             "--store",
             &store,
@@ -255,30 +224,28 @@ fn a_project_created_with_the_australia_environment_resolves_its_designations() 
             "--end",
             "6000,0,0",
             "--profile",
-            "530UB72.4",
+            designation,
             "--material",
-            "Steel"
-        ]),
-        "NOT_FOUND"
-    );
-    assert_eq!(
-        f.code(&[
-            "create-member",
-            "--store",
-            &store,
-            "--kind",
-            "beam",
-            "--start",
-            "0,0,0",
-            "--end",
-            "6000,0,0",
-            "--profile",
-            "SHS300x300x8",
-            "--material",
-            "Steel"
-        ]),
-        "NOT_FOUND"
-    );
+            "Steel",
+        ]));
+    }
+    let replies = f.script(&store, &lines);
+    // Replies 0..4 carry the members, 4..6 the refusals (the refused lines commit nothing).
+    for (index, (profile, _, _, _, area, mass)) in cases.iter().enumerate() {
+        let made = &replies[index];
+        assert_eq!(text(made, "outcome"), "member_created", "{profile}");
+        let q = at(made, &["member", "quantities"]).clone();
+        assert_eq!(text(&q, "area_source"), "catalogue", "{profile}");
+        assert_eq!(num(&q, &["section_area_mm2"]), *area, "{profile}");
+        close(num(&q, &["mass", "kg"]), *mass, 1e-9);
+    }
+    for (index, designation) in absent.iter().enumerate() {
+        assert_eq!(
+            text(&replies[4 + index], "code"),
+            "NOT_FOUND",
+            "{designation}"
+        );
+    }
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.

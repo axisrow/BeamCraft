@@ -13,7 +13,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -53,10 +53,12 @@ impl Fixture {
         assert_eq!(code, 0, "{args:?}: {body:?}");
         body
     }
-    fn code(&self, args: &[&str]) -> String {
-        let (code, body) = self.raw(args);
-        assert_eq!(code, 2, "{args:?}: {body:?}");
-        text(&body, "code")
+    /// One `run-script` invocation with the same clean environment `raw` gives its spawns:
+    /// the store commands amortize the environment copy's library parse into one process
+    /// (#738 P7; the measured per-spawn cost is ~0.8 s on a store carrying the Russia
+    /// libraries, the commands' own work unchanged).
+    fn script(&self, store: &str, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines_without_config(&self.shared.root, store, lines)
     }
 }
 
@@ -248,213 +250,113 @@ fn a_project_created_with_the_russia_environment_resolves_its_designations() {
     ]);
     let store = text(at(&created, &["project"]), "path");
 
-    // A designation of the pack resolves through the project's own environment copy, with no
-    // --library option naming any file.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "0,0,0",
-        "--end",
-        "6000,0,0",
-        "--profile",
-        "30B1",
-        "--material",
-        "Steel",
-    ]);
-    assert_eq!(text(&made, "outcome"), "member_created");
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 4192.0);
-    // 4192 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 197.4432, 1e-9);
-
-    // A column-series designation: 40K2, catalogue area 21096 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "4000,0,0",
-        "--end",
-        "4000,0,6000",
-        "--profile",
-        "40K2",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 21096.0);
-    close(num(&q, &["mass", "kg"]), 993.6216, 1e-9);
-
-    // A wide-flange-series designation: 50Sh2, catalogue area 17660 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "8000,0,0",
-        "--end",
-        "14000,0,0",
-        "--profile",
-        "50Sh2",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 17660.0);
-    // 17660 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 831.786, 1e-9);
-
-    // A cold-bent square designation of the second library: 60x60x3, catalogue area 661 mm2,
-    // corner radius 2t = 6 mm.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "16000,0,0",
-        "--end",
-        "16000,0,3000",
-        "--profile",
-        "60x60x3",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 661.0);
-    // 661 mm2 x 3000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 15.566550, 1e-9);
-
-    // The largest square of the series, 300x300x9: catalogue area 10200 mm2 (printed
-    // 102.0 cm2 at one decimal).
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "column",
-        "--start",
-        "20000,0,0",
-        "--end",
-        "20000,0,3000",
-        "--profile",
-        "300x300x9",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 10200.0);
-    // 10200 mm2 x 3000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 240.21, 1e-9);
-
-    // An inclined-flange I beam of the third library: I30, catalogue area 4650 mm2, rides the
-    // tapered_i family.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "30000,0,0",
-        "--end",
-        "36000,0,0",
-        "--profile",
-        "I30",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 4650.0);
-    // 4650 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 219.015, 1e-9);
-
-    // An inclined-flange channel: C16a, catalogue area 1950 mm2.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "36000,0,0",
-        "--end",
-        "36000,0,3000",
-        "--profile",
-        "C16a",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 1950.0);
-    // 1950 mm2 x 3000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 45.9225, 1e-9);
-
-    // A designation the shipped series do not publish is refused, not silently substituted:
-    // 30K4 and 80Sh1 exist only in the newer GOST R 57837-2017, GOST 8239-89 publishes no 25
-    // and GOST 8240-89 no 24a (the a-variants are 16a and 18a only), GOST 30245-2003
-    // publishes no 220 mm square at all, and its 50x30 rectangular group steps over the
-    // 4.5 mm wall.
-    for absent in ["30K4", "80Sh1", "I25", "C24a", "220x220x10", "50x30x4.5"] {
+    // The designation round rides one process: a designation of the pack resolves through
+    // the project's own environment copy, with no --library option naming any file, and
+    // every catalogue figure below is the standard's published value. The refusals sit in
+    // the middle in their authored order: 30K4 and 80Sh1 exist only in the newer
+    // GOST R 57837-2017, GOST 8239-89 publishes no 25 and GOST 8240-89 no 24a (the
+    // a-variants are 16a and 18a only), GOST 30245-2003 publishes no 220 mm square at all,
+    // and its 50x30 rectangular group steps over the 4.5 mm wall.
+    let cases: [(&str, &str, &str, &str, f64, f64); 8] = [
+        // kind, start, end, profile, catalogue area mm2, mass kg (area x length x 7850 kg/m3).
+        ("beam", "0,0,0", "6000,0,0", "30B1", 4192.0, 197.4432),
+        (
+            "column",
+            "4000,0,0",
+            "4000,0,6000",
+            "40K2",
+            21096.0,
+            993.6216,
+        ),
+        ("beam", "8000,0,0", "14000,0,0", "50Sh2", 17660.0, 831.786),
+        // The cold-bent square designation of the second library: corner radius 2t = 6 mm.
+        (
+            "column",
+            "16000,0,0",
+            "16000,0,3000",
+            "60x60x3",
+            661.0,
+            15.566550,
+        ),
+        // The largest square of the series (printed 102.0 cm2 at one decimal).
+        (
+            "column",
+            "20000,0,0",
+            "20000,0,3000",
+            "300x300x9",
+            10200.0,
+            240.21,
+        ),
+        // The inclined-flange I beam of the third library, riding the tapered_i family.
+        ("beam", "30000,0,0", "36000,0,0", "I30", 4650.0, 219.015),
+        // An inclined-flange channel of the third library.
+        ("beam", "36000,0,0", "36000,0,3000", "C16a", 1950.0, 45.9225),
+        // The cold-bent rectangular designation: the height along h, the width along b.
+        ("beam", "22000,0,0", "28000,0,0", "80x60x3", 781.0, 36.7851),
+    ];
+    let absent = ["30K4", "80Sh1", "I25", "C24a", "220x220x10", "50x30x4.5"];
+    let member = |profile: &str, kind: &str, start: &str, end: &str| {
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            kind,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--profile",
+            profile,
+            "--material",
+            "Steel",
+        ])
+    };
+    let mut lines: Vec<Scripted> = cases[..7]
+        .iter()
+        .map(|(kind, start, end, profile, _, _)| member(profile, kind, start, end))
+        .collect();
+    for designation in absent {
+        lines.push(Scripted::refused(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            designation,
+            "--material",
+            "Steel",
+        ]));
+    }
+    let (kind, start, end, profile, _, _) = cases[7];
+    lines.push(member(profile, kind, start, end));
+    let replies = f.script(&store, &lines);
+    // Replies 0..7 carry the first seven members, 7..13 the refusals, 13 the last member
+    // (the refused lines commit nothing, so the order above is the authored order).
+    for (index, (_, _, _, profile, area, mass)) in cases.iter().enumerate() {
+        let made = if index < 7 {
+            &replies[index]
+        } else {
+            &replies[13]
+        };
+        assert_eq!(text(made, "outcome"), "member_created", "{profile}");
+        let q = at(made, &["member", "quantities"]).clone();
+        assert_eq!(text(&q, "area_source"), "catalogue", "{profile}");
+        assert_eq!(num(&q, &["section_area_mm2"]), *area, "{profile}");
+        close(num(&q, &["mass", "kg"]), *mass, 1e-9);
+    }
+    for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            f.code(&[
-                "create-member",
-                "--store",
-                &store,
-                "--kind",
-                "beam",
-                "--start",
-                "0,0,0",
-                "--end",
-                "6000,0,0",
-                "--profile",
-                absent,
-                "--material",
-                "Steel"
-            ]),
+            text(&replies[7 + index], "code"),
             "NOT_FOUND",
-            "{absent}"
+            "{designation}"
         );
     }
-
-    // A cold-bent rectangular designation: 80x60x3, catalogue area 781 mm2, corner radius
-    // 2t = 6 mm, the height along h and the width along b.
-    let made = f.ok(&[
-        "create-member",
-        "--store",
-        &store,
-        "--kind",
-        "beam",
-        "--start",
-        "22000,0,0",
-        "--end",
-        "28000,0,0",
-        "--profile",
-        "80x60x3",
-        "--material",
-        "Steel",
-    ]);
-    let q = at(&made, &["member", "quantities"]).clone();
-    assert_eq!(text(&q, "area_source"), "catalogue");
-    assert_eq!(num(&q, &["section_area_mm2"]), 781.0);
-    // 781 mm2 x 6000 mm x 7850 kg/m3.
-    close(num(&q, &["mass", "kg"]), 36.7851, 1e-9);
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
