@@ -498,15 +498,15 @@ mass is already kilograms.
 | BeamCraft quantity | Element kinds | IFC quantity (set) | Rule |
 |--------------------|---------------|--------------------|------|
 | Volume (body as authored, including holes) | beam, column, plate | `NetVolume` (`IfcQuantityVolume`) in `Qto_BeamBaseQuantities`, `Qto_ColumnBaseQuantities`, `Qto_PlateBaseQuantities` (S42 to S44) | always when current |
-| Same volume | same | `GrossVolume` in the same sets | only for an element without operations: a plate without holes, and every member (`IFCX-QTY-004`) |
+| Same volume | same | `GrossVolume` in the same sets | only for an element without operations: a plate without holes or cuts, a member without cuts or holes (`IFCX-QTY-004`) |
 | Mass (volume times density) | beam, column | `NetWeight` (`IfcQuantityWeight`) in the beam and column sets | when current; kilograms |
 | Same mass | beam, column | `GrossWeight` | same condition as `GrossVolume` |
 | Mass | plate | property `NetWeightKg` (`IfcMassMeasure`) in `BeamCraft_Element` | the IFC4 plate set has no weight quantity (`IFCX-QTY-007`); when current |
 | Same mass | plate | property `GrossWeightKg` | same condition as `GrossVolume` |
 
-Each `IfcElementQuantity` is named exactly as the buildingSMART set (`Qto_...`). A plate with holes
-has no `GrossVolume` and no `GrossWeight`, because the volume of the plate without its holes is not
-a published record and the exporter does not recompute it.
+Each `IfcElementQuantity` is named exactly as the buildingSMART set (`Qto_...`). A plate with
+holes or a plane cut has no `GrossVolume` and no `GrossWeight`, because the volume of the plate
+without its operations is not a published record and the exporter does not recompute it.
 
 Not published today and therefore not exported (L-06): beam `Length`, `CrossSectionArea`,
 `OuterSurfaceArea`, `GrossSurfaceArea`, `NetSurfaceArea`, plate `Width`, `Perimeter`, `GrossArea`,
@@ -925,7 +925,7 @@ diagnostic and are checked by the acceptance cases. Counts: 79 rules, 27 error, 
 | IFCX-QTY-001 | mapping | - | A quantity is written only from a stored record whose signature equals the freshly computed one and whose status is current. Nothing is recomputed at export time. |
 | IFCX-QTY-002 | warning | - | A quantity whose freshness is stale, missing, unknown or unsupported is not written (no zero, no previous value); its status is written in BeamCraft_Element and the omission is listed (owner decision Q-5). |
 | IFCX-QTY-003 | mapping | - | Mapping of the published quantities: volume to NetVolume, mass to NetWeight, in the IFC4 base quantity set of the product type and in SI units (section 8.2). |
-| IFCX-QTY-004 | mapping | - | GrossVolume and GrossWeight are written, with the same values, only for an element without operations (a plate without holes, every member). Otherwise they are omitted. |
+| IFCX-QTY-004 | mapping | - | GrossVolume and GrossWeight are written, with the same values, only for an element without operations (a plate without holes or cuts, a member without cuts or holes). Otherwise they are omitted. |
 | IFCX-QTY-005 | error | INTEGRITY_ERROR | A stored record with status current whose value is not finite, or whose volume is not greater than zero, refuses the export. |
 | IFCX-QTY-006 | mapping | - | BeamCraft_Element names the statuses, signatures and algorithm label of the records, so a reader can compare them with the derived layer. |
 | IFCX-QTY-007 | mapping | - | The IFC4 plate base quantity set has no weight quantities. A plate's current mass is written as the properties NetWeightKg and GrossWeightKg of BeamCraft_Element (IfcMassMeasure, kilograms), under the same freshness and Gross rules. |
