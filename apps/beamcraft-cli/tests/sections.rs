@@ -12,7 +12,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_json::Json;
 use std::fs;
@@ -39,6 +39,16 @@ impl Fixture {
         assert_eq!(code, 2, "{command} {extra:?}");
         text(&body, "code")
     }
+    fn store(&self) -> String {
+        self.shared.root.join("store").to_str().unwrap().to_owned()
+    }
+    /// One `run-script` invocation over the fixture store: the same commands the suite would
+    /// spawn one process each, amortized into a single process (#738 P7; each command's own
+    /// work is unchanged). Replies come back in the lines' order.
+    fn script(&self, lines: &[Scripted]) -> Vec<Json> {
+        let store = self.store();
+        support::script_lines(&self.shared.root, &store, lines)
+    }
     fn authored_text(&self, revision: &Json) -> String {
         let layers = at(revision, &["revision", "manifest", "layers"])
             .array()
@@ -62,32 +72,22 @@ fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
 }
 
-fn defined(f: &Fixture, args: &[&str]) -> String {
-    let reply = f.ok("define-profile", args);
-    text(reply.get("definition").unwrap(), "digest")
-}
-
-fn member(f: &Fixture, kind: &str, start: &str, end: &str, profile: &str) -> Json {
-    let created = created(f, kind, start, end, profile);
-    at(&created, &["member"]).clone()
-}
-
-fn created(f: &Fixture, kind: &str, start: &str, end: &str, profile: &str) -> Json {
-    let created = f.ok(
+/// The `create-member` line over the fixture store, the exact tokens the per-command path
+/// spawned.
+fn member_line(store: &str, kind: &str, start: &str, end: &str, profile: &str) -> Scripted {
+    Scripted::ok(&[
         "create-member",
-        &[
-            "--kind",
-            kind,
-            "--start",
-            start,
-            "--end",
-            end,
-            "--profile-digest",
-            profile,
-        ],
-    );
-    assert_eq!(text(&created, "outcome"), "member_created");
-    created
+        "--store",
+        store,
+        "--kind",
+        kind,
+        "--start",
+        start,
+        "--end",
+        end,
+        "--profile-digest",
+        profile,
+    ])
 }
 
 const I300: &[&str] = &[
@@ -118,13 +118,27 @@ fn an_i_beam_from_a_family_definition_is_built_and_reopened() {
     assert_eq!(num(definition, &["width_mm"]), 150.0);
     assert_eq!(text(definition, "designation"), "EX-I300");
     let profile = text(definition, "digest");
-    // Content-addressed: the same entry defined again is the same definition.
-    let again = f.ok("define-profile", I300);
-    assert_eq!(text(&again, "outcome"), "definition_exists");
+    // Content-addressed: the same entry defined again is the same definition; the member, the
+    // reopen inspection and the definition listing ride one process with it (#738 P7).
+    let store = f.store();
+    let define = |store: &str| {
+        let mut args = vec!["define-profile", "--store", store];
+        args.extend_from_slice(I300);
+        Scripted::ok(&args)
+    };
+    let again_and_rest = f.script(&[
+        define(&store),
+        member_line(&store, "beam", "0,0,0", "6000,0,0", &profile),
+        Scripted::ok(&["inspect-elements", "--store", &store]),
+        Scripted::ok(&["definitions", "--store", &store]),
+    ]);
+    let again = &again_and_rest[0];
+    assert_eq!(text(again, "outcome"), "definition_exists");
     assert_eq!(text(again.get("definition").unwrap(), "digest"), profile);
 
-    let reply = created(&f, "beam", "0,0,0", "6000,0,0", &profile);
-    let beam = at(&reply, &["member"]).clone();
+    let reply = &again_and_rest[1];
+    assert_eq!(text(reply, "outcome"), "member_created");
+    let beam = at(reply, &["member"]).clone();
     assert_eq!(num(&beam, &["section_mm", "width"]), 150.0);
     assert_eq!(num(&beam, &["section_mm", "height"]), 300.0);
     // Sharp I plus four root fillets (1 - pi/4) r^2: the exact area, not the arc polygon.
@@ -142,11 +156,11 @@ fn an_i_beam_from_a_family_definition_is_built_and_reopened() {
         "pmass-member-area-x-length/1;section-exact-area;tolerance-policy-3"
     );
 
-    let inspected = f.ok("inspect-elements", &[]);
-    assert_eq!(num(&inspected, &["member_count"]), 1.0);
-    let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
+    let inspected = &again_and_rest[2];
+    assert_eq!(num(inspected, &["member_count"]), 1.0);
+    let reopened = &at(inspected, &["members"]).array().unwrap()[0];
     assert_eq!(text(reopened, "mesh_digest"), text(&beam, "mesh_digest"));
-    let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
+    let elements = at(inspected, &["snapshot", "elements"]).array().unwrap();
     let bound = |key: &str| -> Vec<f64> {
         at(&elements[0], &[key])
             .array()
@@ -161,11 +175,11 @@ fn an_i_beam_from_a_family_definition_is_built_and_reopened() {
         (vec![0.0, -75.0, -150.0], vec![6000.0, 75.0, 150.0])
     );
 
-    let listed = f.ok("definitions", &[]);
-    let definitions = at(&listed, &["definitions"]).array().unwrap();
+    let listed = &again_and_rest[3];
+    let definitions = at(listed, &["definitions"]).array().unwrap();
     assert!(definitions.iter().any(|d| text(d, "kind") == "i_shape"));
 
-    let authored = f.authored_text(&reply);
+    let authored = f.authored_text(reply);
     for line in [
         "custom token bim:definitionKind = \"i_shape\"",
         "custom double steel:profile:rMm = 15.0",
@@ -178,71 +192,135 @@ fn an_i_beam_from_a_family_definition_is_built_and_reopened() {
 #[test]
 fn cold_formed_and_custom_members_share_one_revision() {
     let f = Fixture::new();
-    let lipped = defined(
-        &f,
-        &[
-            "--family", "lipped_c", "--h", "150", "--b", "50", "--c", "15", "--t", "1.5", "--r",
-            "2",
-        ],
-    );
-    let tube = defined(&f, &["--family", "chs", "--d", "168", "--t", "5"]);
-    let custom = defined(
-        &f,
-        &[
-            "--family",
-            "custom",
-            "--outer",
-            "-50,-50;50,-50;50,50;-50,50",
-            "--cavity",
-            "-10,-10;-10,10;10,10;10,-10",
-        ],
-    );
-    member(&f, "beam", "0,0,0", "3000,0,0", &lipped);
-    member(&f, "column", "0,1000,0", "0,1000,3000", &tube);
-    let block = member(&f, "beam", "0,2000,0", "1000,2000,0", &custom);
+    let store = f.store();
+    let define = |store: &str, args: &[&str]| {
+        let mut line = vec!["define-profile", "--store", store];
+        line.extend_from_slice(args);
+        Scripted::ok(&line)
+    };
+    let shapes = f.script(&[
+        define(
+            &store,
+            &[
+                "--family", "lipped_c", "--h", "150", "--b", "50", "--c", "15", "--t", "1.5",
+                "--r", "2",
+            ],
+        ),
+        define(&store, &["--family", "chs", "--d", "168", "--t", "5"]),
+        define(
+            &store,
+            &[
+                "--family",
+                "custom",
+                "--outer",
+                "-50,-50;50,-50;50,50;-50,50",
+                "--cavity",
+                "-10,-10;-10,10;10,10;10,-10",
+            ],
+        ),
+    ]);
+    let digest = |reply: &Json| text(reply.get("definition").unwrap(), "digest");
+    let (lipped, tube, custom) = (digest(&shapes[0]), digest(&shapes[1]), digest(&shapes[2]));
+    let made = f.script(&[
+        member_line(&store, "beam", "0,0,0", "3000,0,0", &lipped),
+        member_line(&store, "column", "0,1000,0", "0,1000,3000", &tube),
+        member_line(&store, "beam", "0,2000,0", "1000,2000,0", &custom),
+        Scripted::ok(&["inspect-elements", "--store", &store]),
+    ]);
+    for reply in &made[..3] {
+        assert_eq!(text(reply, "outcome"), "member_created");
+    }
     // A custom outline is exact: (100^2 - 20^2) mm2 along 1000 mm.
-    assert_eq!(num(&block, &["quantities", "volume", "mm3"]), 9_600_000.0);
-    let inspected = f.ok("inspect-elements", &[]);
-    assert_eq!(num(&inspected, &["member_count"]), 3.0);
+    assert_eq!(
+        num(at(&made[2], &["member", "quantities"]), &["volume", "mm3"]),
+        9_600_000.0
+    );
+    assert_eq!(num(&made[3], &["member_count"]), 3.0);
 }
 
 #[test]
 fn bad_section_input_is_refused_with_its_code() {
     let f = Fixture::new();
-    let i = |extra: &[&str]| {
+    let store = f.store();
+    let i_refusal = |store: &str, extra: &[&str]| {
         let mut args = vec![
-            "--family", "i_shape", "--h", "300", "--b", "150", "--tw", "7",
+            "define-profile",
+            "--store",
+            store,
+            "--family",
+            "i_shape",
+            "--h",
+            "300",
+            "--b",
+            "150",
+            "--tw",
+            "7",
         ];
         args.extend_from_slice(extra);
-        f.rejected("define-profile", &args)
+        Scripted::refused(&args)
     };
-    // Missing parameter, flanges that leave no web, a parameter of another family.
-    assert_eq!(i(&["--r", "15"]), "INVALID_ARGUMENT");
-    assert_eq!(i(&["--tf", "200", "--r", "0"]), "INVALID_ARGUMENT");
-    assert_eq!(
-        i(&["--tf", "10", "--r", "15", "--d", "5"]),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(
-        i(&["--tf", "10", "--r", "15", "--width", "5"]),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(i(&["--tf", "nan", "--r", "15"]), "NON_FINITE_NUMBER");
-    assert_eq!(
-        f.rejected("define-profile", &["--family", "x_shape", "--h", "1"]),
-        "INVALID_ARGUMENT"
-    );
-    // Section parameters without --family are refused, not dropped from a rectangle.
-    for extra in [&["--t", "5"][..], &["--outer", "0,0;1,0;0,1"]] {
-        let mut args = vec!["--width", "100", "--height", "100"];
-        args.extend_from_slice(extra);
-        assert_eq!(f.rejected("define-profile", &args), "INVALID_ARGUMENT");
+    // Missing parameter, flanges that leave no web, a parameter of another family, a section
+    // parameter without --family: each refused, none written.
+    let refusals = f.script(&[
+        i_refusal(&store, &["--r", "15"]),
+        i_refusal(&store, &["--tf", "200", "--r", "0"]),
+        i_refusal(&store, &["--tf", "10", "--r", "15", "--d", "5"]),
+        i_refusal(&store, &["--tf", "10", "--r", "15", "--width", "5"]),
+        i_refusal(&store, &["--tf", "nan", "--r", "15"]),
+        Scripted::refused(&[
+            "define-profile",
+            "--store",
+            &store,
+            "--family",
+            "x_shape",
+            "--h",
+            "1",
+        ]),
+        // Section parameters without --family are refused, not dropped from a rectangle: the
+        // two literal no-family lines cover that guard.
+        Scripted::refused(&[
+            "define-profile",
+            "--store",
+            &store,
+            "--width",
+            "100",
+            "--height",
+            "100",
+            "--t",
+            "5",
+        ]),
+        Scripted::refused(&[
+            "define-profile",
+            "--store",
+            &store,
+            "--width",
+            "100",
+            "--height",
+            "100",
+            "--outer",
+            "0,0;1,0;0,1",
+        ]),
+        // A clockwise custom outline is stored as authored, and the kernel refuses to build it.
+        Scripted::ok(&[
+            "define-profile",
+            "--store",
+            &store,
+            "--family",
+            "custom",
+            "--outer",
+            "0,0;0,10;10,10;10,0",
+        ]),
+    ]);
+    for (index, reply) in refusals[..8].iter().enumerate() {
+        // The NaN parameter is named as such; every other case is a typed refusal.
+        let expected = if index == 4 {
+            "NON_FINITE_NUMBER"
+        } else {
+            "INVALID_ARGUMENT"
+        };
+        assert_eq!(text(reply, "code"), expected);
     }
-    // A clockwise custom outline is stored as authored, and the kernel refuses to build it.
-    let clockwise = defined(
-        &f,
-        &["--family", "custom", "--outer", "0,0;0,10;10,10;10,0"],
-    );
+    let clockwise = text(refusals[8].get("definition").unwrap(), "digest");
     assert_eq!(
         f.rejected(
             "create-member",
@@ -265,19 +343,28 @@ fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
     // keeps going. Eight prove it; every new member re-verifies the whole revision, so a
     // longer run adds quadratic kernel work without a new property.
     let f = Fixture::new();
-    let profile = defined(&f, I300);
+    let store = f.store();
+    let mut define = vec!["define-profile", "--store", store.as_str()];
+    define.extend_from_slice(I300);
+    let script = f.script(&[Scripted::ok(&define)]);
+    let profile = text(script[0].get("definition").unwrap(), "digest");
+    let mut lines = Vec::new();
     for n in 0..8 {
         let y = format!("{}", n * 1000);
-        member(
-            &f,
+        lines.push(member_line(
+            &store,
             "beam",
             &format!("0,{y},0"),
             &format!("6000,{y},0"),
             &profile,
-        );
+        ));
     }
-    let inspected = f.ok("inspect-elements", &[]);
-    assert_eq!(num(&inspected, &["member_count"]), 8.0);
+    lines.push(Scripted::ok(&["inspect-elements", "--store", &store]));
+    let made = f.script(&lines);
+    for reply in &made[..8] {
+        assert_eq!(text(reply, "outcome"), "member_created");
+    }
+    assert_eq!(num(&made[8], &["member_count"]), 8.0);
 }
 
 #[test]
@@ -287,40 +374,55 @@ fn a_chs_member_hole_has_a_gross_that_ignores_it_and_certifies_the_drop() {
     // arc approximation times the length (~10 980 mm3), far past the engine's `2 * A * t`
     // bound. The measured rule pins the d = 6/10/20 triplet end to end through the binary.
     let f = Fixture::new();
-    let profile = defined(
-        &f,
-        &[
-            "--family",
-            "chs",
-            "--d",
-            "114",
-            "--t",
-            "5",
-            "--designation",
-            "EX-CHS114",
-        ],
-    );
-    for (index, diameter) in [6.0, 10.0, 20.0].iter().enumerate() {
-        let created = member(&f, "beam", "0,0,0", "1000,0,0", &profile);
-        let id = text(&created, "element_id");
-        let gross = num(&created, &["quantities", "volume", "mm3"]);
+    let store = f.store();
+    let chs = f.script(&[Scripted::ok(&[
+        "define-profile",
+        "--store",
+        &store,
+        "--family",
+        "chs",
+        "--d",
+        "114",
+        "--t",
+        "5",
+        "--designation",
+        "EX-CHS114",
+    ])]);
+    let profile = text(chs[0].get("definition").unwrap(), "digest");
+    let made = f.script(&[
+        member_line(&store, "beam", "0,0,0", "1000,0,0", &profile),
+        member_line(&store, "beam", "0,0,0", "1000,0,0", &profile),
+        member_line(&store, "beam", "0,0,0", "1000,0,0", &profile),
+    ]);
+    let mut holes = Vec::new();
+    let mut grosses = Vec::new();
+    for (index, reply) in made.iter().enumerate() {
+        assert_eq!(text(reply, "outcome"), "member_created");
+        let member = at(reply, &["member"]);
+        let id = text(member, "element_id");
+        grosses.push(num(member, &["quantities", "volume", "mm3"]));
         let op = format!("019a7bf0-0000-7000-8000-00000000aa3{index}");
-        let hole = f.ok(
+        holes.push(Scripted::ok(&[
             "add-hole",
-            &[
-                "--id",
-                &id,
-                "--operation-id",
-                &op,
-                "--axis-point",
-                "0,0,500",
-                "--axis-direction",
-                "1,0,0",
-                "--diameter",
-                &format!("{diameter}"),
-            ],
-        );
-        let q = at(&hole, &["element", "quantities"]);
+            "--store",
+            &store,
+            "--id",
+            &id,
+            "--operation-id",
+            &op,
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            &format!("{}", [6.0, 10.0, 20.0][index]),
+        ]));
+    }
+    let holed = f.script(&holes);
+    for (index, reply) in holed.iter().enumerate() {
+        let diameter = [6.0, 10.0, 20.0][index];
+        let gross = grosses[index];
+        let q = at(reply, &["element", "quantities"]);
         // The gross ignores the hole (the plate rule); the net and the removed volume carry
         // the drop, and it certifies within the engine bound of the smooth tube.
         let after_gross = num(q, &["volume_gross_mm3"]);

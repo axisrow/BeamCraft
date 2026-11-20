@@ -19,7 +19,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_host::{
     ids::IdSource,
@@ -67,6 +67,13 @@ impl Fixture {
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
         self.run_in(&self.store(), command, extra)
     }
+    /// One `run-script` invocation over the fixture store: the same commands the suite would
+    /// spawn one process each, amortized into a single process (#738 P7; each command's own
+    /// work is unchanged). Replies come back in the lines' order.
+    fn script(&self, lines: &[Scripted]) -> Vec<Json> {
+        let store = self.store();
+        support::script_lines(&self.shared.root, &store, lines)
+    }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
         assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
@@ -78,13 +85,25 @@ impl Fixture {
         body
     }
     /// Runs a command that must be refused and returns its code; no revision may be written.
+    /// The layers read bracketing the command and the command itself ride one process
+    /// (#738 P7), so the nothing-written proof keeps both reads.
     fn refused(&self, command: &str, extra: &[&str]) -> String {
-        let before = self.layers();
-        let (code, body) = self.run(command, extra);
-        assert_eq!(code, 2, "{command} {extra:?}: {body:?}");
-        assert_eq!(text(&body, "outcome"), "rejected");
-        assert_eq!(self.layers(), before, "{command} {extra:?} wrote");
-        text(&body, "code")
+        let store = self.store();
+        let mut line = vec![command, "--store", store.as_str()];
+        line.extend_from_slice(extra);
+        let reads = self.script(&[
+            Scripted::ok(&["open-revision", "--store", &store]),
+            Scripted::refused(&line),
+            Scripted::ok(&["open-revision", "--store", &store]),
+        ]);
+        let body = &reads[1];
+        assert_eq!(text(body, "outcome"), "rejected", "{command} {extra:?}");
+        assert_eq!(
+            at(&reads[0], &["layers"]),
+            at(&reads[2], &["layers"]),
+            "{command} {extra:?} wrote"
+        );
+        text(body, "code")
     }
     fn preview(&self, extra: &[&str]) -> Json {
         self.ok("preview-numbering", extra)
@@ -100,12 +119,6 @@ impl Fixture {
     fn status(&self) -> Json {
         self.ok("inspect-numbering", &[])
     }
-    fn marks(&self) -> BTreeMap<String, String> {
-        list(&self.status(), "marks")
-            .iter()
-            .map(|m| (text(m, "id"), text(m, "mark")))
-            .collect()
-    }
     fn state(&self) -> String {
         text(at(&self.status(), &["approval"]), "state")
     }
@@ -117,9 +130,6 @@ impl Fixture {
                 .collect(),
             _ => Vec::new(),
         }
-    }
-    fn head(&self) -> String {
-        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn plate(&self, material: &str, thickness: &str, extra: &[&str]) -> String {
         let mut args = vec![
@@ -138,66 +148,97 @@ impl Fixture {
             "element_id",
         )
     }
-    fn beam(&self, profile: &str, material: &str, end: &str, translation: &str) -> String {
-        text(
-            at(
-                &self.ok(
-                    "create-member",
-                    &[
-                        "--start",
-                        "0,0,0",
-                        "--end",
-                        end,
-                        "--profile-digest",
-                        profile,
-                        "--material-digest",
-                        material,
-                        "--translation",
-                        translation,
-                    ],
-                ),
-                &["member"],
-            ),
-            "element_id",
-        )
+    /// The `create-plate` line over `store`, the exact tokens the per-command path spawned.
+    fn plate_line(store: &str, thickness: &str, material: &str, extra: &[&str]) -> Scripted {
+        let mut args = vec![
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "400",
+            "--length",
+            "300",
+            "--thickness",
+            thickness,
+            "--material-digest",
+            material,
+        ];
+        args.extend_from_slice(extra);
+        Scripted::ok(&args)
     }
-    /// Plates 0, 1 (identical, one moved), 2 (other material), 3 (a hole), 4 (thicker); beams 0, 1
-    /// (identical, one moved), 2 (other length).
+    /// The `create-member` line over `store`, the exact tokens the per-command path spawned.
+    fn beam_line(
+        store: &str,
+        profile: &str,
+        material: &str,
+        end: &str,
+        translation: &str,
+    ) -> Scripted {
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            store,
+            "--start",
+            "0,0,0",
+            "--end",
+            end,
+            "--profile-digest",
+            profile,
+            "--material-digest",
+            material,
+            "--translation",
+            translation,
+        ])
+    }
+    /// Plates 0, 1 (identical, one moved), 2 (other material), 3 (a hole), 4 (thicker); beams
+    /// 0, 1 (identical, one moved), 2 (other length). The definitions and the parts each ride
+    /// one process (#738 P7); digests and ids come back in the replies' order.
     fn scene(&self) -> Scene {
-        let material = |name: &str| {
-            text(
-                at(
-                    &self.ok(
-                        "define-material",
-                        &["--density", "7850", "--name", name, "--grade", name],
-                    ),
-                    &["definition"],
-                ),
-                "digest",
-            )
+        let store = self.store();
+        let material = |store: &str, name: &str| {
+            Scripted::ok(&[
+                "define-material",
+                "--store",
+                store,
+                "--density",
+                "7850",
+                "--name",
+                name,
+                "--grade",
+                name,
+            ])
         };
-        let steel = material("S355");
-        let other_steel = material("S275");
-        let profile = text(
-            at(
-                &self.ok("define-profile", &["--width", "100", "--height", "50"]),
-                &["definition"],
-            ),
-            "digest",
-        );
-        let plates = vec![
-            self.plate(&steel, "20", &[]),
-            self.plate(&steel, "20", &["--translation", "1000,0,0"]),
-            self.plate(&other_steel, "20", &[]),
-            self.plate(&steel, "20", &["--hole-round", "100,100,40"]),
-            self.plate(&steel, "25", &[]),
-        ];
-        let beams = vec![
-            self.beam(&profile, &steel, "3000,0,0", "0,0,0"),
-            self.beam(&profile, &steel, "3000,0,0", "0,500,0"),
-            self.beam(&profile, &steel, "3500,0,0", "0,1000,0"),
-        ];
-        Scene { plates, beams }
+        let defined = self.script(&[
+            material(&store, "S355"),
+            material(&store, "S275"),
+            Scripted::ok(&[
+                "define-profile",
+                "--store",
+                &store,
+                "--width",
+                "100",
+                "--height",
+                "50",
+            ]),
+        ]);
+        let steel = text(at(&defined[0], &["definition"]), "digest");
+        let other_steel = text(at(&defined[1], &["definition"]), "digest");
+        let profile = text(at(&defined[2], &["definition"]), "digest");
+        let made = self.script(&[
+            Self::plate_line(&store, "20", &steel, &[]),
+            Self::plate_line(&store, "20", &steel, &["--translation", "1000,0,0"]),
+            Self::plate_line(&store, "20", &other_steel, &[]),
+            Self::plate_line(&store, "20", &steel, &["--hole-round", "100,100,40"]),
+            Self::plate_line(&store, "25", &steel, &[]),
+            Self::beam_line(&store, &profile, &steel, "3000,0,0", "0,0,0"),
+            Self::beam_line(&store, &profile, &steel, "3000,0,0", "0,500,0"),
+            Self::beam_line(&store, &profile, &steel, "3500,0,0", "0,1000,0"),
+        ]);
+        let id = |reply: &Json, key: &str| text(at(reply, &[key]), "element_id");
+        Scene {
+            plates: (0..5).map(|n| id(&made[n], "plate")).collect(),
+            beams: (5..8).map(|n| id(&made[n], "member")).collect(),
+        }
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
     /// a layer edited outside BeamCraft would arrive through `commit-revision`.
@@ -256,54 +297,133 @@ fn strings(json: &Json, key: &str) -> Vec<String> {
         .map(|v| v.string().unwrap().to_owned())
         .collect()
 }
+/// The `(name, digest)` pairs of the reply's layer manifest, as `layers()` reads them.
+fn layers_of(reply: &Json) -> Vec<(String, String)> {
+    list(reply, "layers")
+        .iter()
+        .map(|l| (text(l, "name"), text(l, "digest")))
+        .collect()
+}
+/// The `derived.usda` entry of a layers manifest: the one layer an approval must not touch.
+fn derived_layer(reply: &Json) -> (String, String) {
+    layers_of(reply)
+        .into_iter()
+        .find(|(name, _)| name == "derived.usda")
+        .unwrap()
+}
+/// The stored marks of an `inspect-numbering` reply, as `marks()` reads them.
+fn marks_of(reply: &Json) -> BTreeMap<String, String> {
+    list(reply, "marks")
+        .iter()
+        .map(|m| (text(m, "id"), text(m, "mark")))
+        .collect()
+}
 
 #[test]
 fn approval_stores_one_mark_per_group_as_authored_data_and_reads_back() {
     let f = Fixture::new();
     let s = f.scene();
-    // Two assemblies with the same content: A-1 for both.
-    let mut frames = Vec::new();
-    for (name, plate, beam) in [("Frame 1", 0, 0), ("Frame 2", 1, 1)] {
-        let id = text(&f.ok("create-assembly", &["--name", name]), "element_id");
-        for part in [&s.plates[plate], &s.beams[beam]] {
-            f.ok("attach-to-assembly", &["--id", part, "--assembly-id", &id]);
-        }
-        frames.push(id);
+    let store = f.store();
+    // Two assemblies with the same content: A-1 for both. The creations and the attachments
+    // each ride one process (#738 P7).
+    let created = f.script(&[
+        Scripted::ok(&["create-assembly", "--store", &store, "--name", "Frame 1"]),
+        Scripted::ok(&["create-assembly", "--store", &store, "--name", "Frame 2"]),
+    ]);
+    let id = |reply: &Json| text(reply, "element_id");
+    let (first, second) = (id(&created[0]), id(&created[1]));
+    let attached = f.script(&[
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[0],
+            "--assembly-id",
+            &first,
+        ]),
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.beams[0],
+            "--assembly-id",
+            &first,
+        ]),
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[1],
+            "--assembly-id",
+            &second,
+        ]),
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.beams[1],
+            "--assembly-id",
+            &second,
+        ]),
+    ]);
+    for reply in &attached {
+        assert_eq!(text(reply, "outcome"), "part_attached");
     }
-    assert_eq!(f.state(), "not_approved");
-    let inspected = f.ok("inspect-elements", &[]);
-    let derived_before = f
-        .layers()
-        .into_iter()
-        .find(|(n, _)| n == "derived.usda")
-        .unwrap();
-    let before_head = f.head();
-    let token = f.token(&[]);
-    let approved = f.approve(&token, &[]);
-    assert_eq!(text(&approved, "outcome"), "numbering_approved");
+    let frames = [first, second];
+    // The reads before the approval ride one process: the approval state, the inspection the
+    // mesh digests are compared against, the layers with their derived digest, and the token.
+    let before = f.script(&[
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+        Scripted::ok(&["inspect-elements", "--store", &store]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    assert_eq!(text(at(&before[0], &["approval"]), "state"), "not_approved");
+    let inspected = before[1].clone();
+    let derived_before = derived_layer(&before[2]);
+    let before_head = text(&before[2], "revision_id");
+    let token = text(&before[3], "preview_token");
+    // The approval and the reads that judge it ride one process: the derived digest must not
+    // move, the marks read back, the preview sees the approval as current, and the inspected
+    // bodies stay as they were.
+    let after = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &token,
+        ]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+        Scripted::ok(&["preview-numbering", "--store", &store, "--previous", &token]),
+        Scripted::ok(&["inspect-elements", "--store", &store]),
+    ]);
+    let approved = &after[0];
+    assert_eq!(text(approved, "outcome"), "numbering_approved");
     // 5 plates, 3 beams and 2 assemblies carry a mark; 4 plate, 2 beam and 1 assembly groups.
-    assert_eq!(number(&approved, "marks"), 10);
-    assert_eq!(number(&approved, "groups"), 7);
-    assert_ne!(text(&approved, "revision_id"), before_head);
+    assert_eq!(number(approved, "marks"), 10);
+    assert_eq!(number(approved, "groups"), 7);
+    assert_ne!(text(approved, "revision_id"), before_head);
     // Only the authored layer changes: a mark touches no derived body.
-    assert_eq!(strings(&approved, "changed_layers"), ["authored.usda"]);
-    let derived_after = f
-        .layers()
-        .into_iter()
-        .find(|(n, _)| n == "derived.usda")
-        .unwrap();
+    assert_eq!(strings(approved, "changed_layers"), ["authored.usda"]);
+    let derived_after = derived_layer(&after[1]);
     assert_eq!(derived_after, derived_before);
-    let footprint = at(&approved, &["footprint"]);
+    let footprint = at(approved, &["footprint"]);
     assert_eq!(number(footprint, "writes"), 10);
-    assert_eq!(text(at(&approved, &["approval"]), "state"), "current");
+    assert_eq!(text(at(approved, &["approval"]), "state"), "current");
     assert_eq!(
-        text(at(&approved, &["approval"]), "approved_token"),
+        text(at(approved, &["approval"]), "approved_token"),
         token,
         "the approval records the token it approved"
     );
 
     // Equivalent parts share a mark; the others differ.
-    let marks = f.marks();
+    let marks = marks_of(&after[2]);
     let mark = |id: &String| marks.get(id).unwrap().as_str();
     assert_eq!(mark(&s.plates[0]), "PL1");
     assert_eq!(mark(&s.plates[1]), "PL1");
@@ -319,27 +439,27 @@ fn approval_stores_one_mark_per_group_as_authored_data_and_reads_back() {
     assert_eq!(distinct.len(), 7);
 
     // The status lists series and number separately, for a reader that composes its own text.
-    let status = f.status();
-    let first = list(&status, "marks")
+    let status = &after[2];
+    let first_mark = list(status, "marks")
         .iter()
         .find(|m| text(m, "id") == s.plates[4])
         .unwrap();
-    assert_eq!(text(first, "series"), "PL");
-    assert_eq!(number(first, "number"), 4);
-    assert_eq!(text(first, "kind"), "plate");
+    assert_eq!(text(first_mark, "series"), "PL");
+    assert_eq!(number(first_mark, "number"), 4);
+    assert_eq!(text(first_mark, "kind"), "plate");
 
     // The preview reads the approval back: current, and every group holds its proposed position.
-    let p = f.preview(&["--previous", &token]);
+    let p = &after[3];
     assert!(matches!(p.get("stale").unwrap(), Json::Bool(false)));
-    assert_eq!(text(at(&p, &["approval"]), "state"), "current");
-    assert_eq!(number(at(&p, &["approval"]), "marked"), 10);
+    assert_eq!(text(at(p, &["approval"]), "state"), "current");
+    assert_eq!(number(at(p, &["approval"]), "marked"), 10);
     assert!(
-        list(&p, "groups")
+        list(p, "groups")
             .iter()
             .all(|g| text(g, "stored") == "same")
     );
     assert_eq!(
-        text(at(&p, &["approval", "approved_settings"]), "plate_series"),
+        text(at(p, &["approval", "approved_settings"]), "plate_series"),
         "PL:1"
     );
 
@@ -364,12 +484,12 @@ fn approval_stores_one_mark_per_group_as_authored_data_and_reads_back() {
         10
     );
     // inspect-elements still lists the same plates with the same bodies.
-    let after = f.ok("inspect-elements", &[]);
+    let after_inspected = &after[4];
     assert_eq!(
-        list(&after, "plates").len(),
+        list(after_inspected, "plates").len(),
         list(&inspected, "plates").len()
     );
-    for (a, b) in list(&after, "plates")
+    for (a, b) in list(after_inspected, "plates")
         .iter()
         .zip(list(&inspected, "plates"))
     {
@@ -447,18 +567,37 @@ fn a_stale_token_overlapping_series_and_an_empty_model_are_refused_with_nothing_
 fn approving_again_is_unchanged_and_the_same_operation_replays() {
     let f = Fixture::new();
     let s = f.scene();
+    let store = f.store();
     let token = f.token(&[]);
     let op = "0199e7a0-0000-7000-8000-00000000a091";
     let first = f.approve(&token, &["--op-id", op]);
     assert_eq!(text(&first, "outcome"), "numbering_approved");
-    let head = f.head();
-    let marks = f.marks();
+    // The head and marks reads ride one process (#738 P7), as do the replay and the head that
+    // proves it wrote nothing new.
+    let read = f.script(&[
+        Scripted::ok(&["open-revision", "--store", &store]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    let head = text(&read[0], "revision_id");
+    let marks = marks_of(&read[1]);
     // The same operation id with the same command is a replay of the same revision.
-    let again = f.approve(&token, &["--op-id", op]);
-    assert_eq!(text(&again, "outcome"), "numbering_approved_replayed");
-    assert_eq!(f.head(), head);
+    let again_round = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &token,
+            "--op-id",
+            op,
+        ]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+    ]);
+    let again = &again_round[0];
+    assert_eq!(text(again, "outcome"), "numbering_approved_replayed");
+    assert_eq!(text(&again_round[1], "revision_id"), head);
     assert_eq!(
-        text(at(&again, &["revision"]), "revision_id"),
+        text(at(again, &["revision"]), "revision_id"),
         text(at(&first, &["revision"]), "revision_id")
     );
     // The same operation id with other settings is reuse.
@@ -477,28 +616,63 @@ fn approving_again_is_unchanged_and_the_same_operation_replays() {
         ),
         "OP_ID_REUSE"
     );
-    // A new operation id over the same approved numbering writes nothing and renumbers nothing.
-    let layers = f.layers();
-    let unchanged = f.approve(&token, &[]);
-    assert_eq!(text(&unchanged, "outcome"), "numbering_approved_unchanged");
-    assert!(is_null(&unchanged, "footprint"));
-    assert!(strings(&unchanged, "changed_layers").is_empty());
+    // A new operation id over the same approved numbering writes nothing and renumbers
+    // nothing: the layers read brackets the approval in the same process.
+    let unchanged_round = f.script(&[
+        Scripted::ok(&["open-revision", "--store", &store]),
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &token,
+        ]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    let unchanged = &unchanged_round[1];
+    assert_eq!(text(unchanged, "outcome"), "numbering_approved_unchanged");
+    assert!(is_null(unchanged, "footprint"));
+    assert!(strings(unchanged, "changed_layers").is_empty());
     assert_eq!(
-        (f.head(), f.layers(), f.marks()),
-        (head.clone(), layers, marks.clone())
+        text(&unchanged_round[0], "revision_id"),
+        text(&unchanged_round[2], "revision_id")
     );
+    assert_eq!(
+        at(&unchanged_round[0], &["layers"]),
+        at(&unchanged_round[2], &["layers"])
+    );
+    assert_eq!(marks_of(&unchanged_round[3]), marks);
     // A move changes nothing that approving reads: still unchanged.
-    f.ok(
-        "update-element",
-        &["--id", &s.plates[0], "--translation", "5,5,5"],
-    );
-    let after_move = f.token(&[]);
+    let moved_round = f.script(&[
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[0],
+            "--translation",
+            "5,5,5",
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    let after_move = text(&moved_round[1], "preview_token");
     assert_eq!(after_move, token);
+    let still_unchanged = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &after_move,
+        ]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
     assert_eq!(
-        text(&f.approve(&after_move, &[]), "outcome"),
+        text(&still_unchanged[0], "outcome"),
         "numbering_approved_unchanged"
     );
-    assert_eq!(f.marks(), marks);
+    assert_eq!(marks_of(&still_unchanged[1]), marks);
     // The replay of the first operation still names its own revision after later edits.
     let replay = f.approve(&token, &["--op-id", op]);
     assert_eq!(text(&replay, "outcome"), "numbering_approved_replayed");
@@ -508,74 +682,171 @@ fn approving_again_is_unchanged_and_the_same_operation_replays() {
 fn fabrication_changes_make_the_approval_stale_and_a_move_or_a_rename_do_not() {
     let f = Fixture::new();
     let s = f.scene();
+    let store = f.store();
     let token = f.token(&[]);
-    f.approve(&token, &[]);
-    assert_eq!(f.state(), "current");
-    // A move, a rename and a read-only view of the model do not.
-    f.ok(
-        "update-element",
-        &["--id", &s.plates[0], "--translation", "5,5,5"],
-    );
-    f.ok(
-        "update-element",
-        &["--id", &s.plates[1], "--name", "Renamed"],
-    );
-    f.ok("inspect-elements", &[]);
-    f.preview(&["--tolerance", "5"]);
-    assert_eq!(f.state(), "current");
-    let marks = f.marks();
+    // The approval and the state that judges it ride one process (#738 P7).
+    let approved = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &token,
+        ]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    assert_eq!(text(at(&approved[1], &["approval"]), "state"), "current");
+    // A move, a rename and a read-only view of the model do not; the whole round is one
+    // process, ending with the state and the marks it is judged against.
+    let benign = f.script(&[
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[0],
+            "--translation",
+            "5,5,5",
+        ]),
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[1],
+            "--name",
+            "Renamed",
+        ]),
+        Scripted::ok(&["inspect-elements", "--store", &store]),
+        Scripted::ok(&["preview-numbering", "--store", &store, "--tolerance", "5"]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    assert_eq!(text(at(&benign[4], &["approval"]), "state"), "current");
+    let marks = marks_of(&benign[4]);
 
     // A thickness edit does, and the report names the part.
-    f.ok(
-        "update-element",
-        &["--id", &s.plates[1], "--thickness", "30"],
-    );
-    let status = f.status();
-    let approval = at(&status, &["approval"]);
+    let thickness = f.script(&[
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[1],
+            "--thickness",
+            "30",
+        ]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    let status = &thickness[1];
+    let approval = at(status, &["approval"]);
     assert_eq!(text(approval, "state"), "stale");
     assert!(!is_null(approval, "reason"));
     assert_eq!(strings(approval, "differing_ids")[0], s.plates[1]);
     // The preview reports the same, and the stored marks are still there to read.
-    let p = f.preview(&[]);
-    assert_eq!(text(at(&p, &["approval"]), "state"), "stale");
-    assert_eq!(f.marks(), marks);
+    let preview_round = f.script(&[
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    assert_eq!(text(at(&preview_round[0], &["approval"]), "state"), "stale");
+    assert_eq!(marks_of(&preview_round[1]), marks);
     // Re-approving renumbers from the rules: the part that left its group has a mark of its own
     // and the part that stayed keeps PL1.
     let renewed = f.token(&[]);
     assert_ne!(renewed, token);
-    f.approve(&renewed, &[]);
-    assert_eq!(f.state(), "current");
-    let marks = f.marks();
+    let renumbered = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &renewed,
+        ]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    assert_eq!(text(at(&renumbered[1], &["approval"]), "state"), "current");
+    let marks = marks_of(&renumbered[1]);
     assert_eq!(marks[&s.plates[0]], "PL1");
     assert_ne!(marks[&s.plates[1]], marks[&s.plates[0]]);
 
-    // A material edit, a copy and a delete each make it stale too.
-    let other_steel = text(
-        at(
-            &f.ok("define-material", &["--density", "7850", "--name", "S460"]),
-            &["definition"],
-        ),
-        "digest",
+    // A material edit, a copy and a delete each make it stale too. The definition and the
+    // fresh token ride one process; every later edit lands with the state that judges it.
+    let defined = f.script(&[
+        Scripted::ok(&[
+            "define-material",
+            "--store",
+            &store,
+            "--density",
+            "7850",
+            "--name",
+            "S460",
+            "--grade",
+            "S460",
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    let other_steel = text(at(&defined[0], &["definition"]), "digest");
+    let renewed = text(&defined[1], "preview_token");
+    let material_edit = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &renewed,
+        ]),
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &s.beams[0],
+            "--material-digest",
+            &other_steel,
+        ]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    assert_eq!(text(at(&material_edit[2], &["approval"]), "state"), "stale");
+    let approved_again = f.token(&[]);
+    let material_approved = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &approved_again,
+        ]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    assert_eq!(
+        text(at(&material_approved[1], &["approval"]), "state"),
+        "current"
     );
-    let renewed = f.token(&[]);
-    f.approve(&renewed, &[]);
-    f.ok(
-        "update-element",
-        &["--id", &s.beams[0], "--material-digest", &other_steel],
-    );
-    assert_eq!(f.state(), "stale");
-    f.approve(&f.token(&[]), &[]);
-    assert_eq!(f.state(), "current");
-    let copy = f.ok("copy-element", &["--id", &s.beams[2]]);
-    assert_eq!(f.state(), "stale");
-    assert_eq!(number(at(&f.status(), &["approval"]), "unmarked"), 1);
-    f.approve(&f.token(&[]), &[]);
+    let copied = f.script(&[
+        Scripted::ok(&["copy-element", "--store", &store, "--id", &s.beams[2]]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    let copy_id = text(at(&copied[0], &["element"]), "element_id");
+    assert_eq!(text(at(&copied[1], &["approval"]), "state"), "stale");
+    assert_eq!(number(at(&copied[1], &["approval"]), "unmarked"), 1);
+    let copy_approved = f.token(&[]);
+    let copy_round = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &copy_approved,
+        ]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
     // The copy joined the group of its source and renumbered nothing.
-    let marks = f.marks();
-    let copy_id = text(at(&copy, &["element"]), "element_id");
+    let marks = marks_of(&copy_round[1]);
     assert_eq!(marks[&copy_id], marks[&s.beams[2]]);
-    f.ok("delete-element", &["--id", &s.beams[2]]);
-    assert_eq!(f.state(), "stale");
+    let deleted = f.script(&[
+        Scripted::ok(&["delete-element", "--store", &store, "--id", &s.beams[2]]),
+        Scripted::ok(&["inspect-numbering", "--store", &store]),
+    ]);
+    assert_eq!(text(at(&deleted[1], &["approval"]), "state"), "stale");
 }
 
 #[test]
@@ -649,15 +920,23 @@ fn an_undo_of_an_approval_restores_the_earlier_marks() {
 #[test]
 fn damaged_and_oversized_input_is_refused() {
     let f = Fixture::new();
+    let store = f.store();
     f.scene();
     let token = f.token(&[]);
     f.approve(&token, &[]);
     assert_eq!(f.state(), "current");
-    // Bad arguments.
+    // Bad arguments. The oversized token exceeds the script file's 4 KiB string cap, so its
+    // refusal keeps the original three real spawns (the layers reads bracket it).
+    let oversized_token = "a".repeat(4097);
+    let oversized = vec!["approve-numbering", "--preview-token", &oversized_token];
+    let before = f.layers();
+    let (code, body) = f.run("approve-numbering", &oversized);
+    assert_eq!(code, 2, "{body:?}");
+    assert_eq!(text(&body, "outcome"), "rejected");
+    assert_eq!(f.layers(), before);
     for args in [
         vec!["--preview-token", "abc"],
         vec!["--preview-token", &"G".repeat(64)],
-        vec!["--preview-token", &"a".repeat(4097)],
         vec!["--preview-token", &token, "--preview-token", &token],
         vec!["--preview-token", &token, "--previous", &token],
         vec!["--preview-token", &token, "--offset", "1"],
@@ -726,12 +1005,20 @@ fn damaged_and_oversized_input_is_refused() {
                 text
             }
         });
-        for command in ["inspect-numbering", "preview-numbering", "inspect-elements"] {
-            let (code, body) = f.run(command, &[]);
-            assert_eq!(code, 2, "{command} {to}: {body:?}");
-        }
-        let (code, body) = f.run("approve-numbering", &["--preview-token", &token]);
-        assert_eq!(code, 2, "{to}: {body:?}");
+        // All four readers refuse the damaged model (exit 2 each); the refusals ride one
+        // process (#738 P7).
+        f.script(&[
+            Scripted::refused(&["inspect-numbering", "--store", &store]),
+            Scripted::refused(&["preview-numbering", "--store", &store]),
+            Scripted::refused(&["inspect-elements", "--store", &store]),
+            Scripted::refused(&[
+                "approve-numbering",
+                "--store",
+                &store,
+                "--preview-token",
+                &token,
+            ]),
+        ]);
         // Put the model back for the next case: the tamper commits a new head, so rewind the text.
         f.tamper(|name, text| {
             if name == "authored.usda" {

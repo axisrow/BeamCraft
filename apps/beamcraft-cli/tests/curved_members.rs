@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::support::{self, Scripted};
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
@@ -56,12 +58,15 @@ impl Fixture {
         assert_eq!(code, 2, "{command} {extra:?}");
         text(&body, "code")
     }
+    /// One `run-script` invocation over the fixture store: the same commands the suite would
+    /// spawn one process each, amortized into a single process (#738 P7; each command's own
+    /// work is unchanged). Replies come back in the lines' order.
+    fn script(&self, lines: &[Scripted]) -> Vec<Json> {
+        let store = self.store();
+        support::script_lines(&self.root, &store, lines)
+    }
     fn profile(&self, width: &str, height: &str) -> String {
         let reply = self.ok("define-profile", &["--width", width, "--height", height]);
-        text(reply.get("definition").unwrap(), "digest")
-    }
-    fn material(&self, density: &str) -> String {
-        let reply = self.ok("define-material", &["--density", density]);
         text(reply.get("definition").unwrap(), "digest")
     }
     fn authored_text(&self, revision: &Json) -> String {
@@ -103,11 +108,27 @@ const ARC: &str = "1000,0,0;0,1000,0;-1000,0,0";
 #[test]
 fn curved_member_reopens_copies_and_replays_after_update_and_delete() {
     let f = Fixture::new();
-    let profile = f.profile("20", "30");
-    let material = f.material("7850");
+    let store = f.store();
+    // The definition digests come back in order from one process (#738 P7).
+    let defined = f.script(&[
+        Scripted::ok(&[
+            "define-profile",
+            "--store",
+            &store,
+            "--width",
+            "20",
+            "--height",
+            "30",
+        ]),
+        Scripted::ok(&["define-material", "--store", &store, "--density", "7850"]),
+    ]);
+    let profile = text(at(&defined[0], &["definition"]), "digest");
+    let material = text(at(&defined[1], &["definition"]), "digest");
     let id = "019a7bf0-0000-7000-8000-000000cd0101";
     let op = "019a7bf0-0000-7000-8000-000000cd0102";
-    let args = [
+    let mut args: Vec<&str> = vec![
+        "--store",
+        &store,
         "--points",
         ARC,
         "--profile-digest",
@@ -119,7 +140,24 @@ fn curved_member_reopens_copies_and_replays_after_update_and_delete() {
         "--op-id",
         op,
     ];
-    let created = f.ok("create-curved-beam", &args);
+    let mut line = vec!["create-curved-beam"];
+    line.extend_from_slice(&args);
+    let created_round = f.script(&[
+        Scripted::ok(&line),
+        Scripted::ok(&["inspect-elements", "--store", &store]),
+        Scripted::ok(&["copy-element", "--store", &store, "--id", id]),
+        Scripted::ok(&["copy-instance", "--store", &store, "--id", id]),
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            id,
+            "--name",
+            "later name",
+        ]),
+    ]);
+    let created = created_round[0].clone();
     let m = at(&created, &["member"]);
     assert_eq!(text(m, "path_type"), "arc");
     let length = std::f64::consts::PI * 1000.;
@@ -128,37 +166,43 @@ fn curved_member_reopens_copies_and_replays_after_update_and_delete() {
     assert!((num(m, &["quantities", "volume", "mm3"]) - 600. * length).abs() < 200.);
     let authored = f.authored_text(&created);
     assert!(authored.contains("steel:member:pathType = \"arc\""));
-    let inspected = f.ok("inspect-elements", &[]);
+    // The stored body the inspection reads back carries the created mesh digest, and the
+    // copies stay arcs; the fresh-process checks live in the replay block below.
+    let inspected = &created_round[1];
     assert_eq!(
         text(
-            &at(&inspected, &["members"]).array().unwrap()[0],
+            &at(inspected, &["members"]).array().unwrap()[0],
             "mesh_digest"
         ),
         text(m, "mesh_digest")
     );
-    let copied = f.ok("copy-element", &["--id", id]);
-    assert_eq!(text(at(&copied, &["element"]), "path_type"), "arc");
-    let instance = f.ok("copy-instance", &["--id", id]);
-    assert_eq!(text(at(&instance, &["element"]), "path_type"), "arc");
-    f.ok("update-element", &["--id", id, "--name", "later name"]);
-    let replay = f.ok("create-curved-beam", &args);
+    let copied = &created_round[2];
+    assert_eq!(text(at(copied, &["element"]), "path_type"), "arc");
+    let instance = &created_round[3];
+    assert_eq!(text(at(instance, &["element"]), "path_type"), "arc");
+    // The replay in a fresh process names the created revision; the deletes and the empty
+    // head read ride one process.
+    let replay = f.ok("create-curved-beam", &args[2..]);
     assert_eq!(at(&replay, &["revision"]), at(&created, &["revision"]));
     assert_eq!(at(&replay, &["member"]), m);
     // Delete independent and linked dependents before deleting the definition.
-    let instance_id = text(at(&instance, &["element"]), "element_id");
-    f.ok("delete-element", &["--id", &instance_id]);
-    f.ok("delete-element", &["--id", id]);
-    let head = f.ok("open-revision", &[]);
-    let replay = f.ok("create-curved-beam", &args);
+    let instance_id = text(at(instance, &["element"]), "element_id");
+    let deleted = f.script(&[
+        Scripted::ok(&["delete-element", "--store", &store, "--id", &instance_id]),
+        Scripted::ok(&["delete-element", "--store", &store, "--id", id]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+    ]);
+    let head = deleted[2].clone();
+    let replay = f.ok("create-curved-beam", &args[2..]);
     assert_eq!(at(&replay, &["member"]), m);
     assert_eq!(f.ok("open-revision", &[]), head);
-    let mut different = args.to_vec();
-    different[1] = "1000,0,0;0,-1000,0;-1000,0,0";
-    assert_eq!(f.rejected("create-curved-beam", &different), "OP_ID_REUSE");
+    args[3] = "1000,0,0;0,-1000,0;-1000,0,0";
+    assert_eq!(f.rejected("create-curved-beam", &args[2..]), "OP_ID_REUSE");
 }
 #[test]
 fn radius_mode_and_invalid_arcs_are_atomic() {
     let f = Fixture::new();
+    let store = f.store();
     let p = f.profile("20", "30");
     let created = f.ok(
         "create-curved-beam",
@@ -179,8 +223,24 @@ fn radius_mode_and_invalid_arcs_are_atomic() {
         (num(at(&created, &["member"]), &["axis_length_mm"]) - 1000. * std::f64::consts::PI).abs()
             < 1e-8
     );
+    // Each refusal and the head read that proves its atomicity ride one process (#738 P7);
+    // the head replies must match byte for byte.
     let head = f.ok("open-revision", &[]);
-    assert_eq!(f.rejected("preview-numbering", &[]), "UNSUPPORTED_GEOMETRY");
+    let refused_head = |f: &Fixture, command: &str, extra: &[&str]| {
+        let mut line = vec![command, "--store"];
+        line.push(store.as_str());
+        line.extend_from_slice(extra);
+        let reads = f.script(&[
+            Scripted::refused(&line),
+            Scripted::ok(&["open-revision", "--store", &store]),
+        ]);
+        assert_eq!(reads[1], head, "{command} {extra:?} wrote");
+        text(&reads[0], "code")
+    };
+    assert_eq!(
+        refused_head(&f, "preview-numbering", &[]),
+        "UNSUPPORTED_GEOMETRY"
+    );
     for points in [
         "0,0,0;1,0,0;2,0,0",
         "0,0,0;0,0,0;1,1,0",
@@ -189,12 +249,11 @@ fn radius_mode_and_invalid_arcs_are_atomic() {
         "NaN,0,0;1,1,0;2,0,0",
         "1000000001,0,0;1,1,0;2,0,0",
     ] {
-        let (code, _) = f.run(
+        refused_head(
+            &f,
             "create-curved-beam",
             &["--points", points, "--profile-digest", &p],
         );
-        assert_eq!(code, 2);
-        assert_eq!(f.ok("open-revision", &[]), head);
     }
     for extra in [
         vec!["--radius", "999", "--normal", "0,0,1"],
@@ -211,20 +270,15 @@ fn radius_mode_and_invalid_arcs_are_atomic() {
             &p,
         ];
         args.extend(extra);
-        assert_eq!(f.run("create-curved-beam", &args).0, 2);
-        assert_eq!(f.ok("open-revision", &[]), head);
+        refused_head(&f, "create-curved-beam", &args);
     }
     // A curved path cannot silently become a polyline via the generic point edit.
     let id = text(at(&created, &["member"]), "element_id");
-    assert_eq!(
-        f.run(
-            "update-element",
-            &["--id", &id, "--axis-point", "0,0,0;1000,0,0"]
-        )
-        .0,
-        2
+    refused_head(
+        &f,
+        "update-element",
+        &["--id", &id, "--axis-point", "0,0,0;1000,0,0"],
     );
-    assert_eq!(f.ok("open-revision", &[]), head);
 }
 
 #[test]
@@ -244,6 +298,8 @@ fn curved_creation_and_point_replacement_each_undo_as_one_command() {
         assert!(output.status.success(), "{command}: {result:?}");
         result
     };
+    // The undo/redo checks keep their fresh-process boundaries: each reopen inspects the
+    // draft the way a separate session would.
     let created = run(
         "create-curved-beam",
         &[
@@ -298,6 +354,7 @@ fn curved_creation_and_point_replacement_each_undo_as_one_command() {
 #[test]
 fn a_large_radius_arc_is_built_and_an_over_budget_arc_names_its_limit() {
     let f = Fixture::new();
+    let store = f.store();
     // A rolled I section with root fillets: about forty outline points per ring.
     let i_section = text(
         at(
@@ -337,11 +394,14 @@ fn a_large_radius_arc_is_built_and_an_over_budget_arc_names_its_limit() {
     assert!((num(member, &["axis_length_mm"]) - length).abs() < 1e-6);
 
     // A long arc of the same section needs more rings than one member's mesh budget: still
-    // refused, now with the budget and the way out named.
+    // refused, now with the budget and the way out named. The head read brackets the refusal
+    // in the same process (#738 P7).
     let head = f.ok("open-revision", &[]);
-    let (code, refused) = f.run(
-        "create-curved-beam",
-        &[
+    let reads = f.script(&[
+        Scripted::refused(&[
+            "create-curved-beam",
+            "--store",
+            &store,
             "--start",
             "0,0,0",
             "--end",
@@ -352,12 +412,13 @@ fn a_large_radius_arc_is_built_and_an_over_budget_arc_names_its_limit() {
             "0,0,1",
             "--profile-digest",
             &i_section,
-        ],
-    );
-    assert_eq!(code, 2, "{refused:?}");
-    assert_eq!(text(&refused, "code"), "LIMIT_EXCEEDED");
-    assert!(text(&refused, "message").contains("4096-vertex budget"));
-    assert_eq!(f.ok("open-revision", &[]), head);
+        ]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+    ]);
+    let refused = &reads[0];
+    assert_eq!(text(refused, "code"), "LIMIT_EXCEEDED");
+    assert!(text(refused, "message").contains("4096-vertex budget"));
+    assert_eq!(reads[1], head);
 
     // The way out the refusal names (P13): split the arc into members of the same circle.
     // The split point is the refused arc's own mid-arc point (x = 5000, the sagitta top of
@@ -365,9 +426,11 @@ fn a_large_radius_arc_is_built_and_an_over_budget_arc_names_its_limit() {
     let theta_half = (10000.0_f64 / 24000.0).asin();
     let mid_y = 12000.0 * (1.0 - theta_half.cos());
     let mid = format!("5000,{mid_y},0");
-    let first_created = f.ok(
-        "create-curved-beam",
-        &[
+    let split_created = f.script(&[
+        Scripted::ok(&[
+            "create-curved-beam",
+            "--store",
+            &store,
             "--start",
             "0,0,0",
             "--end",
@@ -378,12 +441,11 @@ fn a_large_radius_arc_is_built_and_an_over_budget_arc_names_its_limit() {
             "0,0,1",
             "--profile-digest",
             &i_section,
-        ],
-    );
-    let first = at(&first_created, &["member"]);
-    let second_created = f.ok(
-        "create-curved-beam",
-        &[
+        ]),
+        Scripted::ok(&[
+            "create-curved-beam",
+            "--store",
+            &store,
             "--start",
             mid.as_str(),
             "--end",
@@ -394,9 +456,10 @@ fn a_large_radius_arc_is_built_and_an_over_budget_arc_names_its_limit() {
             "0,0,1",
             "--profile-digest",
             &i_section,
-        ],
-    );
-    let second = at(&second_created, &["member"]);
+        ]),
+    ]);
+    let first = at(&split_created[0], &["member"]);
+    let second = at(&split_created[1], &["member"]);
     for part in [first, second] {
         let deviation = num(part, &["arc_deviation_mm"]);
         assert!(deviation > 0.0 && deviation <= 0.05, "{deviation}");
