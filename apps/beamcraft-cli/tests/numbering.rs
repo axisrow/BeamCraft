@@ -15,7 +15,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{Scripted, at, text};
 
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
@@ -27,6 +27,7 @@ struct Fixture {
 struct Scene {
     steel: String,
     other_steel: String,
+    profile: String,
     plates: Vec<String>,
     beams: Vec<String>,
 }
@@ -37,6 +38,9 @@ impl Fixture {
             shared: support::StoreFixture::new("a08-tests"),
         }
     }
+    fn store(&self) -> String {
+        self.shared.root.join("store").to_str().unwrap().to_owned()
+    }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
         self.shared.run(command, extra)
     }
@@ -45,11 +49,23 @@ impl Fixture {
         assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
         body
     }
+    /// One `run-script` invocation over the fixture store: the same commands the suite would
+    /// spawn one process each, amortized into a single process (#738 P7; each command's own
+    /// work is unchanged). Replies come back in the lines' order.
+    fn script(&self, lines: &[Scripted]) -> Vec<Json> {
+        let store = self.store();
+        support::script_lines(&self.shared.root, &store, lines)
+    }
     fn preview(&self, extra: &[&str]) -> Json {
         self.ok("preview-numbering", extra)
     }
-    fn plate(&self, material: &str, thickness: &str, extra: &[&str]) -> String {
+    /// The `create-plate` line over the fixture store, the exact tokens the per-command path
+    /// spawned.
+    fn plate_line(store: &str, thickness: &str, material: &str, extra: &[&str]) -> Scripted {
         let mut args = vec![
+            "create-plate",
+            "--store",
+            store,
             "--width",
             "400",
             "--length",
@@ -60,84 +76,84 @@ impl Fixture {
             material,
         ];
         args.extend_from_slice(extra);
-        text(
-            at(&self.ok("create-plate", &args), &["plate"]),
-            "element_id",
-        )
+        Scripted::ok(&args)
     }
-    fn beam(&self, profile: &str, material: &str, end: &str, translation: &str) -> String {
-        text(
-            at(
-                &self.ok(
-                    "create-member",
-                    &[
-                        "--start",
-                        "0,0,0",
-                        "--end",
-                        end,
-                        "--profile-digest",
-                        profile,
-                        "--material-digest",
-                        material,
-                        "--translation",
-                        translation,
-                    ],
-                ),
-                &["member"],
-            ),
-            "element_id",
-        )
-    }
-    fn head(&self) -> String {
-        text(&self.ok("open-revision", &[]), "revision_id")
-    }
-    fn layers(&self) -> Vec<(String, String)> {
-        list(&self.ok("open-revision", &[]), "layers")
-            .iter()
-            .map(|l| (text(l, "name"), text(l, "digest")))
-            .collect()
+    /// The `create-member` line over the fixture store, the exact tokens the per-command path
+    /// spawned.
+    fn beam_line(
+        store: &str,
+        profile: &str,
+        material: &str,
+        end: &str,
+        translation: &str,
+    ) -> Scripted {
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            store,
+            "--start",
+            "0,0,0",
+            "--end",
+            end,
+            "--profile-digest",
+            profile,
+            "--material-digest",
+            material,
+            "--translation",
+            translation,
+        ])
     }
     /// Plates 1, 2 (identical), 3 (other material), 4 (a hole), 5 (thicker); beams 1, 2
-    /// (identical, one moved), 3 (other length).
+    /// (identical, one moved), 3 (other length). The definitions and the parts each ride one
+    /// process (#738 P7); the digests and ids come back in the replies' order.
     fn scene(&self) -> Scene {
-        let material = |name: &str, density: &str| {
-            text(
-                at(
-                    &self.ok(
-                        "define-material",
-                        &["--density", density, "--name", name, "--grade", name],
-                    ),
-                    &["definition"],
-                ),
-                "digest",
-            )
+        let store = self.store();
+        let material = |store: &str, name: &str| {
+            Scripted::ok(&[
+                "define-material",
+                "--store",
+                store,
+                "--density",
+                "7850",
+                "--name",
+                name,
+                "--grade",
+                name,
+            ])
         };
-        let steel = material("S355", "7850");
-        let other_steel = material("S275", "7850");
-        let profile = text(
-            at(
-                &self.ok("define-profile", &["--width", "100", "--height", "50"]),
-                &["definition"],
-            ),
-            "digest",
-        );
-        let plates = vec![
-            self.plate(&steel, "20", &[]),
-            self.plate(&steel, "20", &["--translation", "1000,0,0"]),
-            self.plate(&other_steel, "20", &[]),
-            self.plate(&steel, "20", &["--hole-round", "100,100,40"]),
-            self.plate(&steel, "25", &[]),
-        ];
-        let beams = vec![
-            self.beam(&profile, &steel, "3000,0,0", "0,0,0"),
-            self.beam(&profile, &steel, "3000,0,0", "0,500,0"),
-            self.beam(&profile, &steel, "3500,0,0", "0,1000,0"),
-        ];
+        let defined = self.script(&[
+            material(&store, "S355"),
+            material(&store, "S275"),
+            Scripted::ok(&[
+                "define-profile",
+                "--store",
+                &store,
+                "--width",
+                "100",
+                "--height",
+                "50",
+            ]),
+        ]);
+        let steel = text(at(&defined[0], &["definition"]), "digest");
+        let other_steel = text(at(&defined[1], &["definition"]), "digest");
+        let profile = text(at(&defined[2], &["definition"]), "digest");
+        let made = self.script(&[
+            Self::plate_line(&store, "20", &steel, &[]),
+            Self::plate_line(&store, "20", &steel, &["--translation", "1000,0,0"]),
+            Self::plate_line(&store, "20", &other_steel, &[]),
+            Self::plate_line(&store, "20", &steel, &["--hole-round", "100,100,40"]),
+            Self::plate_line(&store, "25", &steel, &[]),
+            Self::beam_line(&store, &profile, &steel, "3000,0,0", "0,0,0"),
+            Self::beam_line(&store, &profile, &steel, "3000,0,0", "0,500,0"),
+            Self::beam_line(&store, &profile, &steel, "3500,0,0", "0,1000,0"),
+        ]);
+        let id = |reply: &Json, key: &str| text(at(reply, &[key]), "element_id");
         Scene {
             steel,
             other_steel,
-            plates,
-            beams,
+            profile,
+            plates: (0..5).map(|n| id(&made[n], "plate")).collect(),
+            beams: (5..8).map(|n| id(&made[n], "member")).collect(),
         }
     }
 }
@@ -162,11 +178,17 @@ fn groups(preview: &Json) -> Vec<(String, String, u64)> {
 fn identical_parts_get_one_number_and_every_difference_splits_a_group() {
     let f = Fixture::new();
     let s = f.scene();
-    let p = f.preview(&[]);
-    assert_eq!(text(&p, "outcome"), "numbering_preview");
-    assert_eq!(text(&p, "revision_id"), f.head());
+    let store = f.store();
+    // The preview and the head it is compared against ride one process (#738 P7).
+    let opened = f.script(&[
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+    ]);
+    let p = &opened[0];
+    assert_eq!(text(p, "outcome"), "numbering_preview");
+    assert_eq!(text(p, "revision_id"), text(&opened[1], "revision_id"));
     assert_eq!(
-        groups(&p),
+        groups(p),
         [
             ("plate".into(), "PL1".into(), 2),
             ("plate".into(), "PL2".into(), 1),
@@ -178,7 +200,7 @@ fn identical_parts_get_one_number_and_every_difference_splits_a_group() {
     );
     // The first group is the two identical plates (the other was only moved); the oldest is the
     // reference.
-    let first = &list(&p, "groups")[0];
+    let first = &list(p, "groups")[0];
     assert_eq!(text(first, "reference"), s.plates[0]);
     let members: Vec<_> = list(first, "members")
         .iter()
@@ -188,7 +210,7 @@ fn identical_parts_get_one_number_and_every_difference_splits_a_group() {
     // Material, a hole and the thickness each give their own group.
     let reference = |position: &str| {
         text(
-            list(&p, "groups")
+            list(p, "groups")
                 .iter()
                 .find(|g| text(g, "position") == position)
                 .unwrap(),
@@ -199,10 +221,10 @@ fn identical_parts_get_one_number_and_every_difference_splits_a_group() {
     assert_eq!(reference("PL3"), s.plates[3]);
     assert_eq!(reference("PL4"), s.plates[4]);
     assert_eq!(reference("B2"), s.beams[2]);
-    assert_eq!(number(at(&p, &["counts"]), "parts"), 8);
-    assert_eq!(number(at(&p, &["counts"]), "groups"), 6);
-    assert_eq!(number(at(&p, &["counts"]), "overlapping_groups"), 0);
-    assert!(is_null(&p, "stale"));
+    assert_eq!(number(at(p, &["counts"]), "parts"), 8);
+    assert_eq!(number(at(p, &["counts"]), "groups"), 6);
+    assert_eq!(number(at(p, &["counts"]), "overlapping_groups"), 0);
+    assert!(is_null(p, "stale"));
     assert!(matches!(p.get("writes_model"), Ok(Json::Bool(false))));
     let _ = (&s.steel, &s.other_steel);
 }
@@ -211,17 +233,34 @@ fn identical_parts_get_one_number_and_every_difference_splits_a_group() {
 fn a_preview_changes_nothing_in_the_store() {
     let f = Fixture::new();
     f.scene();
-    let (head, layers) = (f.head(), f.layers());
-    f.preview(&[]);
-    f.preview(&["--beam-series", "B:100", "--compare-name", "true"]);
-    assert_eq!(f.head(), head);
-    assert_eq!(f.layers(), layers);
+    let store = f.store();
+    // The before/after head reads and both previews ride one process (#738 P7).
+    let opened = f.script(&[
+        Scripted::ok(&["open-revision", "--store", &store]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+        Scripted::ok(&[
+            "preview-numbering",
+            "--store",
+            &store,
+            "--beam-series",
+            "B:100",
+            "--compare-name",
+            "true",
+        ]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+    ]);
+    assert_eq!(
+        text(&opened[0], "revision_id"),
+        text(&opened[3], "revision_id")
+    );
+    assert_eq!(at(&opened[0], &["layers"]), at(&opened[3], &["layers"]));
 }
 
 #[test]
 fn an_edit_that_changes_the_numbering_makes_the_preview_stale() {
     let f = Fixture::new();
     let s = f.scene();
+    let store = f.store();
     let token = text(&f.preview(&[]), "preview_token");
     let stale = |f: &Fixture| {
         f.preview(&["--previous", &token])
@@ -230,15 +269,30 @@ fn an_edit_that_changes_the_numbering_makes_the_preview_stale() {
             .clone()
     };
     assert!(matches!(stale(&f), Json::Bool(false)));
-    // A move and a rename do not change the numbering.
-    f.ok(
-        "update-element",
-        &["--id", &s.plates[0], "--translation", "5,5,5"],
-    );
-    f.ok(
-        "update-element",
-        &["--id", &s.plates[1], "--name", "Renamed"],
-    );
+    // A move and a rename do not change the numbering; the edits ride one process (#738 P7).
+    let updated = f.script(&[
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[0],
+            "--translation",
+            "5,5,5",
+        ]),
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[1],
+            "--name",
+            "Renamed",
+        ]),
+    ]);
+    for reply in &updated {
+        assert_eq!(text(reply, "outcome"), "element_updated");
+    }
     assert!(matches!(stale(&f), Json::Bool(false)));
     // A thickness edit that splits the group does.
     f.ok(
@@ -287,12 +341,22 @@ fn an_edit_that_changes_the_numbering_makes_the_preview_stale() {
 fn a_copy_joins_the_group_of_its_source_without_renumbering() {
     let f = Fixture::new();
     let s = f.scene();
-    let before = groups(&f.preview(&[]));
-    f.ok(
-        "copy-element",
-        &["--id", &s.beams[0], "--offset", "0,2000,0"],
-    );
-    let after = groups(&f.preview(&[]));
+    let store = f.store();
+    let around_the_copy = f.script(&[
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+        Scripted::ok(&[
+            "copy-element",
+            "--store",
+            &store,
+            "--id",
+            &s.beams[0],
+            "--offset",
+            "0,2000,0",
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    let before = groups(&around_the_copy[0]);
+    let after = groups(&around_the_copy[2]);
     let expected: Vec<_> = before
         .iter()
         .map(|(k, p, n)| (k.clone(), p.clone(), if p == "B1" { n + 1 } else { *n }))
@@ -304,15 +368,29 @@ fn a_copy_joins_the_group_of_its_source_without_renumbering() {
 fn series_come_from_options_and_overlaps_are_shown() {
     let f = Fixture::new();
     f.scene();
-    let p = f.preview(&[
-        "--plate-series",
-        "P:1",
-        "--beam-series",
-        "P:3",
-        "--column-series",
-        ":1000",
+    let store = f.store();
+    let previews = f.script(&[
+        Scripted::ok(&[
+            "preview-numbering",
+            "--store",
+            &store,
+            "--plate-series",
+            "P:1",
+            "--beam-series",
+            "P:3",
+            "--column-series",
+            ":1000",
+        ]),
+        Scripted::ok(&[
+            "preview-numbering",
+            "--store",
+            &store,
+            "--plate-series",
+            ":1000",
+        ]),
     ]);
-    let table: Vec<_> = list(&p, "groups")
+    let p = &previews[0];
+    let table: Vec<_> = list(p, "groups")
         .iter()
         .map(|g| {
             (
@@ -337,44 +415,60 @@ fn series_come_from_options_and_overlaps_are_shown() {
             ("P4".into(), "overlapping".into(), Some("P4".into())),
         ]
     );
-    assert_eq!(number(at(&p, &["counts"]), "overlapping_groups"), 2);
-    assert_eq!(number(at(&p, &["counts"]), "unnumbered_members"), 3);
-    let series = list(&p, "series");
+    assert_eq!(number(at(p, &["counts"]), "overlapping_groups"), 2);
+    assert_eq!(number(at(p, &["counts"]), "unnumbered_members"), 3);
+    let series = list(p, "series");
     assert_eq!(text(&series[1], "prefix"), "P");
     assert_eq!(number(&series[1], "start"), 3);
     assert!(is_null(&series[2], "first"));
     // An empty prefix is a plain number.
-    let q = f.preview(&["--plate-series", ":1000"]);
-    assert_eq!(text(&list(&q, "groups")[0], "position"), "1000");
+    let q = &previews[1];
+    assert_eq!(text(&list(q, "groups")[0], "position"), "1000");
 }
 
 #[test]
 fn the_tolerance_and_the_name_setting_change_the_grouping() {
     let f = Fixture::new();
     let s = f.scene();
-    // A beam 0.3 mm longer is another part until the tolerance covers it.
-    let profile = text(
-        at(
-            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
-            &["definition"],
-        ),
-        "digest",
-    );
-    f.beam(&profile, &s.steel, "3000.3,0,0", "0,0,0");
-    let exact = groups(&f.preview(&[]));
+    let store = f.store();
+    // A beam 0.3 mm longer is another part until the tolerance covers it. The profile is the
+    // scene's 100x50 one: the same parameters are content-addressed to the same definition.
+    let rounds = f.script(&[
+        Fixture::beam_line(&store, &s.profile, &s.steel, "3000.3,0,0", "0,0,0"),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+        Scripted::ok(&["preview-numbering", "--store", &store, "--tolerance", "0.5"]),
+        Scripted::ok(&[
+            "preview-numbering",
+            "--store",
+            &store,
+            "--compare-name",
+            "true",
+        ]),
+    ]);
+    let exact = groups(&rounds[1]);
     assert_eq!(exact.iter().filter(|g| g.0 == "beam").count(), 3);
-    let loose = groups(&f.preview(&["--tolerance", "0.5"]));
+    let loose = groups(&rounds[2]);
     assert_eq!(loose.iter().filter(|g| g.0 == "beam").count(), 2);
     // Names are compared only on request.
-    let named = groups(&f.preview(&["--compare-name", "true"]));
+    let named = groups(&rounds[3]);
     assert!(named.iter().filter(|g| g.0 == "plate").count() >= 4);
     f.ok(
         "update-element",
         &["--id", &s.plates[1], "--name", "Different"],
     );
-    let by_name = groups(&f.preview(&["--compare-name", "true"]));
+    let after_the_rename = f.script(&[
+        Scripted::ok(&[
+            "preview-numbering",
+            "--store",
+            &store,
+            "--compare-name",
+            "true",
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    let by_name = groups(&after_the_rename[0]);
     assert_eq!(by_name.iter().filter(|g| g.0 == "plate").count(), 5);
-    let by_default = groups(&f.preview(&[]));
+    let by_default = groups(&after_the_rename[1]);
     assert_eq!(by_default.iter().filter(|g| g.0 == "plate").count(), 4);
 }
 
@@ -382,20 +476,74 @@ fn the_tolerance_and_the_name_setting_change_the_grouping() {
 fn assemblies_with_the_same_content_share_a_mark() {
     let f = Fixture::new();
     let s = f.scene();
-    let mut marks = Vec::new();
-    for (name, parts) in [
-        ("A one", vec![&s.plates[0], &s.beams[0]]),
-        ("A two", vec![&s.plates[1], &s.beams[1]]),
-        ("A three", vec![&s.beams[2]]),
-    ] {
-        let id = text(&f.ok("create-assembly", &["--name", name]), "element_id");
-        for part in parts {
-            f.ok("attach-to-assembly", &["--id", part, "--assembly-id", &id]);
-        }
-        marks.push(id);
-    }
-    let p = f.preview(&[]);
-    let assemblies: Vec<_> = list(&p, "groups")
+    let store = f.store();
+    // The three assemblies are created in one process, the attachments and the two previews
+    // in another (#738 P7).
+    let created = f.script(&[
+        Scripted::ok(&["create-assembly", "--store", &store, "--name", "A one"]),
+        Scripted::ok(&["create-assembly", "--store", &store, "--name", "A two"]),
+        Scripted::ok(&["create-assembly", "--store", &store, "--name", "A three"]),
+    ]);
+    let id = |reply: &Json| text(reply, "element_id");
+    let (one, two, three) = (id(&created[0]), id(&created[1]), id(&created[2]));
+    let attached = f.script(&[
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[0],
+            "--assembly-id",
+            &one,
+        ]),
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.beams[0],
+            "--assembly-id",
+            &one,
+        ]),
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.plates[1],
+            "--assembly-id",
+            &two,
+        ]),
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.beams[1],
+            "--assembly-id",
+            &two,
+        ]),
+        Scripted::ok(&[
+            "attach-to-assembly",
+            "--store",
+            &store,
+            "--id",
+            &s.beams[2],
+            "--assembly-id",
+            &three,
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+        Scripted::ok(&[
+            "preview-numbering",
+            "--store",
+            &store,
+            "--assembly-series",
+            "AS:10",
+        ]),
+    ]);
+    let marks = [one, two, three];
+    let p = &attached[5];
+    let assemblies: Vec<_> = list(p, "groups")
         .iter()
         .filter(|g| text(g, "kind") == "assembly")
         .collect();
@@ -404,9 +552,9 @@ fn assemblies_with_the_same_content_share_a_mark() {
     assert_eq!(number(assemblies[0], "count"), 2);
     assert_eq!(text(assemblies[0], "reference"), marks[0]);
     assert_eq!(text(assemblies[1], "position"), "A-2");
-    let q = f.preview(&["--assembly-series", "AS:10"]);
+    let q = &attached[6];
     assert!(
-        list(&q, "groups")
+        list(q, "groups")
             .iter()
             .any(|g| text(g, "position") == "AS-10")
     );
@@ -416,25 +564,39 @@ fn assemblies_with_the_same_content_share_a_mark() {
 fn groups_are_paged() {
     let f = Fixture::new();
     f.scene();
-    let first = f.preview(&["--limit", "4"]);
-    assert_eq!(list(&first, "groups").len(), 4);
-    assert_eq!(number(&first, "next_offset"), 4);
-    let second = f.preview(&["--limit", "4", "--offset", "4"]);
-    assert_eq!(list(&second, "groups").len(), 2);
-    assert!(is_null(&second, "next_offset"));
-    assert_eq!(text(&list(&second, "groups")[0], "position"), "B1");
-    assert_eq!(number(at(&second, &["counts"]), "groups"), 6);
+    let store = f.store();
+    let pages = f.script(&[
+        Scripted::ok(&["preview-numbering", "--store", &store, "--limit", "4"]),
+        Scripted::ok(&[
+            "preview-numbering",
+            "--store",
+            &store,
+            "--limit",
+            "4",
+            "--offset",
+            "4",
+        ]),
+    ]);
+    let first = &pages[0];
+    assert_eq!(list(first, "groups").len(), 4);
+    assert_eq!(number(first, "next_offset"), 4);
+    let second = &pages[1];
+    assert_eq!(list(second, "groups").len(), 2);
+    assert!(is_null(second, "next_offset"));
+    assert_eq!(text(&list(second, "groups")[0], "position"), "B1");
+    assert_eq!(number(at(second, &["counts"]), "groups"), 6);
 }
 
 #[test]
 fn bad_input_is_refused_without_a_preview() {
     let f = Fixture::new();
+    let store = f.store();
     // Argument refusals need a nonempty model, not the eight-part grouping scene.
     f.ok(
         "create-plate",
         &["--width", "400", "--length", "300", "--thickness", "20"],
     );
-    for extra in [
+    let bad: [Vec<&str>; 15] = [
         vec!["--plate-series", "PL"],
         vec!["--plate-series", "PL:x"],
         vec!["--plate-series", "P-L:1"],
@@ -450,13 +612,16 @@ fn bad_input_is_refused_without_a_preview() {
         vec!["--offset", "x"],
         vec!["--bogus", "1"],
         vec!["--limit", "1", "--limit", "2"],
-    ] {
-        let (code, body) = f.run("preview-numbering", &extra);
-        assert_eq!(
-            (code, text(&body, "code").as_str()),
-            (2, "INVALID_ARGUMENT"),
-            "{extra:?}"
-        );
+    ];
+    let mut lines = Vec::new();
+    for extra in &bad {
+        let mut args = vec!["preview-numbering", "--store", store.as_str()];
+        args.extend_from_slice(extra);
+        lines.push(Scripted::refused(&args));
+    }
+    let refusals = f.script(&lines);
+    for (extra, reply) in bad.iter().zip(refusals.iter()) {
+        assert_eq!(text(reply, "code"), "INVALID_ARGUMENT", "{extra:?}");
     }
     let (code, body) = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
         .args(["preview-numbering"])
@@ -477,103 +642,164 @@ fn bad_input_is_refused_without_a_preview() {
 #[test]
 fn a_store_without_parts_has_an_empty_preview() {
     let f = Fixture::new();
-    f.ok("define-material", &["--density", "7850"]);
-    let p = f.preview(&[]);
-    assert!(list(&p, "groups").is_empty());
-    assert_eq!(number(at(&p, &["counts"]), "parts"), 0);
+    let store = f.store();
+    let replies = f.script(&[
+        Scripted::ok(&["define-material", "--store", &store, "--density", "7850"]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    let p = &replies[1];
+    assert!(list(p, "groups").is_empty());
+    assert_eq!(number(at(p, &["counts"]), "parts"), 0);
 }
 
 #[test]
 fn numbering_binds_evaluated_shapes_and_stales_even_when_group_membership_does_not_change() {
     let f = Fixture::new();
-    let profile = text(
-        at(
-            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
-            &["definition"],
-        ),
-        "digest",
-    );
-    let bent = f.ok(
-        "create-polybeam",
-        &[
+    let store = f.store();
+    let defined = f.script(&[Scripted::ok(&[
+        "define-profile",
+        "--store",
+        &store,
+        "--width",
+        "100",
+        "--height",
+        "50",
+    ])]);
+    let profile = text(at(&defined[0], &["definition"]), "digest");
+    let built = f.script(&[
+        Scripted::ok(&[
+            "create-polybeam",
+            "--store",
+            &store,
             "--points",
             "0,0,0;3000,0,0;3000,4000,0",
             "--profile-digest",
             &profile,
-        ],
-    );
-    let id = text(at(&bent, &["member"]), "element_id");
-    f.ok(
-        "create-member",
-        &[
+        ]),
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
             "--start",
             "0,0,0",
             "--end",
             "7000,0,0",
             "--profile-digest",
             &profile,
-        ],
-    );
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    let id = text(at(&built[0], &["member"]), "element_id");
     assert_eq!(
-        groups(&f.preview(&[])),
+        groups(&built[2]),
         [
             ("beam".into(), "B1".into(), 1),
             ("beam".into(), "B2".into(), 1)
         ]
     );
-    let before = f.preview(&[]);
+    let before = built[2].clone();
     let token = text(&before, "preview_token");
-    f.ok("approve-numbering", &["--preview-token", &token]);
-    // Moving and rotating the scene instance do not change its normalized geometry.
-    f.ok(
-        "update-element",
-        &[
+    // The approval, the move-with-rotation and the read that judges them ride one process
+    // (#738 P7): moving and rotating the scene instance do not change its normalized geometry.
+    let moved_round = f.script(&[
+        Scripted::ok(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &token,
+        ]),
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
             "--id",
             &id,
             "--translation",
             "1200,800,300",
             "--orientation-xyzw",
             "0,0,0.7071067811865476,0.7071067811865476",
-        ],
-    );
-    let moved = f.preview(&["--previous", &token]);
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store, "--previous", &token]),
+    ]);
+    let moved = &moved_round[2];
     assert!(matches!(moved.get("stale").unwrap(), Json::Bool(false)));
-    assert_eq!(text(at(&moved, &["approval"]), "state"), "current");
+    assert_eq!(text(at(moved, &["approval"]), "state"), "current");
     // The total length and the B1/B2 membership stay the same, but the finished body changes.
-    f.ok(
-        "update-element",
-        &["--id", &id, "--axis-point", "0,0,0;4000,0,0;4000,3000,0"],
-    );
-    let changed = f.preview(&["--previous", &token]);
-    assert_eq!(groups(&changed), groups(&before));
+    let changed_round = f.script(&[
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &id,
+            "--axis-point",
+            "0,0,0;4000,0,0;4000,3000,0",
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store, "--previous", &token]),
+    ]);
+    let changed = &changed_round[1];
+    assert_eq!(groups(changed), groups(&before));
     assert!(matches!(changed.get("stale").unwrap(), Json::Bool(true)));
-    assert_eq!(text(at(&changed, &["approval"]), "state"), "stale");
-    let head = f.head();
-    let (code, refusal) = f.run("approve-numbering", &["--preview-token", &token]);
-    assert_eq!(code, 2, "{refusal:?}");
-    assert_eq!(text(&refusal, "code"), "STALE_WORKSPACE");
-    assert_eq!(f.head(), head);
-    f.ok("copy-element", &["--id", &id, "--offset", "0,1000,0"]);
+    assert_eq!(text(at(changed, &["approval"]), "state"), "stale");
+    // The stale approval refuses re-approval and leaves the head alone; all three rides are
+    // one process.
+    let refused_round = f.script(&[
+        Scripted::ok(&["open-revision", "--store", &store]),
+        Scripted::refused(&[
+            "approve-numbering",
+            "--store",
+            &store,
+            "--preview-token",
+            &token,
+        ]),
+        Scripted::ok(&["open-revision", "--store", &store]),
+    ]);
+    assert_eq!(text(&refused_round[1], "code"), "STALE_WORKSPACE");
     assert_eq!(
-        groups(&f.preview(&[])),
+        text(&refused_round[0], "revision_id"),
+        text(&refused_round[2], "revision_id")
+    );
+    let copied_round = f.script(&[
+        Scripted::ok(&[
+            "copy-element",
+            "--store",
+            &store,
+            "--id",
+            &id,
+            "--offset",
+            "0,1000,0",
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store]),
+    ]);
+    assert_eq!(
+        groups(&copied_round[1]),
         [
             ("beam".into(), "B1".into(), 2),
             ("beam".into(), "B2".into(), 1)
         ]
     );
-    let token = text(&f.preview(&[]), "preview_token");
+    let token = text(&copied_round[1], "preview_token");
     // Straightening at the same length now joins the straight part's group.
-    f.ok(
-        "update-element",
-        &["--id", &id, "--axis-point", "0,0,0;7000,0,0"],
-    );
-    let straightened = f.preview(&["--previous", &token]);
+    let straightened_round = f.script(&[
+        Scripted::ok(&[
+            "update-element",
+            "--store",
+            &store,
+            "--id",
+            &id,
+            "--axis-point",
+            "0,0,0;7000,0,0",
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store, "--previous", &token]),
+    ]);
+    let straightened = &straightened_round[1];
     assert!(matches!(
         straightened.get("stale").unwrap(),
         Json::Bool(true)
     ));
     assert_eq!(
-        groups(&straightened),
+        groups(straightened),
         [
             ("beam".into(), "B1".into(), 2),
             ("beam".into(), "B2".into(), 1)
@@ -584,33 +810,52 @@ fn numbering_binds_evaluated_shapes_and_stales_even_when_group_membership_does_n
 #[test]
 fn a_member_cut_changes_numbering_without_changing_the_axis_length() {
     let f = Fixture::new();
-    let profile = text(
-        at(
-            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
-            &["definition"],
-        ),
-        "digest",
-    );
-    let mut ids = Vec::new();
-    for _ in 0..2 {
-        let member = f.ok(
+    let store = f.store();
+    let defined = f.script(&[Scripted::ok(&[
+        "define-profile",
+        "--store",
+        &store,
+        "--width",
+        "100",
+        "--height",
+        "50",
+    ])]);
+    let profile = text(at(&defined[0], &["definition"]), "digest");
+    let built = f.script(&[
+        Scripted::ok(&[
             "create-member",
-            &[
-                "--start",
-                "0,0,0",
-                "--end",
-                "7000,0,0",
-                "--profile-digest",
-                &profile,
-            ],
-        );
-        ids.push(text(at(&member, &["member"]), "element_id"));
-    }
+            "--store",
+            &store,
+            "--start",
+            "0,0,0",
+            "--end",
+            "7000,0,0",
+            "--profile-digest",
+            &profile,
+        ]),
+        Scripted::ok(&[
+            "create-member",
+            "--store",
+            &store,
+            "--start",
+            "0,0,0",
+            "--end",
+            "7000,0,0",
+            "--profile-digest",
+            &profile,
+        ]),
+    ]);
+    let ids: Vec<String> = built
+        .iter()
+        .map(|reply| text(at(reply, &["member"]), "element_id"))
+        .collect();
     let token = text(&f.preview(&[]), "preview_token");
     assert_eq!(groups(&f.preview(&[])), [("beam".into(), "B1".into(), 2)]);
-    f.ok(
-        "cut-by-plane",
-        &[
+    let cut_round = f.script(&[
+        Scripted::ok(&[
+            "cut-by-plane",
+            "--store",
+            &store,
             "--id",
             &ids[1],
             "--operation-id",
@@ -621,12 +866,13 @@ fn a_member_cut_changes_numbering_without_changing_the_axis_length() {
             "1,0,0",
             "--keep",
             "negative",
-        ],
-    );
-    let after = f.preview(&["--previous", &token]);
+        ]),
+        Scripted::ok(&["preview-numbering", "--store", &store, "--previous", &token]),
+    ]);
+    let after = &cut_round[1];
     assert!(matches!(after.get("stale").unwrap(), Json::Bool(true)));
     assert_eq!(
-        groups(&after),
+        groups(after),
         [
             ("beam".into(), "B1".into(), 1),
             ("beam".into(), "B2".into(), 1)
