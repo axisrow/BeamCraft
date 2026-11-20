@@ -37,7 +37,7 @@ pub(super) const HELP: &str = concat!(
     "is unsupported; a member hole takes the member-frame axis point and a section-plane ",
     "axis direction (the F06 member-hole amendment): straight members of every profile ",
     "family are served, through or a range ending in free space, while a curved member or ",
-    "polybeam, a roll, an axial direction and a hole that does not fit a wall face clear ",
+    "polybeam, a roll, a skew, an axial direction and a hole that does not fit a wall face clear ",
     "of its edges and the other holes refuse UNSUPPORTED_GEOMETRY; the operation id ",
     "names the record and is the logical operation: a retry with the same arguments is ",
     "replayed, another use of a recorded id is DUPLICATE_ID; one undo unit with the ",
