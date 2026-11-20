@@ -268,6 +268,96 @@ fn a_script_ending_with_an_open_batch_abandons_it() {
 }
 
 #[test]
+fn a_refused_batch_word_counts_as_failed_in_the_script_summary() {
+    // Review of the 1119 batch replay: the batch words hardwired exit 0, so a batch word
+    // that refused summarized as failed 0 with process exit 0, against the promise that
+    // the replies carry each command's exit code.
+    let f = fixture("script-batch-refusals");
+    let store_arg = f.root.join("store").to_str().unwrap().to_owned();
+    f.run("define-material", &["--grade", "RS", "--density", "7850"]);
+    let (code, summary) = raw(
+        &store_arg,
+        &f.root.join("refusals.json"),
+        &[
+            &["batch-commit"],
+            &["batch-abort"],
+            &["open-revision", "--store", &store_arg],
+        ],
+    );
+    // The process still exits 0 — a refusal is a summary entry — but the refused words
+    // carry their own exits and the failed count sees them.
+    assert_eq!(code, 0);
+    assert_eq!(text(&summary, "outcome"), "script_complete");
+    assert_eq!(at(&summary, &["commands"]).unsigned().unwrap(), 3);
+    assert_eq!(at(&summary, &["failed"]).unsigned().unwrap(), 2);
+    let replies = list(&summary, "replies");
+    assert_eq!(at(&replies[0], &["exit"]).unsigned().unwrap(), 2);
+    assert_eq!(
+        text(at(&replies[0], &["reply"]), "code"),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(at(&replies[1], &["exit"]).unsigned().unwrap(), 2);
+    // The read after the refusals still answers: the session stays alive.
+    assert_eq!(at(&replies[2], &["exit"]).unsigned().unwrap(), 0);
+    assert_eq!(text(at(&replies[2], &["reply"]), "sequence"), "1");
+}
+
+#[test]
+fn a_second_batch_open_refuses_and_abandons_the_open_batch() {
+    // The refusal exit of the batch words rides the same abandonment rule as any refused
+    // command: the draft is open after the refused line, so the batch abandons whole.
+    let f = fixture("script-batch-double-open");
+    let store = f.root.join("store");
+    let draft = f.root.join("draft");
+    let draft_arg = draft.to_str().unwrap().to_owned();
+    let store_arg = store.to_str().unwrap().to_owned();
+    f.script(
+        &store,
+        &[
+            Scripted::ok(&[
+                "define-profile",
+                "--store",
+                &store_arg,
+                "--designation",
+                "RS-RECT",
+                "--width",
+                "100",
+                "--height",
+                "50",
+            ]),
+            Scripted::ok(&[
+                "create-workspace",
+                "--store",
+                &store_arg,
+                "--workspace-dir",
+                &draft_arg,
+                "--user-id",
+                USER,
+            ]),
+        ],
+    );
+    let (code, summary) = raw(
+        &draft_arg,
+        &f.root.join("double-open.json"),
+        &[&["batch-open"], &["batch-open"]],
+    );
+    assert_eq!(code, 0);
+    assert_eq!(at(&summary, &["failed"]).unsigned().unwrap(), 1);
+    let replies = list(&summary, "replies");
+    // The refusal line, then the abandonment line after it.
+    assert_eq!(replies.len(), 3);
+    assert_eq!(at(&replies[1], &["exit"]).unsigned().unwrap(), 2);
+    assert_eq!(
+        text(at(&replies[2], &["reply"]), "outcome"),
+        "batch_abandoned"
+    );
+    // The abandoned batch published nothing.
+    let (code, draft_head) = StoreFixture::run_in(&draft_arg, "open-revision", &[]);
+    assert_eq!(code, 0);
+    assert_eq!(text(&draft_head, "sequence"), "1");
+}
+
+#[test]
 fn a_broken_script_file_is_a_typed_refusal_that_touches_nothing() {
     let f = fixture("script-broken");
     let store_arg = f.root.join("store").to_str().unwrap().to_owned();

@@ -414,38 +414,39 @@ fn pierce_decides_crossing(
                 shell.vstar.get(&vertex).ok_or(ContactError::Range)?
             };
             // The segment must pass through every face of the local surface
-            // transversally at the point. Its own triangle's plane it crosses
-            // by the pierce precondition; a face whose plane carries the
-            // segment, or whose plane the segment fails to leave on the far
-            // side, vetoes the crossing.
+            // transversally at the point, with consistent sides: one endpoint
+            // on one side of every star face plane and the other endpoint on
+            // the other side, the same pairing at each face. Its own
+            // triangle's plane it crosses by the pierce precondition and reads
+            // as the reference pairing; a face whose plane carries the
+            // segment, whose plane the segment fails to leave on the far
+            // side, or whose sides flip against the star's pairing vetoes the
+            // crossing — a diagonal pass through an edge or vertex that
+            // clips open space on both sides crosses each plane alone but
+            // never the material.
             let mut continued = false;
+            let mut pairing = None;
             for &nf in star.iter() {
-                if nf == ti {
-                    continue;
-                }
                 let face = shell.tris.get(nf).ok_or(ContactError::Range)?;
-                if !crosses_transversally(preds, face, s0, s1).map_err(ContactError::from)? {
+                let [fa, fb, fc] = *face;
+                let d0 = preds.orient3d(fa, fb, fc, s0).map_err(ContactError::from)?;
+                let d1 = preds.orient3d(fa, fb, fc, s1).map_err(ContactError::from)?;
+                if d0 == 0 || d1 == 0 || (d0 > 0) == (d1 > 0) {
                     return Ok(false);
                 }
-                continued = true;
+                let sides = (d0 > 0, d1 > 0);
+                match pairing {
+                    None => pairing = Some(sides),
+                    Some(same) if same != sides => return Ok(false),
+                    _ => {}
+                }
+                if nf != ti {
+                    continued = true;
+                }
             }
             Ok(continued)
         }
     }
-}
-
-/// True when the segment's endpoints lie strictly on opposite sides of the
-/// triangle's plane.
-fn crosses_transversally(
-    preds: &mut Predicates,
-    tri: &Tri,
-    s0: [f64; 3],
-    s1: [f64; 3],
-) -> Result<bool, PredError> {
-    let [a, b, c] = *tri;
-    let d0 = preds.orient3d(a, b, c, s0)?;
-    let d1 = preds.orient3d(a, b, c, s1)?;
-    Ok(d0 != 0 && d1 != 0 && (d0 > 0) != (d1 > 0))
 }
 
 /// The plain `f64` orientation determinant of a point against a triangle's
@@ -1518,6 +1519,50 @@ mod tests {
         )
     }
 
+    /// A cube of side 2√2 whose edge from (-1,5,9) to (1,5,11) is the rim
+    /// scenario's diagonal segment: built from the three edge vectors through
+    /// s0, with the same 12-triangle box topology as `shell_box` under the
+    /// right-handed (e1, e2, e3) roles.
+    fn diagonal_edge_cube() -> TriMesh {
+        let s0 = [-1.0, 5.0, 9.0];
+        let e = [
+            [2.0, 0.0, 2.0],
+            [0.0, 2.0 * core::f64::consts::SQRT_2, 0.0],
+            [-2.0, 0.0, 2.0],
+        ];
+        let verts: Vec<[f64; 3]> = (0..8)
+            .map(|i| {
+                let (a, b, c) = (
+                    f64::from(i & 1 == 1),
+                    f64::from(i & 2 == 2),
+                    f64::from(i & 4 == 4),
+                );
+                [
+                    s0[0] + a * e[0][0] + b * e[1][0] + c * e[2][0],
+                    s0[1] + a * e[0][1] + b * e[1][1] + c * e[2][1],
+                    s0[2] + a * e[0][2] + b * e[1][2] + c * e[2][2],
+                ]
+            })
+            .collect();
+        let tris: Vec<[u32; 3]> = [
+            [0, 4, 6],
+            [0, 6, 2],
+            [1, 3, 7],
+            [1, 7, 5],
+            [0, 1, 5],
+            [0, 5, 4],
+            [2, 6, 7],
+            [2, 7, 3],
+            [0, 2, 3],
+            [0, 3, 1],
+            [4, 5, 7],
+            [4, 7, 6],
+        ]
+        .into_iter()
+        .collect();
+        TriMesh::from_buffers(&verts, &tris).unwrap()
+    }
+
     /// A square plate 200x200 with a square 60x60 through-hole in its
     /// centre (x, y in 70..130), 20 mm thick along z: an extrusion with one
     /// cavity contour, the same operation a holed model element evaluates
@@ -1647,6 +1692,24 @@ mod tests {
                 surface_crossing: true
             }
         );
+        assert!(!report.face_contact);
+    }
+
+    #[test]
+    fn a_diagonal_pass_through_a_rim_edge_clips_open_space_and_touches() {
+        // The diagonal cube's edge s0=(-1,5,9) .. s1=(1,5,11) pierces the
+        // unit cube's x=0 face at the rim point (0,5,10) — the shared edge
+        // of the x=0 and z=10 faces. Each star plane alone is crossed
+        // transversally, but the sides flip between the faces: on the x=0
+        // plane the segment runs outside-then-inside, on the z=10 plane
+        // inside-then-outside. Past the rim the segment is outside both
+        // planes at once, and before it as well, so the pass clips open
+        // space rather than material: the star must not confirm a crossing,
+        // and the shells touch at the rim.
+        let a = cube([0.0; 3], 10.0);
+        let b = diagonal_edge_cube();
+        let report = contact(&a, &b, limits()).unwrap();
+        assert_eq!(report.relation, Relation::Touching);
         assert!(!report.face_contact);
     }
 
@@ -2196,7 +2259,9 @@ mod tests {
         // a segment running in the z=20 plane through their shared edge
         // passes through the wall's face — the continuation confirms it.
         // (The pierce lands in the upper triangle; the lower one misses it
-        // across the diagonal.)
+        // across the diagonal. The winding stays consistent across the two
+        // quads, as a real shell's is: the side-consistency check reads the
+        // star faces' planes against one common pairing.)
         let wall = TriMesh::from_buffers(
             &[
                 [0.0, 0.0, 0.0],
@@ -2206,7 +2271,7 @@ mod tests {
                 [100.0, 0.0, 40.0],
                 [0.0, 0.0, 40.0],
             ],
-            &[[0, 1, 2], [0, 2, 3], [2, 5, 4], [2, 3, 5]],
+            &[[0, 1, 2], [0, 2, 3], [2, 4, 5], [2, 5, 3]],
         )
         .unwrap();
         let shell = Shell::of(&wall).unwrap();

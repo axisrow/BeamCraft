@@ -550,7 +550,11 @@ fn assembly_lines(draft_dir: &str, copy_id: &str) -> Vec<Scripted> {
         "--side",
         "both",
     ]));
-    lines.push(Scripted::ok(&["batch-commit"]));
+    // The doc comment above promises one batch for the attachments and the weld, but a
+    // batched attach resolves its part against the head and refuses NOT_FOUND (the exit
+    // was hardwired to 0, so the dangling batch-commit at the end refused silently and
+    // the segment still read green). Until the batched attach resolves, the commands
+    // commit directly and the script carries no dangling batch word.
     lines
 }
 

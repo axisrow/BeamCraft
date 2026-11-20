@@ -173,9 +173,9 @@ impl<'a> Session<'a> {
             .to_owned();
         let tail = tokens.get(1..).unwrap_or_default();
         let (json, exit) = match word.as_str() {
-            "batch-open" => (self.batch_open(tail), 0u8),
-            "batch-commit" => (self.batch_commit(tail), 0u8),
-            "batch-abort" => (self.batch_abort(), 0u8),
+            "batch-open" => self.batch_open(tail),
+            "batch-commit" => self.batch_commit(tail),
+            "batch-abort" => self.batch_abort(),
             _ => self.command(word, tokens),
         };
         let mut answers = vec![(json, exit)];
@@ -261,10 +261,13 @@ impl<'a> Session<'a> {
 
     /// `batch-open`: pins the verified head as the base the whole batch builds on and commits
     /// against. A store without a revision is refused: the first revision belongs outside a
-    /// batch.
-    fn batch_open(&mut self, options: &[String]) -> Json {
-        self.batch_open_inner(options)
-            .unwrap_or_else(|refusal| refusal_json(&refusal))
+    /// batch. A refusal carries its own exit, so a script summary counts it; when a batch is
+    /// already open, the refusal abandons it through the same rule as any refused command.
+    fn batch_open(&mut self, options: &[String]) -> (Json, u8) {
+        match self.batch_open_inner(options) {
+            Ok(json) => (json, 0),
+            Err(refusal) => (refusal_json(&refusal), refusal_exit(refusal.code)),
+        }
     }
 
     fn batch_open_inner(&mut self, options: &[String]) -> Result<Json, Refusal> {
@@ -313,24 +316,26 @@ impl<'a> Session<'a> {
 
     /// `batch-commit`: ends the draft and publishes its accumulated state as one revision.
     /// A refusal (a moved head, a budget overrun) fails the batch whole; the session stays
-    /// alive and the next commands run against the unchanged store.
-    fn batch_commit(&mut self, options: &[String]) -> Json {
+    /// alive and the next commands run against the unchanged store. The refusal carries its
+    /// own exit, so a script summary counts a commit that consumed the batch and published
+    /// nothing as failed; a refusal never doubles as the abandonment trigger, which stays
+    /// the draft being open after the line.
+    fn batch_commit(&mut self, options: &[String]) -> (Json, u8) {
         let parsed = match batch_commit_options(options) {
             Ok(parsed) => parsed,
-            Err(refusal) => return refusal_json(&refusal),
+            Err(refusal) => return (refusal_json(&refusal), refusal_exit(refusal.code)),
         };
         if !draft::is_open() {
-            return refusal_json(&invalid_session("no draft batch is open"));
+            let refusal = invalid_session("no draft batch is open");
+            return (refusal_json(&refusal), refusal_exit(refusal.code));
         }
         let control = match parsed.control() {
             Ok(control) => control,
-            Err(refusal) => return refusal_json(&refusal),
+            Err(refusal) => return (refusal_json(&refusal), refusal_exit(refusal.code)),
         };
         if control.remaining().is_err() {
-            return refusal_json(&Refusal::new(
-                ErrorCode::Cancelled,
-                "the batch commit is cancelled",
-            ));
+            let refusal = Refusal::new(ErrorCode::Cancelled, "the batch commit is cancelled");
+            return (refusal_json(&refusal), refusal_exit(refusal.code));
         }
         let (project, workspace, base_generation) = match draft::with(|state| {
             (
@@ -340,16 +345,25 @@ impl<'a> Session<'a> {
             )
         }) {
             Some(fields) => fields,
-            None => return refusal_json(&invalid_session("no draft batch is open")),
+            None => {
+                let refusal = invalid_session("no draft batch is open");
+                return (refusal_json(&refusal), refusal_exit(refusal.code));
+            }
         };
         let schema = match beamcraft_layer_engine::authored::schema_identity() {
             Ok(schema) => schema,
-            Err(e) => return refusal_json(&Refusal::from(e)),
+            Err(e) => {
+                let refusal = Refusal::from(e);
+                return (refusal_json(&refusal), refusal_exit(refusal.code));
+            }
         };
         let revision_id = parsed.revision_id();
         let op = match beamcraft_host::revision::Uuid7::parse(&parsed.op.to_string()) {
             Ok(op) => op,
-            Err(_) => return refusal_json(&invalid_session("the operation identity is invalid")),
+            Err(_) => {
+                let refusal = invalid_session("the operation identity is invalid");
+                return (refusal_json(&refusal), refusal_exit(refusal.code));
+            }
         };
         match batch::commit_batch(
             BatchCommit {
@@ -392,30 +406,36 @@ impl<'a> Session<'a> {
                     let checks = crate::check_cmd::summary_for_store(self.store, &fields);
                     fields = crate::check_cmd::insert_checks(fields, checks);
                 }
-                fields
+                (fields, 0)
             }
             Err(refusal) => {
                 // The batch was consumed: commit_batch ends it before it checks anything.
                 self.batch_ops.clear();
                 self.guard = None;
-                refusal_json(&refusal)
+                (refusal_json(&refusal), refusal_exit(refusal.code))
             }
         }
     }
 
     /// `batch-abort`: abandons the open draft. Nothing was published, so there is nothing to
     /// undo and the store keeps the revision the batch was pinned on.
-    fn batch_abort(&mut self) -> Json {
+    fn batch_abort(&mut self) -> (Json, u8) {
         match draft::take() {
             Some(state) => {
                 self.batch_ops.clear();
                 self.guard = None;
-                Json::object([
-                    ("outcome", Json::text("batch_abandoned")),
-                    ("commands", Json::uint(state.commands.len() as u64)),
-                ])
+                (
+                    Json::object([
+                        ("outcome", Json::text("batch_abandoned")),
+                        ("commands", Json::uint(state.commands.len() as u64)),
+                    ]),
+                    0,
+                )
             }
-            None => refusal_json(&invalid_session("no draft batch is open")),
+            None => {
+                let refusal = invalid_session("no draft batch is open");
+                (refusal_json(&refusal), refusal_exit(refusal.code))
+            }
         }
     }
 }

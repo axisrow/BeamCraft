@@ -736,6 +736,37 @@ fn a_member_hole_lives_the_full_lifecycle_off_the_origin() {
         ],
     );
     assert_eq!(code, "UNSUPPORTED_GEOMETRY");
+    // A skewed frame is refused the same way (a04-2 names it beside the roll): the member's
+    // axis off the coordinate axes leaves the member frame outside the served set.
+    let skewed = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,300,0",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    let code = f.rejected(
+        "add-hole",
+        &[
+            "--id",
+            &text(at(&skewed, &["member"]), "element_id"),
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000e4",
+            "--axis-point",
+            "500,150,0",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    assert_eq!(code, "UNSUPPORTED_GEOMETRY");
 
     // The edit keeps the identity and the ordinal and changes the volume; the delete
     // restores the gross end to end.

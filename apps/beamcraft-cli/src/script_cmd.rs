@@ -66,6 +66,7 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
     };
     let mut replies = Vec::new();
     let mut failed = 0u64;
+    let mut total_commands;
     for tokens in script {
         for (json, exit) in session.run_line(tokens) {
             if exit != 0 {
@@ -77,11 +78,13 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
             ]));
         }
     }
+    total_commands = replies.len() as u64;
     // A script that ends with an open batch abandons it, exactly as a session's EOF does:
     // nothing was on disk, so there is nothing to recover and the summary says so.
     if let Some(commands) = draft::take().map(|state| state.commands.len()) {
         session.batch_ops.clear();
         session.guard = None;
+        total_commands += 1;
         replies.push(Json::object([
             ("exit", Json::uint(0)),
             (
@@ -94,16 +97,43 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
             ),
         ]));
     }
-    let envelope = Json::object([
-        ("outcome", Json::text("script_complete")),
-        ("commands", Json::uint(replies.len() as u64)),
-        ("failed", Json::uint(failed)),
-        ("replies", Json::Array(replies)),
-    ]);
+    // The envelope is one reply like any other and stays inside the output budget the
+    // way `check_cmd::insert_checks` shrinks a reply that grew too big. Everything has
+    // committed by now, so a bare LIMIT_EXCEEDED here would be indistinguishable from a
+    // script refused before running and would send a retry into duplicate-id refusals:
+    // the summary stays complete, the oldest replies stay, and the newest are counted in
+    // `replies_omitted`.
+    let mut kept = replies;
+    let mut omitted = 0u64;
+    let mut envelope = script_envelope(&kept, total_commands, failed, omitted);
+    while envelope.encode(&Limits::DEFAULT).is_err() {
+        match kept.pop() {
+            Some(_) => {
+                omitted += 1;
+                envelope = script_envelope(&kept, total_commands, failed, omitted);
+            }
+            None => break,
+        }
+    }
     if crate::session_cmd::print_json(&envelope).is_err() {
         return std::process::ExitCode::from(3);
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// The whole-script summary envelope over the replies kept so far.
+fn script_envelope(replies: &[Json], total: u64, failed: u64, omitted: u64) -> Json {
+    let mut fields = Json::Object(Default::default());
+    if let Json::Object(entries) = &mut fields {
+        entries.insert("outcome".to_owned(), Json::text("script_complete"));
+        entries.insert("commands".to_owned(), Json::uint(total));
+        entries.insert("failed".to_owned(), Json::uint(failed));
+        if omitted != 0 {
+            entries.insert("replies_omitted".to_owned(), Json::uint(omitted));
+        }
+        entries.insert("replies".to_owned(), Json::Array(replies.to_vec()));
+    }
+    fields
 }
 
 /// The parsed options of one `run-script` invocation.
@@ -261,5 +291,55 @@ mod tests {
             .map(OsString::from)
             .collect();
         assert!(script_options(&dangling).is_err());
+    }
+
+    #[test]
+    fn an_oversized_envelope_keeps_the_summary_and_counts_the_dropped_replies() {
+        // Review of the 1119 batch replay: an envelope over the budget printed a bare
+        // LIMIT_EXCEEDED after every command had committed. The shrink keeps the summary
+        // truthful instead: the oldest replies stay and the newest are counted.
+        // A reply carries at most a 4 KiB string under the reply budget, so the fat line
+        // stays under the per-string cap: the overflow must come from the whole
+        // envelope, not from one string that could never encode.
+        let fat = Json::text("x".repeat(3900));
+        let line = |n: u64| {
+            Json::object([
+                ("exit", Json::uint(n)),
+                ("reply", Json::object([("line", fat.clone())])),
+            ])
+        };
+        let replies: Vec<Json> = (0..512u64).map(line).collect();
+        let total = replies.len() as u64;
+        let mut kept = replies;
+        let mut omitted = 0u64;
+        let mut envelope = script_envelope(&kept, total, 0, omitted);
+        while envelope.encode(&Limits::DEFAULT).is_err() {
+            match kept.pop() {
+                Some(_) => {
+                    omitted += 1;
+                    envelope = script_envelope(&kept, total, 0, omitted);
+                }
+                None => break,
+            }
+        }
+        assert!(
+            envelope.encode(&Limits::DEFAULT).is_ok(),
+            "the shrunk envelope fits the budget"
+        );
+        let entries = match &envelope {
+            Json::Object(entries) => entries.clone(),
+            _ => Default::default(),
+        };
+        assert_eq!(entries.get("outcome"), Some(&Json::text("script_complete")));
+        assert_eq!(entries.get("commands"), Some(&Json::uint(total)));
+        assert_eq!(entries.get("replies_omitted"), Some(&Json::uint(omitted)));
+        assert!(omitted > 0, "the fat replies overflowed the budget");
+        let kept_replies = match entries.get("replies") {
+            Some(Json::Array(list)) => list.clone(),
+            _ => Vec::new(),
+        };
+        assert_eq!(kept_replies.len() as u64 + omitted, total);
+        assert!(!kept_replies.is_empty(), "the oldest replies stay");
+        assert_eq!(kept_replies[0], line(0));
     }
 }
