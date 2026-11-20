@@ -1042,6 +1042,91 @@ fn an_add_hole_plate_exports_its_hole_count_and_no_gross_quantities() {
 }
 
 #[test]
+fn a_bent_plate_publishes_net_only_against_the_faceted_volume() {
+    // Review of the 1119 batch replay: the operations gate counted holes and plane cuts
+    // alone, and a bend refuses both — so a bent plate passed the gate and published
+    // GrossVolume and GrossWeight equal to the faceted net volume, against IFCX-QTY-004.
+    // The true pre-bend gross is the analytic blank the engine stores separately, and the
+    // exporter does not recompute it.
+    let f = Fixture::new();
+    let material = text(
+        at(
+            &f.ok(
+                "define-material",
+                &[
+                    "--project-id",
+                    PROJECT,
+                    "--density",
+                    "7850",
+                    "--name",
+                    "S355",
+                    "--grade",
+                    "S355",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "2000",
+            "--thickness",
+            "2",
+            "--material-digest",
+            &material,
+            "--name",
+            "PL-B",
+        ],
+    );
+    let plate = f.scene_plate();
+    f.ok(
+        "bend-plate",
+        &[
+            "--id",
+            &plate,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000f1",
+            "--kind",
+            "fold",
+            "--point-a",
+            "0,1000,0",
+            "--point-b",
+            "1000,1000,0",
+            "--radius",
+            "8",
+            "--angle-rad",
+            "1.5707963267948966",
+        ],
+    );
+    let report = f.export(&f.path("a.ifc"), &[]);
+    assert_eq!(text(&report, "outcome"), "exported");
+    let file = f.parsed("a.ifc");
+    file.check().unwrap();
+    let product = file.all("IFCPLATE")[0];
+    let quantities = quantity_values(&file, product);
+    assert!(quantities.contains_key("NetVolume"));
+    assert!(
+        !quantities.contains_key("GrossVolume"),
+        "a bent plate has no gross volume"
+    );
+    assert!(
+        !quantities.contains_key("GrossWeight"),
+        "a bent plate has no gross weight"
+    );
+    let props = property_values(&file, product);
+    assert!(props.contains_key("NetWeightKg"));
+    assert!(
+        !props.contains_key("GrossWeightKg"),
+        "a bent plate has no gross weight property"
+    );
+}
+
+#[test]
 fn a_cut_or_holed_element_publishes_net_only_and_an_intact_one_keeps_its_gross() {
     // Issue 556 item 4: the exporter never read an element's operation records, so a cut or
     // holed plate or member published gross quantities equal to net, against IFCX-QTY-004,

@@ -339,9 +339,13 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
                 profile: None,
                 // The body's count covers create-authored and AddHole holes alike; the
                 // deprecated create-authored attribute alone misses every AddHole (issue 598).
-                // The plane cuts of A03 are operations too (issue 556).
+                // The plane cuts of A03 and the bends of A10 are operations too (issue 556):
+                // a bend refuses holes and cuts, so the bend check is the gate a bent plate
+                // rides on.
                 holes: u32::try_from(r.body.hole_count).ok(),
-                operations: r.body.hole_count != 0 || !r.authored.cuts.is_empty(),
+                operations: r.body.hole_count != 0
+                    || !r.authored.cuts.is_empty()
+                    || !r.authored.bends.is_empty(),
                 quantities: &r.quantities,
             },
         );
