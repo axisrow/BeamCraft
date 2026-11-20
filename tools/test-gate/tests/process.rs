@@ -11,7 +11,7 @@ use beamcraft_test_gate::{capture, local, process, report::Report};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Temp(PathBuf);
@@ -330,6 +330,43 @@ fn git(root: &Path, args: &[&str]) -> String {
     beamcraft_test_gate::git(root, args).unwrap()
 }
 
+/// Waits bounded for a directory written by the fixture gate's grandchild cargo
+/// processes before listing it. Twice on one upstream PR, ubuntu and macOS CI
+/// shards alike saw an immediate `read_dir` of the isolated target lose the race
+/// against that final artifact placement while the gate itself had already
+/// exited 0 with a valid report and readable sibling logs; `None` means the
+/// directory never became listable within `limit`, which stays a failure.
+fn dir_built_within(path: &Path, limit: Duration) -> Option<std::fs::ReadDir> {
+    let deadline = Instant::now() + limit;
+    loop {
+        match std::fs::read_dir(path) {
+            Ok(entries) => return Some(entries),
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+            Err(_) => return None,
+        }
+    }
+}
+
+#[test]
+fn the_fixture_artifact_reader_waits_out_a_late_directory_and_reports_an_absent_one() {
+    let temp = Temp::new();
+    let late = temp.0.join("late").join("deps");
+    std::fs::create_dir_all(late.parent().unwrap()).unwrap();
+    let writer = std::thread::spawn({
+        let late = late.clone();
+        move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::create_dir_all(&late).unwrap();
+        }
+    });
+    assert!(dir_built_within(&late, Duration::from_secs(10)).is_some());
+    writer.join().unwrap();
+    assert!(
+        dir_built_within(&temp.0.join("absent"), Duration::from_millis(300)).is_none(),
+        "a directory that never appears must stay a failure"
+    );
+}
+
 #[test]
 fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     let temp = Temp::new();
@@ -442,15 +479,17 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
             .unwrap()
             .contains("1 passed")
     );
-    assert!(
-        !std::fs::read_dir(root.join("target/test-gate/target/debug/deps"))
-            .unwrap()
-            .any(|e| e
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains("beamcraft_ui"))
-    );
+    let mut deps = dir_built_within(
+        &root.join("target/test-gate/target/debug/deps"),
+        Duration::from_secs(10),
+    )
+    .expect("the fixture gate built its isolated target directory");
+    assert!(!deps.any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("beamcraft_ui")
+    }));
     assert!(local::snapshot(&root, false).is_ok());
     // A green test process must not certify source changed by one of its tests.
     write(
