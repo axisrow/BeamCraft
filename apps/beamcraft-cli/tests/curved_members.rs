@@ -166,7 +166,8 @@ fn curved_member_reopens_copies_and_replays_after_update_and_delete() {
     assert!((num(m, &["quantities", "volume", "mm3"]) - 600. * length).abs() < 200.);
     let authored = f.authored_text(&created);
     assert!(authored.contains("steel:member:pathType = \"arc\""));
-    // The fresh reopen sees the same mesh digest, and the copies stay arcs.
+    // The stored body the inspection reads back carries the created mesh digest, and the
+    // copies stay arcs; the fresh-process checks live in the replay block below.
     let inspected = &created_round[1];
     assert_eq!(
         text(

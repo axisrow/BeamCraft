@@ -276,8 +276,30 @@ fn bad_section_input_is_refused_with_its_code() {
             "--h",
             "1",
         ]),
-        i_refusal(&store, &["--t", "5"]),
-        i_refusal(&store, &["--outer", "0,0;1,0;0,1"]),
+        // Section parameters without --family are refused, not dropped from a rectangle: the
+        // two literal no-family lines cover that guard.
+        Scripted::refused(&[
+            "define-profile",
+            "--store",
+            &store,
+            "--width",
+            "100",
+            "--height",
+            "100",
+            "--t",
+            "5",
+        ]),
+        Scripted::refused(&[
+            "define-profile",
+            "--store",
+            &store,
+            "--width",
+            "100",
+            "--height",
+            "100",
+            "--outer",
+            "0,0;1,0;0,1",
+        ]),
         // A clockwise custom outline is stored as authored, and the kernel refuses to build it.
         Scripted::ok(&[
             "define-profile",
