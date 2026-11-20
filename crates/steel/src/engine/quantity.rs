@@ -370,13 +370,17 @@ fn cut_operation_digest(record: &CutRecord) -> ContentDigest {
     digest(&bytes)
 }
 
-/// The content digest of one authored member-hole record (A04.2): the member-frame cutter only.
-/// A member-hole record enters no other signature, so its identity and ordinal are not shape
-/// inputs and a renumbered hole stays current; the polygon carries its vertex count, and the
-/// extent distinguishes a through cut from a ranged one.
+/// The content digest of one authored member-hole record (A04.2): the member-frame cutter and
+/// its kind. A member-hole record enters no other signature, so its identity and ordinal are
+/// not shape inputs and a renumbered hole stays current; the polygon carries its vertex count,
+/// and the extent distinguishes a through cut from a ranged one. The kind token (the frozen
+/// `hole|polygon_cut|part_cut` vocabulary of `steel:mhole:kinds`) is content: a round hole and
+/// a polygon cut with the same geometry are different authored operations.
 fn member_hole_operation_digest(record: &MemberHoleRecord) -> ContentDigest {
     let mut bytes = Vec::with_capacity(96 + 16 * record.polygon_mm.len());
     bytes.extend_from_slice(b"BeamCraft/A04-2/MemberHoleRecordContent/v1\0");
+    bytes.extend_from_slice(record.kind.as_str().as_bytes());
+    bytes.push(0);
     bytes.extend_from_slice(b"axis_point_mm");
     record
         .axis_point_mm
@@ -704,12 +708,13 @@ mod tests {
 
     /// A member-hole record through the member's `X_r` direction at the section centre.
     fn member_hole(diameter_mm: f64, station_mm: f64) -> MemberHoleRecord {
-        use crate::model::command::HoleExtent;
+        use crate::model::command::{HoleExtent, MemberHoleKind};
         let r = diameter_mm / 2.0;
         MemberHoleRecord {
             operation_id: beamcraft_model::id::OpId::parse("019a7bf0-0000-7000-8000-0000000000e1")
                 .unwrap(),
             ordinal: 0,
+            kind: MemberHoleKind::Hole,
             axis_point_mm: [0.0, 0.0, station_mm],
             axis_direction: [1.0, 0.0, 0.0],
             extent: HoleExtent::Through,
@@ -762,6 +767,17 @@ mod tests {
             member_operation_digests(&retagged),
             holed_digests,
             "a hole record's identity and ordinal are not shape inputs"
+        );
+        // The kind is content: the same cutter under another kind is another authored operation
+        // (the frozen `steel:mhole:kinds` vocabulary).
+        let mut rekinded = member();
+        let mut hole_record = member_hole(100.0, 3000.0);
+        hole_record.kind = crate::model::command::MemberHoleKind::PolygonCut;
+        rekinded.hole_records.push(hole_record);
+        assert_ne!(
+            member_operation_digests(&rekinded),
+            holed_digests,
+            "the kind token is a content input of the digest"
         );
         // A plane cut adds its own digest; the order is the replay order (cuts, then holes).
         retagged.cuts.push(CutRecord {
