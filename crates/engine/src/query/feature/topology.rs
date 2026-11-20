@@ -21,10 +21,182 @@ fn point_token(token: &str) -> bool {
         .is_some_and(|(c, k)| decimal(c, 255).is_some() && decimal(k, 1023).is_some())
 }
 
+/// The six axis roles of a box body, without the face-table's `f.` prefix.
+const AXES: [&str; 6] = ["x0", "x1", "y0", "y1", "z0", "z1"];
+
+fn axis_role(token: &str) -> bool {
+    AXES.contains(&token)
+}
+
+/// The `h<ordinal>` head of a cut wall token.
+fn hole_ordinal(token: &str) -> Option<usize> {
+    let n = token.strip_prefix('h')?;
+    let value = n.parse::<usize>().ok()?;
+    (value <= 999 && n == value.to_string()).then_some(value)
+}
+
+/// The `.w<crossing>` component of a member cutter's wall token.
+fn hole_crossing(token: &str) -> Option<usize> {
+    let k = token.strip_prefix('w')?;
+    let n = k.parse::<usize>().ok()?;
+    (n <= 999 && n.to_string() == k).then_some(n)
+}
+
+/// The `.s<side>` component of a band wall token.
+fn hole_side(token: &str) -> Option<usize> {
+    let j = token.strip_prefix('s')?;
+    let n = j.parse::<usize>().ok()?;
+    (n <= 1023 && n.to_string() == j).then_some(n)
+}
+
+/// The `.v<point>` cavity-point component of a corner edge token.
+fn hole_point(token: &str) -> Option<usize> {
+    let j = token.strip_prefix('v')?;
+    let n = j.parse::<usize>().ok()?;
+    (n <= 1023 && n.to_string() == j).then_some(n)
+}
+
+/// A canonical decimal followed by the rest of the token from the next dot on.
+fn leading_decimal(text: &str, max: usize) -> Option<(usize, &str)> {
+    let end = text.find('.').unwrap_or(text.len());
+    Some((decimal(text.get(..end)?, max)?, text.get(end..)?))
+}
+
+/// The parsed wall-band role: ordinal, crossing, side, run.
+pub(super) type CutBand = (usize, Option<usize>, Option<usize>, Option<usize>);
+
+/// The wall-band role of a prism cut: `f.h<ordinal>[.w<crossing>].s<side>[.p<run>]`, the
+/// grammar the certified cutters name their walls with. A component out of place, a run
+/// suffix without a side, or a crossing without a side is not a band role.
+pub(super) fn cut_band_role(role: &str) -> Option<CutBand> {
+    let (ordinal, rest) = leading_decimal(role.strip_prefix("f.h")?, 999)?;
+    let (crossing, rest) = match rest.strip_prefix(".w") {
+        Some(rest) => {
+            let (k, rest) = leading_decimal(rest, 999)?;
+            (Some(k), rest)
+        }
+        None => (None, rest),
+    };
+    let (side, rest) = match rest.strip_prefix(".s") {
+        Some(rest) => {
+            let (j, rest) = leading_decimal(rest, 1023)?;
+            (Some(j), rest)
+        }
+        None => (None, rest),
+    };
+    let (run, rest) = match rest.strip_prefix(".p") {
+        Some(rest) => {
+            let (r, rest) = leading_decimal(rest, 1023)?;
+            (Some(r), rest)
+        }
+        None => (None, rest),
+    };
+    if !rest.is_empty() {
+        return None;
+    }
+    (side.is_some() || (run.is_none() && crossing.is_none()))
+        .then_some((ordinal, crossing, side, run))
+}
+
+/// The rim vertex of a prism cut opening: `h<ordinal>[.w<crossing>].<axis>.<point>` — the
+/// body axis face the opening's rim lies on and the cavity point the vertex closes.
+fn cut_rim_vertex(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('.').collect();
+    let Some((&head, rest)) = parts.split_first() else {
+        return false;
+    };
+    if hole_ordinal(head).is_none() {
+        return false;
+    }
+    match rest {
+        [axis, point] => axis_role(axis) && decimal(point, 1023).is_some(),
+        [crossing, axis, point] => {
+            hole_crossing(crossing).is_some() && axis_role(axis) && decimal(point, 1023).is_some()
+        }
+        _ => false,
+    }
+}
+
+/// A named cut edge: the rim segment `h<ordinal>[.w<crossing>].s<side>.<axis>` of one band
+/// wall on one body face, or the cut corner `h<ordinal>[.w<crossing>].v<point>` between
+/// the two band walls of one crossing at one cavity point.
+fn cut_edge(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('.').collect();
+    let Some((&head, rest)) = parts.split_first() else {
+        return false;
+    };
+    if hole_ordinal(head).is_none() {
+        return false;
+    }
+    match rest {
+        [point] => hole_point(point).is_some(),
+        [first, second] if first.starts_with('w') => {
+            hole_crossing(first).is_some() && hole_point(second).is_some()
+        }
+        [side, axis] => hole_side(side).is_some() && axis_role(axis),
+        [crossing, side, axis] => {
+            hole_crossing(crossing).is_some() && hole_side(side).is_some() && axis_role(axis)
+        }
+        _ => false,
+    }
+}
+
+/// The local id of a named cut feature when it parses as `kind` and fits the 64-byte
+/// qualified bound (`fid1:` + a canonical 36-character ElementId + `:` = 42 bytes before
+/// the local id). Any other spelling stays unnamed; a name is never repaired and never
+/// poisons the whole body.
+fn named_cut_local(token: &str, kind: FeatureKind) -> Option<String> {
+    let local = format!("cut:{token}");
+    (parse_role(BodyKind::Cut, token) == Some(kind)
+        && MAX_FEATURE_ID_BYTES > local.len() + FEATURE_RULE.len() + 1 + 36)
+        .then_some(local)
+}
+
+/// The parsed rim-vertex role of a validated cut vertex id: ordinal, crossing, the body
+/// axis the rim lies on, and the cavity point. The role keeps its `v.` head.
+fn rim_parts(role: &str) -> Option<(usize, Option<usize>, String, usize)> {
+    let parts: Vec<&str> = role.strip_prefix("v.")?.split('.').collect();
+    let (&head, rest) = parts.split_first()?;
+    let ordinal = hole_ordinal(head)?;
+    match rest {
+        [axis, point] => Some((ordinal, None, (*axis).to_owned(), point.parse().ok()?)),
+        [crossing, axis, point] => Some((
+            ordinal,
+            hole_crossing(crossing),
+            (*axis).to_owned(),
+            point.parse().ok()?,
+        )),
+        _ => None,
+    }
+}
+
+/// How many side walls one opening (ordinal, crossing) has in the face table: the cavity
+/// point count the cyclic side naming needs.
+fn band_side_count(names: &[String], ordinal: usize, crossing: Option<usize>) -> Option<usize> {
+    let mut count = 0usize;
+    for name in names {
+        let (family, role) = name.split_once(':')?;
+        if family == "cut"
+            && let Some((n, w, Some(_), _)) = cut_band_role(role)
+            && n == ordinal
+            && w == crossing
+        {
+            count += 1;
+        }
+    }
+    (count > 0).then_some(count)
+}
+
 pub(super) fn parse_role(body: BodyKind, token: &str) -> Option<FeatureKind> {
     if body == BodyKind::Cut {
         if let Some(corner) = token.strip_prefix("v.") {
-            return cut_corner(corner).then_some(FeatureKind::Vertex);
+            if cut_corner(corner) {
+                return Some(FeatureKind::Vertex);
+            }
+            return cut_rim_vertex(corner).then_some(FeatureKind::Vertex);
+        }
+        if let Some(edge) = token.strip_prefix("e.") {
+            return cut_edge(edge).then_some(FeatureKind::Edge);
         }
         let face = token.strip_prefix("f.")?;
         if let Some(p) = face.strip_prefix('p') {
@@ -97,15 +269,67 @@ fn member_edge(edge: &str) -> bool {
         .is_some_and(|(a, b)| matches!(a, "x0" | "x1") && matches!(b, "y0" | "y1"))
 }
 
-/// The cap corner name of a vertex shared by exactly one cut cap and two faces of the member
-/// itself (see [`cut_corner`]). Every other mixed vertex stays unnamed.
+/// The name of a cut-created vertex shared by faces of more than one family. A cap corner
+/// (the cap-corner amendment) is a vertex of one cap and two faces of the body itself; a
+/// rim vertex (this amendment) is a vertex of two band walls of one prism-cut opening and
+/// one axis-aligned face of the body itself. Every other mixed vertex stays unnamed.
 fn cut_vertex_name(local: &[(&str, &str)], names: &[String]) -> Option<String> {
-    let caps: Vec<&str> = local
+    if let Some(caps) = local
         .iter()
         .filter(|(family, _)| *family == "cut")
         .map(|(_, role)| role.strip_prefix("f.p"))
-        .collect::<Option<_>>()?;
-    let [cap] = caps.as_slice() else {
+        .collect::<Option<Vec<_>>>()
+    {
+        return cut_cap_corner_name(&caps, local, names);
+    }
+    // The rim: two band walls of one opening and one axis-aligned face of the body itself.
+    // The opening must sit strictly inside that face, so the vertex sees no other face.
+    let mut bands = Vec::new();
+    let mut axis = None;
+    for (family, role) in local {
+        if *family == "cut" {
+            bands.push(cut_band_role(role)?);
+        } else if matches!(*family, "plate" | "member") {
+            if axis.replace(role.strip_prefix("f.")?).is_some() {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    let [(n, crossing, sa, run_a), (m_ord, crossing_b, sb, run_b)] = bands.as_slice() else {
+        return None;
+    };
+    let (Some(sa), Some(sb)) = (*sa, *sb) else {
+        return None;
+    };
+    if *n != *m_ord || crossing != crossing_b || run_a.is_some() || run_b.is_some() || sa == sb {
+        return None;
+    }
+    let axis = axis?;
+    if !AXES.contains(&axis) {
+        return None;
+    }
+    // The vertex closes exactly one side's start: the side after it in the cavity's
+    // clockwise order. The other side runs from this vertex to the next corner.
+    let sides = band_side_count(names, *n, *crossing)?;
+    let point = if (sa + 1) % sides == sb {
+        sb
+    } else if (sb + 1) % sides == sa {
+        sa
+    } else {
+        return None;
+    };
+    let token = match crossing {
+        Some(k) => format!("v.h{n}.w{k}.{axis}.{point}"),
+        None => format!("v.h{n}.{axis}.{point}"),
+    };
+    named_cut_local(&token, FeatureKind::Vertex)
+}
+
+/// The cap corner name over the already collected cap roles (`cut:v.p<cap>.<edge>`).
+fn cut_cap_corner_name(caps: &[&str], local: &[(&str, &str)], names: &[String]) -> Option<String> {
+    let [cap] = caps else {
         return None;
     };
     let sides: Vec<(&str, &str)> = local
@@ -462,9 +686,13 @@ fn edge_name(
     adjacent: &BTreeSet<usize>,
     names: &[String],
 ) -> Option<String> {
-    // Cap corners name vertices only: the cap's own edges are not named by this amendment.
-    if a.body() != b.body() || a.body() == BodyKind::Cut {
+    if a.body() != b.body() {
         return None;
+    }
+    // Cut ids name the edges of a prism cut's walls between named rim vertices; the cap's
+    // own edges and every other cut pair stay unnamed (the cap-corner amendment).
+    if a.body() == BodyKind::Cut {
+        return cut_edge_name(a, b, adjacent, names);
     }
     let family = a.body().as_str();
     if matches!(a.body(), BodyKind::Plate | BodyKind::Member) {
@@ -490,4 +718,89 @@ fn edge_name(
         }
     }
     None
+}
+
+/// The name of the edge between two named rim vertices of one prism cut opening. The rim
+/// edge of side `j` runs on the body face the opening sits on, between that face and the
+/// band wall `s<j>`; the corner edge at cavity point `j` runs along the cut between the
+/// two band walls of one crossing. Rim and corner ids follow the walls' own `cut:f.h`
+/// vocabulary (`cut:e.h<n>[.w<k>].s<j>.<axis>`, `cut:e.h<n>[.w<k>].v<j>`); a cap edge, a
+/// mixed pair or anything the walls do not certify stays unnamed.
+fn cut_edge_name(
+    a: &FeatureId,
+    b: &FeatureId,
+    adjacent: &BTreeSet<usize>,
+    names: &[String],
+) -> Option<String> {
+    let (va, vb) = (rim_parts(a.role())?, rim_parts(b.role())?);
+    if va.0 != vb.0 || va.1 != vb.1 {
+        return None;
+    }
+    let mut bands = Vec::new();
+    let mut axis = None;
+    for face in adjacent {
+        let (family, role) = names.get(*face)?.split_once(':')?;
+        if family == "cut" {
+            bands.push(cut_band_role(role)?);
+        } else if matches!(family, "plate" | "member") && axis.is_none() {
+            axis = Some(role.strip_prefix("f.")?);
+        } else {
+            return None;
+        }
+    }
+    if !matches!(adjacent.len(), 2) {
+        return None;
+    }
+    match bands.as_slice() {
+        // The rim edge of side `j`: the band wall and the axis face its opening sits on.
+        [(n, crossing, Some(side), None)] => {
+            let axis = axis?;
+            if !AXES.contains(&axis)
+                || *n != va.0
+                || crossing != &va.1
+                || va.2 != axis
+                || vb.2 != axis
+            {
+                return None;
+            }
+            let token = match crossing {
+                Some(k) => format!("e.h{n}.w{k}.s{side}.{axis}"),
+                None => format!("e.h{n}.s{side}.{axis}"),
+            };
+            named_cut_local(&token, FeatureKind::Edge)
+        }
+        // The corner edge at cavity point `j`: the two band walls of one crossing.
+        [
+            (n, crossing, Some(sx), None),
+            (m, crossing_y, Some(sy), None),
+        ] => {
+            let (sx, sy) = (*sx, *sy);
+            if n != m
+                || crossing != crossing_y
+                || *n != va.0
+                || crossing != &va.1
+                || va.2 == vb.2
+                || va.3 != vb.3
+            {
+                return None;
+            }
+            let sides = band_side_count(names, *n, *crossing)?;
+            let point = if (sx + 1) % sides == sy {
+                sy
+            } else if (sy + 1) % sides == sx {
+                sx
+            } else {
+                return None;
+            };
+            if va.3 != point {
+                return None;
+            }
+            let token = match crossing {
+                Some(k) => format!("e.h{n}.w{k}.v{point}"),
+                None => format!("e.h{n}.v{point}"),
+            };
+            named_cut_local(&token, FeatureKind::Edge)
+        }
+        _ => None,
+    }
 }
