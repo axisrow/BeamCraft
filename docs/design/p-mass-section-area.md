@@ -64,8 +64,9 @@ observation of the same profile; no external material is included.
    (`kernel_mm2` keeps its name for compatibility and `exact_mm2` is added, both the exact area).
 6. **Gross and net.** `gross` is the nominal body before any operation: members, effective area x
    axis length; plates, the exact outline box (area x thickness). `net` is the body after the
-   operations (through holes of a plate today). With no operation they are equal. `removed =
-   volume(mesh before) - volume(mesh after)`, measured on the kernel meshes (see below).
+   operations (plate holes and cuts, member plane cuts and member holes). With no operation they
+   are equal. `removed = volume(mesh before) - volume(mesh after)`, measured on the kernel
+   meshes (see below).
 
 ## The rule for future operations
 
@@ -79,10 +80,18 @@ the exact area.
 Implemented now: `engine::command::Volumes::measured(gross, mesh_before, mesh_after)`. For a plate
 the gross body is the exact box, which is also the mesh before, so the measured volume after the
 holes is used as is (no rounding is added; plate net values are bit-identical to the earlier
-slice). Not implemented: member operations. A03 does not exist, so a member's
-`removed_volume_mm3` is `0` and its net equals its gross. The quantity record and the net
-signature are ready: `quantity::member_net_signature(gross, &[operation digests])` takes the list
-of operations (each by the digest of its own authored content); it is empty today.
+slice). Member operations (issue 556 item 4) follow the same rule: the engine replays the plane
+cuts (A03) and the member-hole records (A04.2) over the certified body, measures
+`removed_volume_mm3` as the mesh before the operations minus the mesh after, and reports
+`net = gross - removed` with the gross kept at the nominal `area x axis length`. The net signature
+carries the operations: `member_record` binds `member_net_signature(gross,
+&member_operation_digests(member))`, one content digest per authored record (plane cuts, then
+member holes, in replay order). For a member hole — the record the gross signature does not see —
+identity and ordinal are not shape inputs, so a renumbered hole stays current; a plane cut's
+ordinal is a `push_cuts` input of the gross signature already, so a renumbered cut reads stale
+through the gross signature. The cut
+algorithm label moved to its second generation (`kernel-a03-plane-cut-volume/2;ops-signed`)
+with this change, so a member record written earlier reads as a superseded value.
 
 ## Quantities JSON (`create-member`, `create-plate`, `inspect-elements`, `copy`, `update-element`, ...)
 
@@ -105,7 +114,7 @@ Stored values are never rounded. `inspect-elements` adds `expected_gross_signatu
 | Signature | Inputs |
 |---|---|
 | member gross (`member_gross_signature`) | axis, roll, resolved section values, area source, declared area and effective area, algorithm, tolerance policy |
-| member net (stored as `bim:shapeSignature`) | the gross signature and the list of operations (empty) |
+| member net (stored as `bim:shapeSignature`) | the gross signature and the list of operations (the authored plane-cut and member-hole record digests; empty without operations) |
 | plate gross (`plate_gross_signature`) | outline, thickness, the gross algorithm label (no holes) |
 | plate net (stored; unchanged bytes) | outline, thickness, holes, algorithm |
 | mass (net and gross) | the matching shape signature and the density or its absence |
@@ -120,8 +129,11 @@ are computed from the authored inputs and reported next to the stored net record
 ## Compatibility with existing stores
 
 New algorithm labels: `pmass-member-area-x-length/1;rectangle;tolerance-policy-3` and
-`pmass-member-area-x-length/1;section-exact-area;tolerance-policy-3`. The plate labels and the
-plate net signature are unchanged, so existing plate records stay `current`.
+`pmass-member-area-x-length/1;section-exact-area;tolerance-policy-3`; the cut label moved to
+`kernel-a03-plane-cut-volume/2;ops-signed;tolerance-policy-3` when the member net signature
+began binding the operation digests, so a member (or cut plate) record written under `/1` reads
+as a superseded value. The plate hole labels and the plate net signature are unchanged, so
+existing plate records stay `current`.
 
 A member record written by an earlier binary carries a superseded label
 (`engine::member::SUPERSEDED_MEMBER_ALGORITHMS`) and different signature bytes. It reads as
@@ -138,16 +150,17 @@ material `update-element`). There is no dedicated "recompute quantities" command
   reference mass of the sharp-corner (simplified) section, and the `simplified_area_mm2` helper
   behind it. The sharp-corner figure (185.34 kg for the reference I section) appears only in the
   table above, as an external reference.
-- No member cuts, bolt holes, copes (A03 does not exist); only the structure is ready.
+- No member copes; plane cuts (A03) and member holes (A04.2, including the generated bolt-group
+  records) replay through the measured rule now (issue 556 item 4).
 - Gross figures, the removed volume and the area source are not stored in the derived layer (a
   schema change); a plain USD reader sees only the net record and the signatures.
 - No recompute command for superseded records; they are refreshed by the next quantity-writing edit.
 - The declared mass per metre and the declared surface are still not read; mass uses the area.
 - A rectangle's `kernel_mm2`-style D3 warning is not added (the rectangle keeps its refusing P02.2
   0.1 % check).
-- The IFC contract ([e01-ifc-export-v0.1](../contracts/e01-ifc-export-v0.1.md)) maps one volume to both
-  `NetVolume` and, only for elements without operations, `GrossVolume`; it is not changed here.
-  With explicit gross and net figures a plate with holes could also publish `GrossVolume` (open).
+- The IFC contract ([e01-ifc-export-v0.1](../contracts/e01-ifc-export-v0.1.md)) publishes the
+  gross quantities only for an element without operations (IFCX-QTY-004, amended in the fork
+  PR of 2026-11-19); a cut or holed element publishes its net figures alone.
 
 ## Bill of materials: proposal pending the owner
 

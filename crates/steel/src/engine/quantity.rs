@@ -17,7 +17,9 @@
 
 use crate::engine::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM};
 use crate::engine::member::{AuthoredMember, ProfileInfo};
-use crate::model::command::{CornerTreatment, CutRecord, KeepSide, PlateCorner, PlateSide};
+use crate::model::command::{
+    CornerTreatment, CutRecord, HoleExtent, KeepSide, MemberHoleRecord, PlateCorner, PlateSide,
+};
 use crate::model::section::SectionShape;
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
@@ -336,9 +338,11 @@ pub fn member_gross_signature(
 }
 
 /// Signature of the NET inputs of a member: the gross signature and the list of operations, each
-/// identified by the digest of its own authored content. A member has no operation yet, so the
-/// list is empty today; a cut, bolt hole or cope adds its digest here and changes the net
-/// signature without touching the gross one.
+/// identified by the digest of its own authored content ([`member_operation_digests`]). A member
+/// without operations hashes the empty list, so its net signature keeps its earlier bytes. The
+/// plane cuts are already inputs of the gross signature (`push_cuts`); the member-hole records
+/// are not, so a bolt hole or cope adds its digest here and changes the net signature without
+/// touching the gross one.
 pub fn member_net_signature(gross: &ContentDigest, operations: &[ContentDigest]) -> ContentDigest {
     let mut bytes = Vec::with_capacity(48 + 32 * operations.len());
     bytes.extend_from_slice(b"BeamCraft/PMass/MemberNet/v1\0");
@@ -350,13 +354,65 @@ pub fn member_net_signature(gross: &ContentDigest, operations: &[ContentDigest])
     digest(&bytes)
 }
 
-/// The signature stored as a member's shape signature (the NET one, without operations).
-pub fn member_shape_signature(
-    member: &AuthoredMember,
-    profile: &ProfileInfo,
-    algorithm: &str,
-) -> ContentDigest {
-    member_net_signature(&member_gross_signature(member, profile, algorithm), &[])
+/// The content digest of one authored plane-cut record (A03): the cutting geometry only, so two
+/// records with the same plane and kept side hash the same. The digest binds the content beyond
+/// what [`push_cuts`] already hashes into the gross signature; a cut's ordinal is a gross input
+/// there, so a renumbered cut moves the gross signature and the record reads stale for that
+/// reason, not through this digest.
+fn cut_operation_digest(record: &CutRecord) -> ContentDigest {
+    let mut bytes = Vec::with_capacity(64);
+    bytes.extend_from_slice(b"BeamCraft/A03/CutRecordContent/v1\0");
+    bytes.extend_from_slice(b"point_mm");
+    record.point_mm.iter().for_each(|v| float(&mut bytes, *v));
+    bytes.extend_from_slice(b"normal");
+    record.normal.iter().for_each(|v| float(&mut bytes, *v));
+    bytes.extend_from_slice(record.keep.as_str().as_bytes());
+    digest(&bytes)
+}
+
+/// The content digest of one authored member-hole record (A04.2): the member-frame cutter and
+/// its kind. A member-hole record enters no other signature, so its identity and ordinal are
+/// not shape inputs and a renumbered hole stays current; the polygon carries its vertex count,
+/// and the extent distinguishes a through cut from a ranged one. The kind token (the frozen
+/// `hole|polygon_cut|part_cut` vocabulary of `steel:mhole:kinds`) is content: a round hole and
+/// a polygon cut with the same geometry are different authored operations.
+fn member_hole_operation_digest(record: &MemberHoleRecord) -> ContentDigest {
+    let mut bytes = Vec::with_capacity(96 + 16 * record.polygon_mm.len());
+    bytes.extend_from_slice(b"BeamCraft/A04-2/MemberHoleRecordContent/v1\0");
+    bytes.extend_from_slice(record.kind.as_str().as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(b"axis_point_mm");
+    record
+        .axis_point_mm
+        .iter()
+        .for_each(|v| float(&mut bytes, *v));
+    bytes.extend_from_slice(b"axis_direction");
+    record
+        .axis_direction
+        .iter()
+        .for_each(|v| float(&mut bytes, *v));
+    match record.extent {
+        HoleExtent::Through => bytes.extend_from_slice(b"through"),
+        HoleExtent::Range { from_mm, to_mm } => {
+            bytes.extend_from_slice(b"range_mm");
+            float(&mut bytes, from_mm);
+            float(&mut bytes, to_mm);
+        }
+    }
+    bytes.extend_from_slice(&(record.polygon_mm.len() as u64).to_le_bytes());
+    for v in record.polygon_mm.iter().flatten() {
+        float(&mut bytes, *v);
+    }
+    digest(&bytes)
+}
+
+/// The operation digests of a member's authored records in replay order (the plane cuts, then
+/// the member holes), the list the member's net signature binds.
+pub fn member_operation_digests(member: &AuthoredMember) -> Vec<ContentDigest> {
+    let mut digests = Vec::with_capacity(member.cuts.len() + member.hole_records.len());
+    digests.extend(member.cuts.iter().map(cut_operation_digest));
+    digests.extend(member.hole_records.iter().map(member_hole_operation_digest));
+    digests
 }
 
 /// Signature of the mass inputs: the shape signature and the density, or its absence.
@@ -454,7 +510,11 @@ pub fn member_record(
 ) -> QuantityRecord {
     let algorithm = quantities.algorithm;
     let gross = member_gross_signature(member, profile, algorithm);
-    record_for(member_net_signature(&gross, &[]), gross, quantities)
+    record_for(
+        member_net_signature(&gross, &member_operation_digests(member)),
+        gross,
+        quantities,
+    )
 }
 
 /// Whether a stored algorithm label is one that an earlier slice wrote for a member. Such a
@@ -646,6 +706,104 @@ mod tests {
         );
     }
 
+    /// A member-hole record through the member's `X_r` direction at the section centre.
+    fn member_hole(diameter_mm: f64, station_mm: f64) -> MemberHoleRecord {
+        use crate::model::command::{HoleExtent, MemberHoleKind};
+        let r = diameter_mm / 2.0;
+        MemberHoleRecord {
+            operation_id: beamcraft_model::id::OpId::parse("019a7bf0-0000-7000-8000-0000000000e1")
+                .unwrap(),
+            ordinal: 0,
+            kind: MemberHoleKind::Hole,
+            axis_point_mm: [0.0, 0.0, station_mm],
+            axis_direction: [1.0, 0.0, 0.0],
+            extent: HoleExtent::Through,
+            // The clockwise regular polygon the command derives from a diameter (a square
+            // stands in for it here; the content is what the digest binds, not its shape).
+            polygon_mm: vec![[0.0, -r], [r, 0.0], [0.0, r], [-r, 0.0]],
+            owner: None,
+        }
+    }
+
+    #[test]
+    fn a_members_hole_records_enter_its_net_signature_and_never_the_gross_one() {
+        let profile = i_profile(None);
+        // One quantity set for every variant: the signatures bind the authored inputs and the
+        // algorithm label, not the values, and the test's records need not replay to a mesh.
+        let quantities = member_quantities_of(&member(), &profile);
+        let plain = member_record(&member(), &profile, &quantities);
+        let mut holed = member();
+        holed.hole_records.push(member_hole(100.0, 3000.0));
+        let holed_record = member_record(&holed, &profile, &quantities);
+        // The gross signature knows nothing of a hole record (a plane cut, by contrast, is a
+        // `push_cuts` input of the gross signature already); the net signature binds the hole.
+        assert_eq!(holed_record.gross_signature, plain.gross_signature);
+        assert_ne!(holed_record.shape_signature, plain.shape_signature);
+        // The expected record is exactly net(gross, operation digests) in replay order.
+        let digests = member_operation_digests(&holed);
+        assert_eq!(digests.len(), 1);
+        assert_eq!(
+            holed_record.shape_signature,
+            member_net_signature(&holed_record.gross_signature, &digests)
+        );
+        // A different station is a different record content, a different net signature, even
+        // when the removed volumes agree.
+        let mut elsewhere = member();
+        elsewhere.hole_records.push(member_hole(100.0, 4000.0));
+        let elsewhere_record = member_record(&elsewhere, &profile, &quantities);
+        assert_ne!(
+            elsewhere_record.shape_signature,
+            holed_record.shape_signature
+        );
+        // The hole digest depends on the authored content only: identity and ordinal are not
+        // shape inputs.
+        let holed_digests = member_operation_digests(&holed);
+        let mut retagged = holed;
+        let record = retagged.hole_records.last_mut().unwrap();
+        record.operation_id =
+            beamcraft_model::id::OpId::parse("019a7bf0-0000-7000-8000-0000000000e3").unwrap();
+        record.ordinal = 7;
+        assert_eq!(
+            member_operation_digests(&retagged),
+            holed_digests,
+            "a hole record's identity and ordinal are not shape inputs"
+        );
+        // The kind is content: the same cutter under another kind is another authored operation
+        // (the frozen `steel:mhole:kinds` vocabulary).
+        let mut rekinded = member();
+        let mut hole_record = member_hole(100.0, 3000.0);
+        hole_record.kind = crate::model::command::MemberHoleKind::PolygonCut;
+        rekinded.hole_records.push(hole_record);
+        assert_ne!(
+            member_operation_digests(&rekinded),
+            holed_digests,
+            "the kind token is a content input of the digest"
+        );
+        // A plane cut adds its own digest; the order is the replay order (cuts, then holes).
+        retagged.cuts.push(CutRecord {
+            operation_id: beamcraft_model::id::OpId::parse("019a7bf0-0000-7000-8000-0000000000e2")
+                .unwrap(),
+            ordinal: 0,
+            point_mm: [1000.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+            keep: KeepSide::Negative,
+        });
+        let digests = member_operation_digests(&retagged);
+        assert_eq!(digests.len(), 2);
+        assert_ne!(digests[0], digests[1]);
+        assert_eq!(digests[1], holed_digests[0]);
+        let both_record = member_record(&retagged, &profile, &quantities);
+        assert_eq!(
+            both_record.shape_signature,
+            member_net_signature(&both_record.gross_signature, &digests)
+        );
+    }
+
+    fn member_quantities_of(member: &AuthoredMember, profile: &ProfileInfo) -> Quantities {
+        let body = crate::engine::member::evaluate_member(member, profile.clone()).unwrap();
+        crate::engine::member::member_quantities(&body, None).unwrap()
+    }
+
     #[test]
     fn a_hole_edit_changes_the_plate_net_and_not_the_gross_signature_or_value() {
         use crate::engine::command::evaluate_plate;
@@ -710,6 +868,11 @@ mod tests {
         assert!(is_superseded_algorithm(&old.algorithm));
         assert!(is_superseded_algorithm(
             "kernel-p03-straight-member-volume/1;tolerance-policy-3"
+        ));
+        // The first-generation cut label: its generation moved the operation digests into the
+        // member's net signature, so a record still carrying it is a superseded value too.
+        assert!(is_superseded_algorithm(
+            "kernel-a03-plane-cut-volume/1;tolerance-policy-3"
         ));
         assert!(!is_superseded_algorithm(&now.algorithm));
         assert!(!is_superseded_algorithm("anything else"));

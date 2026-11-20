@@ -73,7 +73,10 @@ pub const HOLED_VOLUME_ALGORITHM: &str = "kernel-g09-through-hole-volume/1;toler
 
 /// Version label of the volume algorithm of an element with a plane cut (A03): the midpoint of
 /// the G06 enclosure of the certified result of the kernel plane cut, taken after any holes.
-pub const CUT_VOLUME_ALGORITHM: &str = "kernel-a03-plane-cut-volume/1;tolerance-policy-3";
+/// The second generation binds the authored operation records into the member's net signature
+/// (the P-Mass rule), so an element record written under the first label is a superseded value.
+pub const CUT_VOLUME_ALGORITHM: &str =
+    "kernel-a03-plane-cut-volume/2;ops-signed;tolerance-policy-3";
 
 /// Algorithm label of a bent plate's volume record (A10): the sealed G13 loft of the derived
 /// cross-section, whose analytic value is the unfolded outline area times the thickness.
