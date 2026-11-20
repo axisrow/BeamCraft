@@ -160,13 +160,14 @@ fn polygon_and_round_holes_expose_surviving_faces_without_filling_the_hole() {
         thickness_mm: 10.0,
     })
     .unwrap();
+    let polygon = Cavity::polygon(vec![
+        Point2::new(80.0, 30.0),
+        Point2::new(80.0, 70.0),
+        Point2::new(120.0, 70.0),
+        Point2::new(120.0, 30.0),
+    ]);
     for cavity in [
-        Cavity::polygon(vec![
-            Point2::new(80.0, 30.0),
-            Point2::new(80.0, 70.0),
-            Point2::new(120.0, 70.0),
-            Point2::new(120.0, 30.0),
-        ]),
+        polygon.clone(),
         Cavity::circle(Point2::new(100.0, 50.0), 20.0, CurveSpec::DEFAULT).unwrap(),
     ] {
         let op = through_hole(
@@ -208,6 +209,69 @@ fn polygon_and_round_holes_expose_surviving_faces_without_filling_the_hole() {
             }
         );
     }
+    // The polygon hole's rim names follow the walls' own grammar (the cutter runs from
+    // z = -10 up: the entry ring on `plate:f.z0` at z = 0, the exit ring on `f.z1`), and
+    // the rim vertex snaps like any box vertex. The round hole's rim has one curved wall
+    // per opening, so its rim vertices have no names.
+    let op = through_hole(
+        &Body::from_plate(&plate).unwrap(),
+        &HoleCutter::new(polygon, -10.0, 20.0, 7),
+    )
+    .unwrap();
+    let s = snapshot(
+        &SolidMesh::from_operation(&op),
+        ElementKind::Plate,
+        ID,
+        [0.0; 3],
+    );
+    let corner = format!("fid1:{ID}:cut:v.h7.z0.0");
+    assert_eq!(
+        lookup_feature(&s, &corner).unwrap().world,
+        FeatureGeometry::Vertex {
+            position: [80.0, 30.0, 0.0]
+        }
+    );
+    assert_eq!(
+        lookup_feature(&s, &format!("fid1:{ID}:cut:v.h7.z1.0"))
+            .unwrap()
+            .world,
+        FeatureGeometry::Vertex {
+            position: [80.0, 30.0, 10.0]
+        }
+    );
+    let edge = lookup_feature(&s, &format!("fid1:{ID}:cut:e.h7.v0")).unwrap();
+    let FeatureGeometry::Edge { ends, .. } = edge.world else {
+        panic!("edge geometry expected");
+    };
+    assert_eq!(ends[0], [80.0, 30.0, 0.0]);
+    assert_eq!(ends[1], [80.0, 30.0, 10.0]);
+    assert_eq!(
+        lookup_feature(&s, &format!("fid1:{ID}:cut:e.h7.s0.z0"))
+            .unwrap()
+            .world,
+        FeatureGeometry::Edge {
+            ends: [[80.0, 30.0, 0.0], [80.0, 70.0, 0.0]],
+            vertex_ids: [
+                FeatureId::parse(&corner).unwrap(),
+                FeatureId::parse(&format!("fid1:{ID}:cut:v.h7.z0.1")).unwrap()
+            ],
+        }
+    );
+    let snapped = snap(
+        &s,
+        &SnapQuery {
+            point_mm: [80.0, 30.0, 0.0],
+            radius_mm: 0.01,
+            kinds: vec![SnapKind::Vertex],
+            max_hits: 16,
+        },
+    )
+    .unwrap();
+    assert_eq!(snapped.candidates.len(), 1);
+    assert_eq!(
+        snapped.candidates[0].feature_id,
+        Some(FeatureId::parse(&corner).unwrap())
+    );
 }
 
 #[test]
@@ -296,6 +360,13 @@ fn token_families_accept_only_canonical_bounded_roles() {
         // The G14.2 member cutter: the crossing `.w<k>` and the `.p<run>` suffix.
         "cut:f.h0.w0.s0",
         "cut:f.h9.w3.s31.p2",
+        // The prism-cut rim and corner names of the pick/snap amendment.
+        "cut:v.h0.w0.x0.71",
+        "cut:v.h7.z1.3",
+        "cut:e.h0.w0.s0.x0",
+        "cut:e.h7.s3.z0",
+        "cut:e.h0.w0.v71",
+        "cut:e.h7.v3",
     ] {
         let text = format!("fid1:{ID}:{local}");
         assert_eq!(FeatureId::parse(&text).unwrap().to_string(), text);
@@ -308,6 +379,19 @@ fn token_families_accept_only_canonical_bounded_roles() {
         format!("fid1:{ID}:cut:e.h7.s0"),
         format!("fid1:{ID}:cut:f.h1000"),
         format!("fid1:{ID}:extrusion:v.z0.c255.1023"),
+        // The rim and corner grammar refuses the incomplete or out-of-place forms.
+        format!("fid1:{ID}:cut:v.h0.w0.x0"),
+        format!("fid1:{ID}:cut:v.h0.x0"),
+        format!("fid1:{ID}:cut:v.h0.x0.01"),
+        format!("fid1:{ID}:cut:v.h0.w0.x2.0"),
+        format!("fid1:{ID}:cut:v.h0.z2.0"),
+        format!("fid1:{ID}:cut:v.h1000.x0.0"),
+        format!("fid1:{ID}:cut:v.h0.w0.x0.1024"),
+        format!("fid1:{ID}:cut:e.h0.v3.x0"),
+        format!("fid1:{ID}:cut:e.h0.w0.v3.x0"),
+        format!("fid1:{ID}:cut:e.h0.s0"),
+        format!("fid1:{ID}:cut:e.h0.7"),
+        format!("fid1:{ID}:cut:v.h0.p0.x0.y1"),
     ] {
         assert!(FeatureId::parse(&text).is_err(), "{text}");
     }

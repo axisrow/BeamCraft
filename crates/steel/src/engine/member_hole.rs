@@ -1418,6 +1418,224 @@ mod tests {
         ));
     }
 
+    /// The view snapshot of one evaluated member body at the identity placement.
+    fn member_snapshot(body: &MemberBody) -> beamcraft_engine::query::snapshot::ViewSnapshot {
+        beamcraft_engine::query::snapshot::ViewSnapshot::build(
+            beamcraft_engine::query::snapshot::ViewPin::new(
+                beamcraft_model::digest::Sha256::digest(b"member-cut-features").unwrap(),
+                1,
+            ),
+            vec![beamcraft_engine::scene::SceneElement::new(
+                id(9),
+                beamcraft_engine::element::ElementKind::Column,
+                beamcraft_geom::Translation3::new(0.0, 0.0, 0.0).unwrap(),
+                body.solid.scene_mesh(),
+            )],
+            &beamcraft_engine::limits::Limits::default(),
+        )
+        .unwrap()
+    }
+
+    /// The world position of a looked-up vertex feature.
+    fn vertex_of(
+        snapshot: &beamcraft_engine::query::snapshot::ViewSnapshot,
+        text: &str,
+    ) -> [f64; 3] {
+        let found = beamcraft_engine::query::feature::lookup_feature(snapshot, text).unwrap();
+        match found.world {
+            beamcraft_engine::query::feature::FeatureGeometry::Vertex { position } => position,
+            _ => panic!("vertex geometry expected"),
+        }
+    }
+
+    fn near(got: [f64; 3], want: [f64; 3]) {
+        for (g, w) in got.iter().zip(want) {
+            assert!((g - w).abs() < 1e-6, "{got:?} != {want:?}");
+        }
+    }
+
+    #[test]
+    fn a_holed_member_names_its_rim_vertices_and_edges_at_known_coordinates() {
+        // A d=20 through hole along X_r (element +Y) at the member's mid-length: one
+        // crossing, the entry ring on `member:f.x0` (element y = -100) and the exit ring on
+        // `member:f.x1` (+100). The cavity's hole frame puts x along the member axis
+        // (element X) and y along `direction x Z_m` (element -Z), and ring point 0 sits at
+        // angle 0, so every expected position below follows from the F06 frame rules and
+        // the generator's canonical 32-gon ring (r = 10: the 0.05 mm chord bound gives 32).
+        let authored = add_member_hole_after(
+            &member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &member(),
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let body = evaluate(&authored, 200.0, 300.0);
+        let snapshot = member_snapshot(&body);
+        use beamcraft_engine::query::feature::{FeatureId, list_features};
+        let names: Vec<String> = list_features(&snapshot, &id(9))
+            .unwrap()
+            .iter()
+            .map(|f| f.local_id())
+            .collect();
+        for local in [
+            "cut:v.h0.w0.x0.0",
+            "cut:v.h0.w0.x0.1",
+            "cut:v.h0.w0.x1.0",
+            "cut:e.h0.w0.s0.x0",
+            "cut:e.h0.w0.s0.x1",
+            "cut:e.h0.w0.v0",
+        ] {
+            assert!(
+                names.iter().any(|n| n == local),
+                "{local} missing: {names:?}"
+            );
+        }
+        // Ring point 0 at angle 0: the +x side of the hole frame, 10 mm from the axis.
+        let entry = vertex_of(&snapshot, &format!("fid1:{}:cut:v.h0.w0.x0.0", id(9)));
+        near(entry, [510.0, -100.0, 0.0]);
+        let exit = vertex_of(&snapshot, &format!("fid1:{}:cut:v.h0.w0.x1.0", id(9)));
+        near(exit, [510.0, 100.0, 0.0]);
+        // Ring point 1 walks clockwise: hole-frame (10cos, -10sin) is element +z.
+        let angle = core::f64::consts::TAU / 32.0;
+        let (c, s) = (angle.cos(), angle.sin());
+        near(
+            vertex_of(&snapshot, &format!("fid1:{}:cut:v.h0.w0.x0.1", id(9))),
+            [500.0 + 10.0 * c, -100.0, 10.0 * s],
+        );
+        // The corner edge runs along the hole axis between the two rings of point 0.
+        let corner = beamcraft_engine::query::feature::lookup_feature(
+            &snapshot,
+            &format!("fid1:{}:cut:e.h0.w0.v0", id(9)),
+        )
+        .unwrap();
+        let beamcraft_engine::query::feature::FeatureGeometry::Edge { ends, .. } = corner.world
+        else {
+            panic!("edge geometry expected");
+        };
+        // The two rings of point 0: entry and exit, in either end order.
+        let on_ring = |end: [f64; 3], y: f64| {
+            (end[0] - 510.0).abs() < 1e-6 && (end[1] - y).abs() < 1e-6 && end[2].abs() < 1e-6
+        };
+        assert!(
+            (on_ring(ends[0], -100.0) && on_ring(ends[1], 100.0))
+                || (on_ring(ends[0], 100.0) && on_ring(ends[1], -100.0)),
+            "{ends:?}"
+        );
+        // Snap to the rim vertex, to the nearest point of the corner edge and to its
+        // midpoint: the same vertex/edge/midpoint surfaces the box world uses.
+        use beamcraft_engine::query::pick::{SnapKind, SnapQuery, snap};
+        let snapped = snap(
+            &snapshot,
+            &SnapQuery {
+                point_mm: [510.0, -100.0, 0.0],
+                radius_mm: 0.01,
+                kinds: vec![SnapKind::Vertex],
+                max_hits: 16,
+            },
+        )
+        .unwrap();
+        assert_eq!(snapped.candidates.len(), 1);
+        assert_eq!(
+            snapped.candidates[0].feature_id,
+            Some(FeatureId::parse(&format!("fid1:{}:cut:v.h0.w0.x0.0", id(9))).unwrap())
+        );
+        // The nearest point and the midpoint of the corner edge: the query sits on the v0
+        // edge's side of the opening, clear of the neighbouring corners (points 1 and 31).
+        let snapped = snap(
+            &snapshot,
+            &SnapQuery {
+                point_mm: [510.2, 0.0, 0.0],
+                radius_mm: 1.0,
+                kinds: vec![SnapKind::Edge],
+                max_hits: 16,
+            },
+        )
+        .unwrap();
+        assert_eq!(snapped.candidates.len(), 1);
+        assert_eq!(
+            snapped.candidates[0]
+                .feature_id
+                .as_ref()
+                .map(FeatureId::local_id)
+                .as_deref(),
+            Some("cut:e.h0.w0.v0")
+        );
+        near(snapped.candidates[0].point_world_mm, [510.0, 0.0, 0.0]);
+        let snapped = snap(
+            &snapshot,
+            &SnapQuery {
+                point_mm: [510.2, 0.0, 0.0],
+                radius_mm: 1.0,
+                kinds: vec![SnapKind::Midpoint],
+                max_hits: 16,
+            },
+        )
+        .unwrap();
+        assert_eq!(snapped.candidates.len(), 1);
+        assert_eq!(
+            snapped.candidates[0]
+                .feature_id
+                .as_ref()
+                .map(FeatureId::local_id)
+                .as_deref(),
+            Some("cut:e.h0.w0.v0")
+        );
+        near(snapped.candidates[0].point_world_mm, [510.0, 0.0, 0.0]);
+
+        // A point pick near the entry ring names the rim vertex.
+        use beamcraft_engine::query::feature::FeatureKind;
+        use beamcraft_engine::query::pick::{PickQuery, PointPick, pick};
+        let mut query = PointPick::new([510.0, -101.0, 0.0], vec![FeatureKind::Vertex]);
+        query.radius_mm = 2.0;
+        query.max_hits = 16;
+        let picked = pick(&snapshot, &PickQuery::Point(query)).unwrap();
+        assert_eq!(picked.hits.len(), 1);
+        assert_eq!(
+            picked.hits[0]
+                .feature_id
+                .as_ref()
+                .map(FeatureId::local_id)
+                .as_deref(),
+            Some("cut:v.h0.w0.x0.0")
+        );
+    }
+
+    #[test]
+    fn a_plane_cut_member_names_no_cut_edges_and_a_cut_edge_id_refuses_explicitly() {
+        // The plane cut names its cap corners (the cap-corner amendment) but no cut edges:
+        // this slice names only the walls of prism cuts. A well-formed cut edge id over
+        // such a member resolves as explicitly not found, never as another feature.
+        let mut authored = member();
+        authored.cuts.push(crate::model::command::CutRecord {
+            operation_id: op(2),
+            ordinal: 0,
+            point_mm: [500.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+            keep: crate::model::command::KeepSide::Negative,
+        });
+        let body = evaluate(&authored, 200.0, 300.0);
+        let snapshot = member_snapshot(&body);
+        use beamcraft_engine::error::ViewCode;
+        use beamcraft_engine::query::feature::{
+            BodyKind, FeatureKind, list_features, lookup_feature,
+        };
+        let features = list_features(&snapshot, &id(9)).unwrap();
+        assert!(
+            features
+                .iter()
+                .any(|f| f.local_id().starts_with("cut:v.p0."))
+        );
+        assert!(
+            !features
+                .iter()
+                .any(|f| f.kind() == FeatureKind::Edge && f.body() == BodyKind::Cut)
+        );
+        let error =
+            lookup_feature(&snapshot, &format!("fid1:{}:cut:e.h0.w0.v0", id(9))).unwrap_err();
+        assert_eq!(error.code(), ViewCode::FeatureNotFound);
+    }
+
     #[test]
     fn two_records_cut_in_ordinal_order_and_the_replay_repeats_byte_for_byte() {
         let (width, height) = (200.0, 300.0);
