@@ -149,16 +149,28 @@ fn geometry(p: &Prim, translation: [f64; 3]) -> Result<Option<ReferenceGeometry>
 pub(crate) fn reference_surfaces(
     prims: &[Prim],
 ) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, Refusal> {
-    surfaces(prims, false)
+    surfaces(prims, false, None)
+}
+
+/// The same, filtered to one wrapper id before any geometry is extracted: an unmeasurable
+/// wrapper elsewhere in the store must not poison the measurement of the named one, whose
+/// surfaces extract and measure cleanly on their own.
+pub(crate) fn reference_surfaces_of(
+    prims: &[Prim],
+    id: &str,
+) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, Refusal> {
+    surfaces(prims, false, Some(id))
 }
 
 fn surfaces(
     prims: &[Prim],
     display: bool,
+    only: Option<&str>,
 ) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, Refusal> {
     let by_path: BTreeMap<_, _> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     read_references(prims)?
         .iter()
+        .filter(|view| only.is_none_or(|wanted| view.id == wanted))
         .map(|view| {
             let meshes = if display {
                 display_meshes(view, &by_path)
@@ -225,7 +237,7 @@ fn wrapper_meshes(
 /// Converts a complete, validated composed snapshot; it does not reopen or write a source file.
 pub(crate) fn scene_elements(prims: &[Prim]) -> Result<Vec<SceneElement>, Refusal> {
     let mut elements = Vec::new();
-    for (view, meshes) in surfaces(prims, true)? {
+    for (view, meshes) in surfaces(prims, true, None)? {
         let wrapper = wrapper_of(&view)?;
         if let Some(element) = reference_element(&wrapper.record, &meshes)? {
             elements.push(element);

@@ -1560,6 +1560,53 @@ def Xform "Site"
 }
 
 #[test]
+fn a_wrapper_measured_by_id_is_not_poisoned_by_an_unmeasurable_neighbour() {
+    // Review of the 1119 batch replay: measure_references extracted every wrapper's surfaces
+    // before the --id filter, so one unmeasurable wrapper anywhere in the store refused the
+    // extraction and turned even a cleanly measurable target into UNSUPPORTED_GEOMETRY — on
+    // measure-reference --id and on update-reference's comparison sides alike. The filter
+    // runs before the extraction now.
+    let f = Fixture::new();
+    let clean_id = "019a7bf0-0000-7000-8000-000000000141";
+    let bad_id = "019a7bf0-0000-7000-8000-000000000142";
+    let clean = f.source("site.usda", SITE);
+    f.attach(&clean, &["--new-id", clean_id]);
+    let unsupported = r#"#usda 1.0
+(
+    defaultPrim = "Site"
+    metersPerUnit = 1.0
+    upAxis = "Y"
+)
+def Xform "Site"
+{
+    def Sphere "Ball"
+    {
+        double radius = 3
+    }
+}
+"#;
+    let bad = f.source("sphere.usda", unsupported);
+    f.attach(&bad, &["--new-id", bad_id]);
+    // The clean wrapper measures on its own: the neighbour is not even extracted.
+    let report = f.ok("measure-reference", &["--id", clean_id]);
+    let measured = at(&report, &["measurements"]).array().unwrap();
+    assert_eq!(measured.len(), 1);
+    assert_eq!(text(&measured[0], "id"), clean_id);
+    assert!(matches!(
+        at(&measured[0], &["measurement"]),
+        Json::Object(_)
+    ));
+    // The unmeasurable wrapper named alone is refused for its own surface, and the
+    // whole-store measurement keeps refusing on it: the mark on the comparison sides is
+    // the named-wrapper path, not a store-wide veto.
+    assert_eq!(
+        f.rejected("measure-reference", &["--id", bad_id]),
+        "UNSUPPORTED_GEOMETRY"
+    );
+    assert_eq!(f.rejected("measure-reference", &[]), "UNSUPPORTED_GEOMETRY");
+}
+
+#[test]
 fn unknown_options_and_missing_arguments_are_invalid_arguments() {
     let f = Fixture::new();
     let source = f.source("site.usda", SITE);

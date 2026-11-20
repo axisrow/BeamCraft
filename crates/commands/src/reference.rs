@@ -994,11 +994,15 @@ pub fn measure_references(
 ) -> Result<MeasurementReport, Refusal> {
     let (revision, _reader, _opened, prims) = open_head(store)?;
     let mut measurements = Vec::new();
-    for (view, geometry) in crate::reference_view::reference_surfaces(&prims)? {
+    // A named wrapper's surfaces extract alone: extracting every wrapper before the filter
+    // let one unmeasurable wrapper anywhere in the store turn even a cleanly measurable
+    // target into an unsupported mark.
+    let surfaces = match id {
+        Some(wanted) => crate::reference_view::reference_surfaces_of(&prims, &wanted.to_string())?,
+        None => crate::reference_view::reference_surfaces(&prims)?,
+    };
+    for (view, geometry) in surfaces {
         let wrapper = wrapper_of(&view)?;
-        if id.is_some_and(|wanted| wanted != wrapper.record.id) {
-            continue;
-        }
         let measurement =
             measure_reference(&wrapper.record, &geometry, &mut |_| false).map_err(command_error)?;
         measurements.push(MeasuredReference {
