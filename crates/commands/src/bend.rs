@@ -25,7 +25,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    Base, RevisionSummary, control, host_uuid, integrity, load_base, open_base, summarize,
+    Base, RevisionSummary, control, has_head, host_uuid, integrity, load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::command::evaluate_plate;
@@ -101,7 +101,7 @@ pub fn bend_plate_record(
     }
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     if let Some(replayed) = replay(store, request, fingerprint)? {

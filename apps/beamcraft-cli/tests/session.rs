@@ -15,7 +15,7 @@
 //! alive, a moved base fails the batch, and a carried command replays by its own operation
 //! id from a later process.
 
-use crate::support::{at, text};
+use crate::support::{at, list, text};
 use beamcraft_json::{Json, Limits, decode};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -307,6 +307,54 @@ fn a_session_runs_commands_batches_and_refusals_like_the_design_says() {
     let status = session.child.wait().unwrap();
     assert!(status.success());
     assert_eq!(store.sequence(), 4);
+}
+
+#[test]
+fn an_interactive_batch_resolves_a_part_created_in_the_same_session() {
+    // #767's parity case: the identical sequence run interactively — one process carrying
+    // the same lines, the plate and its attachment riding one batch — succeeds, and the
+    // batched script must answer exactly like it. The attach resolves its part from the
+    // session's working state, never against the committed head.
+    let (_root, store) = fresh();
+    let root = store.arg();
+    let first = format!(
+        "create-assembly --store {root} --name Frame --new-id 019a7bf0-0000-7000-8000-000000500001"
+    );
+    let created = store.run(first.split_whitespace().collect::<Vec<_>>().as_slice());
+    assert_eq!(Session::outcome(&created), "assembly_created");
+
+    let mut session = Session::start(&store);
+    assert_eq!(Session::outcome(&session.ask("batch-open")), "batch_opened");
+    let carried = format!(
+        "create-plate --store {root} --new-id 019a7bf0-0000-7000-8000-000000500002 --width 200 --length 200 --thickness 10 --name Wing"
+    );
+    assert_eq!(Session::outcome(&session.ask(&carried)), "plate_created");
+    assert_eq!(
+        store.sequence(),
+        1,
+        "nothing between the brackets hits the disk"
+    );
+    let attach = format!(
+        "attach-to-assembly --store {root} --id 019a7bf0-0000-7000-8000-000000500002 --assembly-id 019a7bf0-0000-7000-8000-000000500001"
+    );
+    assert_eq!(
+        Session::outcome(&session.ask(&attach)),
+        "part_attached",
+        "{attach}"
+    );
+    let committed = session.ask("batch-commit");
+    assert_eq!(Session::outcome(&committed), "batch_committed");
+    assert_eq!(Session::scalar(&committed, "commands"), "2");
+    assert_eq!(
+        store.sequence(),
+        2,
+        "the two modelled commands landed as one"
+    );
+    // A separate one-shot process sees the attachment in the committed store.
+    let view = store.run(&["assemblies", "--store", &root]);
+    let assemblies = list(&view, "assemblies");
+    assert_eq!(assemblies.len(), 1);
+    assert_eq!(list(&assemblies[0], "parts").len(), 1);
 }
 
 #[test]

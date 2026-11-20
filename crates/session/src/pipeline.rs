@@ -257,6 +257,16 @@ pub fn base_with_layers(revision: &Revision, layers: Vec<Vec<u8>>) -> Result<Bas
     })
 }
 
+/// Whether a command that needs an existing model may proceed: the base it resolved stands on a
+/// revision — the verified head, or a draft batch pinned on one (`batch-open` refuses a
+/// revision-less store, so an open batch always has a revision behind it). [`load_base`] returns
+/// `None` for the head while a batch is open, because the draft is not a revision yet; a `None`
+/// head there never means "the store is empty", and the commands that resolve their targets from
+/// that base must check this predicate instead (`#767`).
+pub fn has_head(head: &Option<Revision>) -> bool {
+    head.is_some() || crate::draft::is_open()
+}
+
 /// Opens the head of the store (`None` for a store without a revision) and the base that the next
 /// revision builds on. A store without a revision takes the given identities and records the
 /// project (D1); a store with one keeps its own, unless the caller holds a [`ProjectClaim`]: the
