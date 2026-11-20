@@ -47,7 +47,14 @@ preserving holes and nonconvex contours; hits have the actual triangle normal an
 qualified FeatureId. Point snaps use named vertices. Results keep the existing ranking,
 radius and truncation rules. Shape-qualified results round-trip through bundles.
 
-Operation-created edges/vertices remain excluded as F06 section 5 requires. Approximation
+Operation-created features beyond the walls are named by amendment: the
+[cap corners](../contracts/f06-cut-cap-corners-amendment-v0.1.md) of a plane cut, and the
+[rims and corners of prism-cut walls](../contracts/f06-cut-edge-features-amendment-draft-v0.1.md)
+(`cut:v.h<n>[.w<k>].<axis>.<j>`, `cut:e.h<n>[.w<k>].s<j>.<axis>`,
+`cut:e.h<n>[.w<k>].v<j>`) on axis-aligned body faces, which `ListFeatures`, `LookupFeature`,
+`Pick` and `Snap` serve like any named feature. Rims on faceted or contour walls, cap edges
+and a round plate hole's rim stay unnamed; a well-formed id over an unnamed feature is
+`GEO_FEATURE_NOT_FOUND`, explicitly. Approximation
 samples on a grouped cavity wall are excluded unless they have an authored point mapping;
 the wall itself remains addressable. Axis snaps for non-box members remain unsupported:
 there is no authored-axis descriptor in this snapshot format. Unnamed bodies retain the

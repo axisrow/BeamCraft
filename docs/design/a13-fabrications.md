@@ -3,7 +3,8 @@
 Date: 2026-10-28. Status: **experimental first slice; A13 acceptance is NOT claimed.**
 Branch `feat/a13-cuts-chamfers-split`. The member polygon cut of epic #556 slice 1 joined
 2026-11-20 on `feat/a13-member-prism-cuts`; the member part cuts and the oblique part cuts
-of epic #556 slice 2 landed on top (see the epic-556 section below).
+of epic #556 slice 2 landed on top, slice 5 (pick/snap on cut edges) closed the epic's
+interactive half the same day (see the epic-556 sections below).
 
 The seven fabrication operations of the A13 card, on the plate and straight-member forms
 already on `master`, as A-2 operation records: line, polygon and part cuts, fitting an end to
@@ -115,6 +116,24 @@ Limits (the slice's honest boundaries):
 * A plate part cut is a through cut too: the mapped prism must pass both faces, and a
   subsequent hole on the obliquely cut plate refuses the same way (the body stops being a
   Z-prism for the cap machinery).
+
+## Epic #556 slice 5: pick/snap on cut edges (the last slice)
+
+The cut-generated edges and vertices of member bodies are addressable: the seams of polygon
+cuts, the walls of oblique part cuts and the rims of member holes resolve through the same
+`LookupFeature`, `ListFeatures`, `Pick` and `Snap` surfaces the box world uses, with ids that
+follow the cutters' own `cut:f.h` vocabulary. The
+[cut-edge features amendment draft](../contracts/f06-cut-edge-features-amendment-draft-v0.1.md)
+holds the grammar: rim vertices `cut:v.h<n>[.w<k>].<axis>.<j>`, rim edges
+`cut:e.h<n>[.w<k>].s<j>.<axis>` and corner edges `cut:e.h<n>[.w<k>].v<j>` on axis-aligned
+body faces (the flat-wall served set: solid rectangle members and plates). Snap resolves a
+cut edge's nearest point and midpoint exactly like a plate cut edge. The Limits:
+
+* Rims and corners on faceted or contour walls (hollow sections, CHS), cap edges, and the
+  round plate hole's one-wall rim stay unnamed — the walls themselves keep their names, and
+  a well-formed id over an unnamed feature is `GEO_FEATURE_NOT_FOUND`, explicitly.
+* Record kinds that add no prism walls (plane cuts, fits, chamfers) name no cut edges; their
+  cap corners keep the cap-corner amendment's names.
 
 ## Decisions (owner review needed)
 

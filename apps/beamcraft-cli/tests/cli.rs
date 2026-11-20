@@ -42,6 +42,7 @@ mod coordinator_rebase;
 mod copy;
 mod curved_members;
 mod cut_removals;
+mod cut_snaps;
 mod cut_updates;
 mod cuts;
 mod definitions;

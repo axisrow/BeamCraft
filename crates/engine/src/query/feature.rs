@@ -746,6 +746,60 @@ mod tests {
     }
 
     #[test]
+    fn cut_rim_and_edge_tokens_parse_in_their_canonical_form_only() {
+        let s = snapshot();
+        let e = &s.elements()[0];
+        for good in [
+            "v.h0.x0.0",
+            "v.h7.z1.31",
+            "v.h0.w2.x1.1023",
+            "e.h0.s0.x0",
+            "e.h7.v3",
+            "e.h0.w1.s12.z0",
+            "e.h0.w2.v1023",
+        ] {
+            let text = format!("fid1:{}:cut:{good}", e.id);
+            let parsed = FeatureId::parse(&text).unwrap();
+            assert_eq!(
+                parsed.kind(),
+                if good.starts_with('e') {
+                    FeatureKind::Edge
+                } else {
+                    FeatureKind::Vertex
+                },
+                "{good}"
+            );
+            assert_eq!(parsed.to_string(), text);
+        }
+        for bad in [
+            "v.h0",
+            "v.h0.x0",
+            "v.h0.x0.01",
+            "v.h0.x2.0",
+            "v.h0.z2.0",
+            "v.h1000.x0.0",
+            "v.h0.w0.x0.1024",
+            "v.h0.p0.x0.y1",
+            "v.h0.w9999.x0.0",
+            "e.h0.s0",
+            "e.h0.7",
+            "e.h0.v3.x0",
+            "e.h0.w0.v3.x0",
+            "e.h0.w0.s0",
+            "e.h0.s0.p1.x0",
+            "e.h0.w9999.v3",
+            "f.h0.x0.0",
+        ] {
+            let text = format!("fid1:{}:cut:{bad}", e.id);
+            assert_eq!(
+                FeatureId::parse(&text).unwrap_err().code(),
+                ViewCode::FeatureIdInvalid,
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn feature_ids_round_trip_and_refuse_indices_and_foreign_forms() {
         let s = snapshot();
         let e = &s.elements()[0];
