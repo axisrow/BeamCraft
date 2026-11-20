@@ -272,6 +272,95 @@ fn a_batched_attach_resolves_a_part_created_earlier_in_the_same_script() {
 }
 
 #[test]
+fn a_batched_update_resolves_the_plate_created_earlier_in_the_same_script() {
+    // Review round of #767: `update-element` is a `Route::Plate` command and batchable like
+    // the attach, so the same seam flip fixes it. The plate exists only in the draft when
+    // the later command of the same script patches it; the committed store must end up with
+    // the patched thickness, published as one revision.
+    let f = fixture("script-batch-update");
+    let store_arg = f.root.join("store").to_str().unwrap().to_owned();
+    let id = "019a7bf0-0000-7000-8000-000000400003";
+    let (code, summary) = raw(
+        &store_arg,
+        &f.root.join("batch-update.json"),
+        &[
+            // The first revision belongs outside a batch (`batch-open` refuses an empty store).
+            &[
+                "define-material",
+                "--store",
+                &store_arg,
+                "--grade",
+                "RS",
+                "--density",
+                "7850",
+            ],
+            &["batch-open"],
+            &[
+                "create-plate",
+                "--store",
+                &store_arg,
+                "--width",
+                "200",
+                "--length",
+                "200",
+                "--thickness",
+                "10",
+                "--new-id",
+                id,
+                "--name",
+                "Wing",
+            ],
+            &[
+                "update-element",
+                "--store",
+                &store_arg,
+                "--id",
+                id,
+                "--thickness",
+                "12",
+            ],
+            &["batch-commit"],
+        ],
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        at(&summary, &["failed"]).unsigned().unwrap(),
+        0,
+        "{summary:?}"
+    );
+    let replies = list(&summary, "replies");
+    let outcomes: Vec<String> = replies
+        .iter()
+        .map(|r| text(at(r, &["reply"]), "outcome"))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            "definition_created",
+            "batch_opened",
+            "plate_created",
+            "element_updated",
+            "batch_committed"
+        ]
+    );
+    assert_eq!(
+        at(&replies[4], &["reply", "commands"]).unsigned().unwrap(),
+        2
+    );
+    // A separate one-shot process sees the patched plate in the committed store.
+    let (code, view) = StoreFixture::run_in(&store_arg, "inspect-elements", &[]);
+    assert_eq!(code, 0);
+    let plates = list(&view, "plates");
+    assert_eq!(plates.len(), 1);
+    assert_eq!(
+        at(&plates[0], &["dimensions_mm", "thickness"])
+            .float()
+            .unwrap(),
+        12.0
+    );
+}
+
+#[test]
 fn a_script_ending_with_an_open_batch_abandons_it() {
     let f = fixture("script-abandoned");
     let store = f.root.join("store");
