@@ -182,6 +182,7 @@ impl ShapeHook for PlateShape {
             let mut ids = Vec::new();
             let mut ordinals = Vec::new();
             let mut kinds = Vec::new();
+            let mut axes: Vec<[f64; 3]> = Vec::new();
             let mut owners = Vec::new();
             for record in hole_records {
                 flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
@@ -189,6 +190,7 @@ impl ShapeHook for PlateShape {
                 ids.push(record.operation_id.to_string());
                 ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
                 kinds.push(record.kind.as_str().into());
+                axes.push(record.axis_direction_mm);
                 owners.push(match record.owner {
                     Some(group) => group.to_string(),
                     None => String::new(),
@@ -222,6 +224,13 @@ impl ShapeHook for PlateShape {
                 "steel:hole:kinds",
                 "token[]",
                 sdf::Value::TokenVec(kinds),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:hole:axisDirections",
+                "double3[]",
+                points(&axes),
             )?;
             attr(
                 data,
@@ -273,6 +282,8 @@ impl ShapeHook for PlateShape {
             add("steel:hole:vertexCounts", "int[]", 0);
             add("steel:hole:operationIds", "string[]", 0);
             add("steel:hole:ordinals", "int[]", 0);
+            add("steel:hole:kinds", "token[]", 0);
+            add("steel:hole:axisDirections", "double3[]", 0);
             add("steel:hole:generatedBy", "string[]", 0);
             add(cut_history::HOLE_NEXT, "int", 0);
             add(cut_history::HOLE_RETIRED, "string[]", 0);

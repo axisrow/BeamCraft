@@ -40,12 +40,15 @@ use crate::profile::{Cavity, MAX_CONTOUR_POINTS};
 use crate::trimesh::MAX_COORDINATE_MM;
 
 /// A straight cutter: a clockwise cavity polygon in the body's XY plane swept over
-/// `[z_from_mm, z_to_mm]` along Z.
+/// `[z_from_mm, z_to_mm]` along its axis. `new` keeps the certified vertical form (along
+/// +Z); [`HoleCutter::oblique`] sweeps along a general normalized axis with a positive Z
+/// part, the prism being `cavity + t*axis`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HoleCutter {
     cavity: Cavity,
     z_from_mm: f64,
     z_to_mm: f64,
+    axis: [f64; 3],
     ordinal: u16,
 }
 
@@ -59,6 +62,29 @@ impl HoleCutter {
             cavity,
             z_from_mm,
             z_to_mm,
+            axis: [0.0, 0.0, 1.0],
+            ordinal,
+        }
+    }
+
+    /// Creates an oblique cutter without validating it; [`oblique_through_hole`] validates
+    /// everything and normalizes the axis.
+    ///
+    /// The prism is `cavity + t*axis` over `t` in `[z_from_mm, z_to_mm]`: the cavity lives
+    /// in the body's XY plane and every cap opening is the cavity translated by the sweep
+    /// offset, so both caps admit it with the same exact machinery as the vertical form.
+    pub const fn oblique(
+        cavity: Cavity,
+        axis: [f64; 3],
+        z_from_mm: f64,
+        z_to_mm: f64,
+        ordinal: u16,
+    ) -> Self {
+        Self {
+            cavity,
+            z_from_mm,
+            z_to_mm,
+            axis,
             ordinal,
         }
     }
@@ -254,6 +280,267 @@ pub fn through_hole_with(
         faces.push(face);
     }
 
+    let removed = prism_volume(&cutter.cavity, prism.z0, prism.z1)?;
+    let negated = Enclosure {
+        lo: -removed.hi,
+        hi: -removed.lo,
+    };
+    let analytic = body.volume_mm3().add(negated).ok_or_else(|| {
+        OpFailure::numeric(OpField::Volume, OpDefect::NumericRange, Stage::Quantities)
+    })?;
+    let shell = body.analysis().shells().first().ok_or_else(internal)?;
+    let stats = OpStats {
+        triangles_in: body.mesh().triangles().len(),
+        triangles_out: 0,
+        new_vertices: 2 * m,
+        loops: 2 + prism.top.1.len(),
+        cap_points: prism.top.0.ids.len()
+            + prism.top.1.iter().map(|h| h.ids.len()).sum::<usize>()
+            + m,
+        exact_predicates: budget.used(),
+    };
+    seal(
+        Candidate {
+            vertices,
+            triangles,
+            faces,
+            face_ids,
+            normals,
+        },
+        body.tolerance(),
+        limits,
+        Expect {
+            kind: OpKind::ThroughHole,
+            euler: Some(shell.euler_characteristic - 2),
+            genus: shell.genus.and_then(|g| g.checked_add(1)),
+            analytic_volume: Some(analytic),
+            plane_deviation_mm: None,
+            stats,
+        },
+        &mut cancelled,
+    )
+}
+
+/// Subtracts `cutter` from `body` with the default bounds and no cancellation; the cutter
+/// sweeps along its own axis (see [`HoleCutter::oblique`]).
+pub fn oblique_through_hole(body: &Body, cutter: &HoleCutter) -> Result<OpResult, OpFailure> {
+    oblique_through_hole_with(body, cutter, &OpLimits::DEFAULT, |_| false)
+}
+
+/// The oblique form of [`through_hole_with`]: the same Z-prism body, the same cap
+/// admission and certification, but the cutter sweeps along its own normalized axis. Both
+/// cap openings are the cavity translated by the sweep offset (`t = z/dz` at cap height
+/// `z`), the prism walls connect the two translated rings side for side, and the removed
+/// volume is the exact `area * thickness / dz` — a longer path through the slab for a
+/// tilted prism, enclosed outward.
+pub fn oblique_through_hole_with(
+    body: &Body,
+    cutter: &HoleCutter,
+    limits: &OpLimits,
+    mut cancelled: impl FnMut(Stage) -> bool,
+) -> Result<OpResult, OpFailure> {
+    poll(&mut cancelled, Stage::Validation)?;
+    let refuse = |code, defect, stage| OpFailure::new(code, OpField::Cutter, defect, stage);
+    let internal = || OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build);
+    let points = cutter.cavity.points();
+    let m = points.len();
+    if m > MAX_CONTOUR_POINTS {
+        return Err(refuse(OpCode::AboveLimit, OpDefect::None, Stage::Caps));
+    }
+    if cutter.ordinal > MAX_ORDINAL {
+        return Err(refuse(OpCode::AboveLimit, OpDefect::Ordinal, Stage::Caps));
+    }
+    if !(cutter.z_from_mm.is_finite() && cutter.z_to_mm.is_finite())
+        || cutter.axis.iter().any(|v| !v.is_finite())
+        || points.iter().any(|p| !(p.x.is_finite() && p.y.is_finite()))
+    {
+        return Err(refuse(OpCode::NonFinite, OpDefect::None, Stage::Finiteness));
+    }
+    if [cutter.z_from_mm, cutter.z_to_mm]
+        .iter()
+        .chain(cutter.axis.iter())
+        .chain(points.iter().flat_map(|p| [&p.x, &p.y]))
+        .any(|v| v.abs() > MAX_COORDINATE_MM)
+    {
+        return Err(refuse(OpCode::AboveLimit, OpDefect::None, Stage::Caps));
+    }
+    if m < 3 {
+        return Err(refuse(OpCode::ContourInvalid, OpDefect::None, Stage::Caps));
+    }
+    if cutter.z_from_mm >= cutter.z_to_mm {
+        return Err(refuse(
+            OpCode::NotPositive,
+            OpDefect::CutterRange,
+            Stage::Ranges,
+        ));
+    }
+    // The sweep axis, normalized; a prism whose axis lies in the cap plane never crosses
+    // either cap, and the cap-opening translations degenerate with it.
+    let norm = (cutter.axis[0] * cutter.axis[0]
+        + cutter.axis[1] * cutter.axis[1]
+        + cutter.axis[2] * cutter.axis[2])
+        .sqrt();
+    if !(norm.is_finite() && norm > 0.0) {
+        return Err(refuse(OpCode::ContourInvalid, OpDefect::None, Stage::Caps));
+    }
+    let (dx, dy, dz) = (
+        cutter.axis[0] / norm,
+        cutter.axis[1] / norm,
+        cutter.axis[2] / norm,
+    );
+    if !(dz.is_finite() && dz > 1e-6) {
+        return Err(refuse(
+            OpCode::OpUnsupported,
+            OpDefect::CutterNotThrough,
+            Stage::Ranges,
+        ));
+    }
+    let stem = format!("cut:f.h{}", cutter.ordinal);
+    if body
+        .face_table()
+        .iter()
+        .any(|id| id == &stem || id.starts_with(&format!("{stem}.")))
+    {
+        return Err(OpFailure::new(
+            OpCode::BlobInvalid,
+            OpField::FaceTable,
+            OpDefect::Ordinal,
+            Stage::Validation,
+        ));
+    }
+    poll(&mut cancelled, Stage::Build)?;
+
+    let mut budget = ExactBudget::new(limits.max_exact_predicates);
+    let prism = analyze_prism(body, limits, &mut budget)?;
+
+    let eps = body.tolerance().eps_geom_mm();
+    // The range must reach past both caps by at least the floor, in cap heights: the prism
+    // enters below `z0` and leaves above `z1`.
+    let (below, above) = (
+        prism.z0 - cutter.z_from_mm * dz,
+        cutter.z_to_mm * dz - prism.z1,
+    );
+    let range_refusal = if below < 0.0 || above < 0.0 {
+        Some(OpDefect::CutterNotThrough)
+    } else if below == 0.0 || above == 0.0 {
+        Some(OpDefect::CutterTangent)
+    } else if below < eps || above < eps {
+        Some(OpDefect::CutterMargin)
+    } else {
+        None
+    };
+    if let Some(defect) = range_refusal {
+        return Err(refuse(OpCode::OpUnsupported, defect, Stage::Ranges));
+    }
+
+    // New vertices: the cavity translated to each cap opening. The z component is the
+    // cap's own exact height (a `(z/dz)*dz` round trip can sit an ulp off the plane).
+    let base = u32::try_from(body.mesh().vertices().len()).map_err(|_| internal())?;
+    let m32 = u32::try_from(m).map_err(|_| internal())?;
+    let shifted = |p: &crate::profile::Point2, t: f64, z: f64| [p.x + t * dx, p.y + t * dy, z];
+    let mut vertices: Vec<[f64; 3]> = body.mesh().vertices().to_vec();
+    let bottom_xyz: Vec<[f64; 3]> = points
+        .iter()
+        .map(|p| shifted(p, prism.z0 / dz, prism.z0))
+        .collect();
+    let top_xyz: Vec<[f64; 3]> = points
+        .iter()
+        .map(|p| shifted(p, prism.z1 / dz, prism.z1))
+        .collect();
+    vertices.extend(bottom_xyz.iter().copied());
+    vertices.extend(top_xyz.iter().copied());
+    let bottom_ring = CapLoop {
+        ids: (0..m32).map(|k| base + k).collect(),
+        xyz: bottom_xyz,
+    };
+    let top_ring = CapLoop {
+        ids: (0..m32).map(|k| base + m32 + k).collect(),
+        xyz: top_xyz,
+    };
+    let flat = |p: [f64; 3]| [p[0], p[1]];
+
+    let mut top_holes = prism.top.1.clone();
+    top_holes.push(top_ring);
+    let mut bottom_holes = prism.bottom.1.clone();
+    bottom_holes.push(bottom_ring);
+    let top_cap = triangulate_cap(
+        &prism.top.0,
+        &top_holes,
+        flat,
+        limits,
+        body.tolerance(),
+        OpField::Cap,
+        false,
+    )
+    .map_err(|e| cutter_field(e, prism.top.1.len()))?;
+    let bottom_cap = triangulate_cap(
+        &prism.bottom.0,
+        &bottom_holes,
+        flat,
+        limits,
+        body.tolerance(),
+        OpField::Cap,
+        false,
+    )
+    .map_err(|e| cutter_field(e, prism.bottom.1.len()))?;
+
+    let mut triangles = prism.walls;
+    let mut faces = prism.wall_faces;
+    for [a, b, c] in top_cap {
+        triangles.push([a, b, c]);
+        faces.push(prism.top_face);
+    }
+    for [a, b, c] in bottom_cap {
+        triangles.push([a, c, b]);
+        faces.push(prism.bottom_face);
+    }
+
+    let curved = cutter.cavity.approximation().is_some();
+    let mut face_ids = body.face_table().to_vec();
+    let mut normals = body.face_normals().to_vec();
+    let first_face = face_ids.len();
+    if curved {
+        face_ids.push(stem.clone());
+        normals.push(None);
+    }
+    for k in 0..m {
+        let j = (k + 1) % m;
+        let (p, q) = (
+            points.get(k).copied().ok_or_else(internal)?,
+            points.get(j).copied().ok_or_else(internal)?,
+        );
+        let face = if curved {
+            first_face
+        } else {
+            face_ids.push(format!("{stem}.s{k}"));
+            let (ex, ey) = (q.x - p.x, q.y - p.y);
+            // The side wall is spanned by the cavity edge and the sweep axis; its outward
+            // normal reduces to the certified `(ey, -ex, 0)` of the vertical form.
+            let n = [ey * dz, -ex * dz, ex * dy - ey * dx];
+            let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if !(length > 0.0 && length.is_finite()) {
+                return Err(internal());
+            }
+            normals.push(Some(n.map(|v| {
+                let v = v / length;
+                if v == 0.0 { 0.0 } else { v }
+            })));
+            face_ids.len() - 1
+        };
+        let face = u16::try_from(face).map_err(|_| internal())?;
+        let k32 = u32::try_from(k).map_err(|_| internal())?;
+        let j32 = u32::try_from(j).map_err(|_| internal())?;
+        let (bk, bj, tk, tj) = (base + k32, base + j32, base + m32 + k32, base + m32 + j32);
+        triangles.push([bk, bj, tj]);
+        triangles.push([bk, tj, tk]);
+        faces.push(face);
+        faces.push(face);
+    }
+
+    // The removed column is the authored cavity's area times the slab thickness: the
+    // prism's horizontal cross-section is the cavity translated (the same area) at every
+    // height. A caller that projects a tilted tool onto the z = 0 plane authors the
+    // projection's own area, so the tilt's stretch lands in the area, not the volume.
     let removed = prism_volume(&cutter.cavity, prism.z0, prism.z1)?;
     let negated = Enclosure {
         lo: -removed.hi,

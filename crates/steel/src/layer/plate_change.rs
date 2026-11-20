@@ -377,12 +377,15 @@ impl ChangeHook for SetHoleRecords {
         // The six record attributes, always together: the authoritative polygons of
         // every record, replayed from the base shape in ordinal order, with the id,
         // the engine-assigned ordinal, the kind (hole or polygon cut) and the
-        // generating bolt group of each (empty for a hand-placed record, A14.4).
+        // generating bolt group of each (empty for a hand-placed record, A14.4), and the
+        // prism axis of each (the +Z for the vertical kinds, the leaning axis of a part
+        // cut, A13).
         let mut flat = Vec::new();
         let mut counts = Vec::new();
         let mut ids = Vec::new();
         let mut ordinals = Vec::new();
         let mut kinds = Vec::new();
+        let mut axes: Vec<[f64; 3]> = Vec::new();
         let mut owners = Vec::new();
         for record in records {
             flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
@@ -390,6 +393,7 @@ impl ChangeHook for SetHoleRecords {
             ids.push(record.operation_id.to_string());
             ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
             kinds.push(record.kind.as_str().into());
+            axes.push(record.axis_direction_mm);
             owners.push(match record.owner {
                 Some(group) => group.to_string(),
                 None => String::new(),
@@ -433,6 +437,13 @@ impl ChangeHook for SetHoleRecords {
         attr(
             authored,
             &p,
+            "steel:hole:axisDirections",
+            "double3[]",
+            points(&axes),
+        )?;
+        attr(
+            authored,
+            &p,
             "steel:hole:generatedBy",
             "string[]",
             sdf::Value::StringVec(owners),
@@ -446,6 +457,7 @@ impl ChangeHook for SetHoleRecords {
             ("steel:hole:vertexCounts", "int[]"),
             ("steel:hole:operationIds", "string[]"),
             ("steel:hole:ordinals", "int[]"),
+            ("steel:hole:axisDirections", "double3[]"),
             ("steel:hole:generatedBy", "string[]"),
             (cut_history::HOLE_NEXT, "int"),
             (cut_history::HOLE_RETIRED, "string[]"),
@@ -479,26 +491,27 @@ impl ChangeHook for SetMemberHoles {
             cut_history::Family::MemberHole,
         )?;
         // The eleven record attributes, always together: the authoritative polygons of
-        // every record and their member-frame axis points, directions, extents, ids,
-        // ordinals, generating groups and kinds (A04.2, the F06 member-hole amendment; the
-        // A13 member polygon cut joins the record list). A through extent stores zero range
-        // values; a hand-placed record stores no owner.
+        // every record and their member-frame kinds, axis points, directions, extents, ids,
+        // ordinals and generating groups (A04.2, the F06 member-hole amendment; the A13
+        // member polygon and part cuts). A through extent stores zero range values; a
+        // hand-placed record stores no owner.
         let mut flat = Vec::new();
         let mut counts = Vec::new();
         let mut ids = Vec::new();
         let mut ordinals = Vec::new();
+        let mut kinds = Vec::new();
         let mut axis_points = Vec::new();
         let mut directions = Vec::new();
         let mut extents = Vec::new();
         let mut from = Vec::new();
         let mut to = Vec::new();
         let mut owners = Vec::new();
-        let mut kinds = Vec::new();
         for record in records {
             flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
             counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
             ids.push(record.operation_id.to_string());
             ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+            kinds.push(record.kind.as_str().into());
             axis_points.push(record.axis_point_mm);
             directions.push(record.axis_direction);
             extents.push(record.extent.as_str().into());
@@ -512,7 +525,6 @@ impl ChangeHook for SetMemberHoles {
                 Some(group) => group.to_string(),
                 None => String::new(),
             });
-            kinds.push(record.kind.as_str().into());
         }
         for (name, ty, v) in [
             ("steel:mhole:pointsMm", "double3[]", points(&flat)),
@@ -531,6 +543,7 @@ impl ChangeHook for SetMemberHoles {
                 "int[]",
                 sdf::Value::IntVec(ordinals),
             ),
+            ("steel:mhole:kinds", "token[]", sdf::Value::TokenVec(kinds)),
             (
                 "steel:mhole:axisPointsMm",
                 "double3[]",
@@ -561,7 +574,6 @@ impl ChangeHook for SetMemberHoles {
                 "string[]",
                 sdf::Value::StringVec(owners),
             ),
-            ("steel:mhole:kinds", "token[]", sdf::Value::TokenVec(kinds)),
         ] {
             attr(authored, &p, name, ty, v)?;
         }

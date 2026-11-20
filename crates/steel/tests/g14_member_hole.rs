@@ -966,3 +966,281 @@ fn a_perpendicular_hole_after_an_oblique_one_is_refused() {
     assert_eq!(err.code, OpCode::OpUnsupported);
     assert_eq!(err.defect, OpDefect::BodyNotPrism);
 }
+
+// The axial/directed prism cutters of epic #556 slice 2: a hole axis with an axial (X)
+// component, through-wall cuts only. The certified perpendicular frame reproduces its
+// results bit for bit, the flat walls and the faceted chains generalize, and a purely
+// axial direction stays refused.
+
+fn drill_oblique(
+    body: &Body,
+    cavity: &Cavity,
+    axis: [f64; 3],
+    from: f64,
+    to: f64,
+    ordinal: u16,
+) -> OpResult {
+    member_through_hole(
+        body,
+        &MemberHoleCutter::oblique(cavity.clone(), axis, from, to, ordinal),
+    )
+    .unwrap()
+}
+
+fn refused_oblique(
+    body: &Body,
+    cavity: &Cavity,
+    axis: [f64; 3],
+    from: f64,
+    to: f64,
+) -> beamcraft_kernel::ops::OpFailure {
+    member_through_hole(
+        body,
+        &MemberHoleCutter::oblique(cavity.clone(), axis, from, to, 9),
+    )
+    .unwrap_err()
+}
+
+#[test]
+fn a_zero_axial_component_reproduces_the_directed_result_byte_for_byte() {
+    let body = tube_body();
+    let cavity = circle(L / 2.0, 0.0, 4.0);
+    let directed = drill_directed(&body, cavity.clone(), (3.0, 4.0), -76.0, 76.0, 1);
+    let oblique = drill_oblique(&body, &cavity, [0.0, 3.0, 4.0], -76.0, 76.0, 1);
+    assert_sealed(&directed);
+    assert_eq!(
+        directed.body().mesh().to_blob(),
+        oblique.body().mesh().to_blob()
+    );
+    assert_eq!(directed.body().face_table(), oblique.body().face_table());
+}
+
+#[test]
+fn an_axial_component_cuts_the_exact_oblique_volume_through_flat_walls() {
+    // A solid square section, cut by a prism leaning along the member axis at 45 degrees
+    // in the x-z plane: the axis (1, 0, 1)/sqrt(2) crosses the two z walls and runs
+    // parallel to the y walls (the footprint's `b` is the raw `y` there). Each crossed
+    // wall takes `A * t / |n . d|` = `A * 10 * sqrt(2)`, and the sweep stays inside the
+    // member's x range over the whole range.
+    let half = B / 2.0;
+    let outer = vec![
+        Point2::new(-half, -half),
+        Point2::new(half, -half),
+        Point2::new(half, half),
+        Point2::new(-half, half),
+    ];
+    let body = x_extruded(&outer, &[]);
+    let root2 = 2.0f64.sqrt();
+    let cavity = circle(160.0, 0.0, R);
+    // The crossings sit at `t = a0 -+ half*sqrt(2)` in this frame (`z = -Lt*a + dz*t`).
+    let a0 = 160.0;
+    let res = drill_oblique(
+        &body,
+        &cavity,
+        [1.0, 0.0, 1.0],
+        a0 - half * root2 - 2.0 * R - 5.0,
+        a0 + half * root2 + 2.0 * R + 5.0,
+        3,
+    );
+    assert_sealed(&res);
+    let mut area2 = 0.0f64;
+    for (p, q) in cavity
+        .points()
+        .iter()
+        .zip(cavity.points().iter().cycle().skip(1))
+    {
+        area2 += p.x * q.y - q.x * p.y;
+    }
+    let area = area2.abs() / 2.0;
+    // The prism enters at `z = -half` and leaves at `z = +half`: the wall pair's distance
+    // along the axis is `B * sqrt(2)`.
+    let expected = area * B * root2;
+    let removed = volume(&body) - volume(res.body());
+    assert!(
+        (removed - expected).abs() <= 1e-6 * expected,
+        "removed {removed} vs expected {expected}"
+    );
+    // The wall ids carry the ordinal and the crossing grammar: one wall pair, one band.
+    let table = res.body().face_table();
+    assert!(table.iter().any(|id| id == "cut:f.h3.w0.s0"));
+    // The solid section is genus 0; the through hole adds one handle.
+    assert_eq!(genus(&res), 1);
+}
+
+#[test]
+fn an_axial_component_cuts_a_faceted_chain_with_the_exact_volume() {
+    // The solid 48-band tube, cut along (1, 1, 0)/sqrt(2): the prism stays on the z = 0
+    // mid-plane (the footprint's `b` is `-z` there), enters through the -y apex band and
+    // leaves through the +y apex band, each a single strip with `n = (0, +-1, 0)`, so the
+    // removed column is `A * 2R' * sqrt(2)` with `R'` the section's apothem. The +y
+    // apex's crossing zone straddles the chain walk's first strip (the angle-0 band),
+    // which is what
+    // `a_wrap_around_crossing_zone_merges_one_side` below guards on purpose.
+    let body = tube_body();
+    let cavity = circle(100.0 * 2.0f64.sqrt(), 0.0, R);
+    let root2 = 2.0f64.sqrt();
+    let apothem = (B / 2.0) * (PI / f64::from(N)).cos();
+    let apex = apothem * root2;
+    let a0 = 100.0 * 2.0f64.sqrt();
+    let res = drill_oblique(
+        &body,
+        &cavity,
+        [1.0, 1.0, 0.0],
+        a0 - apex - 2.0 * R - 5.0,
+        a0 + apex + 2.0 * R + 5.0,
+        4,
+    );
+    assert_sealed(&res);
+    // The removed column is `A x` the section's chord along the axis at each footprint
+    // line; the chords dip at the facet corners, so the expected value comes from a fine
+    // quadrature over the footprint of the exact piecewise-linear chord function (the
+    // op's own seal still certifies the volume to dust).
+    let expected = {
+        let z = |b: f64| -b;
+        let chord = |z: f64| {
+            // The 48-gon's `+y` boundary at height `z`, by segment interpolation.
+            let vertex = |k: f64| {
+                let a = 2.0 * PI * k / f64::from(N);
+                (B / 2.0 * a.cos(), B / 2.0 * a.sin())
+            };
+            let (mut y_lo, mut z_lo) = vertex(0.0);
+            for k in 1..=i64::from(N) {
+                let (y_hi, z_hi) = vertex(k as f64);
+                let (lo, hi) = if z_lo <= z_hi {
+                    (z_lo, z_hi)
+                } else {
+                    (z_hi, z_lo)
+                };
+                if z >= lo && z <= hi && z_lo != z_hi {
+                    let t = (z - z_lo) / (z_hi - z_lo);
+                    let y = if z_hi >= z_lo {
+                        y_lo + t * (y_hi - y_lo)
+                    } else {
+                        y_hi + (1.0 - t) * (y_lo - y_hi)
+                    };
+                    return y.abs();
+                }
+                y_lo = y_hi;
+                z_lo = z_hi;
+            }
+            y_lo.abs()
+        };
+        let (steps, half) = (400usize, R);
+        let da = 2.0 * half / steps as f64;
+        let poly: Vec<(f64, f64)> = cavity.points().iter().map(|p| (p.x, p.y)).collect();
+        let inside = |x: f64, y: f64| {
+            // Winding by crossing number; the polygon is convex and centred at (a0, 0).
+            let mut inside_count = 0;
+            for (p, q) in poly.iter().zip(poly.iter().cycle().skip(1)) {
+                let between = (p.1 > y) != (q.1 > y);
+                if between {
+                    let x_at = p.0 + (y - p.1) * (q.0 - p.0) / (q.1 - p.1);
+                    if x_at > x {
+                        inside_count += 1;
+                    }
+                }
+            }
+            inside_count % 2 == 1
+        };
+        let mut sum = 0.0f64;
+        for i in 0..steps {
+            let b = -half + (i as f64 + 0.5) * da;
+            for j in 0..steps {
+                let a = a0 - half + (j as f64 + 0.5) * da;
+                if !inside(a, b) {
+                    continue;
+                }
+                let w = 2.0 * chord(z(b));
+                sum += w * da * da;
+            }
+        }
+        sum
+    };
+    // The chord is the section's `y` extent at the footprint's height; along the axis
+    // `(1, 1, 0)/sqrt(2)` the column's `t` extent is the chord over `|dy| = 1/sqrt(2)`.
+    let expected = root2 * expected;
+    let removed = volume(&body) - volume(res.body());
+    assert!(
+        (removed - expected).abs() <= 1e-3 * expected,
+        "removed {removed} vs expected {expected}"
+    );
+}
+
+#[test]
+fn a_wrap_around_crossing_zone_merges_one_side() {
+    // The registry walk starts at the chain's first strip (the angle-0 band of this tube),
+    // and this slot's crossing zone straddles exactly that strip: the +y apex's bands are
+    // `47, 0` with the footprint's slivers reaching into `46` and `1`, so the zone wraps
+    // the walk's own start. Without the cyclic first-and-last side merge the split sides
+    // each fail the union-aware whole-footprint coverage and the cut is refused; the merge
+    // keeps it one side and the cut certifies.
+    let body = tube_body();
+    let cavity = circle(100.0 * 2.0f64.sqrt(), 0.0, R);
+    let root2 = 2.0f64.sqrt();
+    let apothem = (B / 2.0) * (PI / f64::from(N)).cos();
+    let apex = apothem * root2;
+    let a0 = 100.0 * 2.0f64.sqrt();
+    let res = drill_oblique(
+        &body,
+        &cavity,
+        [1.0, 1.0, 0.0],
+        a0 - apex - 2.0 * R - 5.0,
+        a0 + apex + 2.0 * R + 5.0,
+        44,
+    );
+    assert_sealed(&res);
+    // The sides tile the footprint once each: two crossings, one handle, and the removed
+    // column stays inside the certified enclosure the seal checked.
+    assert_eq!(genus(&res), 1);
+    let removed = volume(&body) - volume(res.body());
+    let analytic = res.analytic_volume_mm3().unwrap();
+    let before = volume(&body);
+    assert!(analytic.lo <= before - removed && before - removed <= analytic.hi);
+}
+
+#[test]
+fn a_purely_axial_direction_is_refused() {
+    let body = hollow_body();
+    let err = refused_oblique(&body, &circle(20.0, 0.0, R), [1.0, 0.0, 0.0], -5.0, 5.0);
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::CutterNotThrough);
+}
+
+#[test]
+fn an_oblique_blind_range_and_a_sloped_wall_stay_refused() {
+    // A range ending inside the material is blind, exactly as in the perpendicular frame.
+    let half = B / 2.0;
+    let outer = vec![
+        Point2::new(-half, -half),
+        Point2::new(half, -half),
+        Point2::new(half, half),
+        Point2::new(-half, half),
+    ];
+    let body = x_extruded(&outer, &[]);
+    let root2 = 2.0f64.sqrt();
+    let err = refused_oblique(
+        &body,
+        &circle(160.0, 0.0, R),
+        [1.0, 0.0, 1.0],
+        160.0 - half * root2 - 5.0,
+        160.0,
+    );
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::CutterNotThrough);
+    // The sloped single-plane walls of the rotated square stay refused for the oblique
+    // axis too: the prism's crossing set degrades (the sweep shifts the section line), so
+    // the typed refusal is the blind one or the footprint-placement one, never a cut.
+    let body = rotated_square_body(30.0);
+    let err = refused_oblique(
+        &body,
+        &circle(L / 2.0, 0.0, R),
+        [1.0, 3.0, 4.0],
+        -80.0,
+        80.0,
+    );
+    assert!(
+        err.code == OpCode::OpUnsupported || err.code == OpCode::ContourInvalid,
+        "unexpected refusal {:?}",
+        err
+    );
+}

@@ -245,6 +245,7 @@ mod tests {
                 ordinal: 0,
                 polygon_mm: vec![[10., 10.], [20., 10.], [20., 20.], [10., 20.]],
                 kind: crate::model::command::HoleKind::Hole,
+                axis_direction_mm: [0.0, 0.0, 1.0],
                 owner: None,
             }],
             cuts: vec![],
