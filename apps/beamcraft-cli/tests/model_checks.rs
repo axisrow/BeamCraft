@@ -3,11 +3,16 @@
 
 //! Q03 slice 2: `check-model` against the real binary — the geometric clash
 //! rule and the three completeness rules, the coverage buckets, the
-//! near-threshold band, the exit codes and the revision binding.
+//! near-threshold band, the exit codes and the revision binding. The command
+//! chains ride one `run-script` process per round (#738 P7): every command,
+//! expected exit, refusal code and the in-process tamper and strict-reader
+//! reads stay; only the per-command process boundary moves behind the
+//! script's own boundary. The per-process environment opt-out, the real
+//! `session` rounds, `put-blob` and `create-project` keep their own spawns.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use crate::support::{self, at, list, text};
+use crate::support::{self, Scripted, at, list, text};
 
 use beamcraft_commands::plate::inspect;
 use beamcraft_host::{
@@ -30,130 +35,20 @@ impl Fixture {
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
         self.shared.run(command, extra)
     }
+    #[allow(dead_code)]
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
         assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
         body
     }
-    fn material(&self) -> String {
-        text(
-            at(
-                &self.ok("define-material", &["--density", "7850"]),
-                &["definition"],
-            ),
-            "digest",
-        )
+    fn store(&self) -> String {
+        self.shared.root.join("store").to_str().unwrap().to_owned()
     }
-    /// A 1000x500 plate with the given thickness and world placement.
-    fn plate(&self, material: &str, thickness: &str, translation: &str) -> String {
-        let created = self.ok(
-            "create-plate",
-            &[
-                "--width",
-                "1000",
-                "--length",
-                "500",
-                "--thickness",
-                thickness,
-                "--material-digest",
-                material,
-                "--translation",
-                translation,
-            ],
-        );
-        text(at(&created, &["plate"]), "element_id")
-    }
-    fn check(&self, extra: &[&str]) -> (i32, Json) {
-        self.run("check-model", extra)
-    }
-    /// Declares one recorded input from its payload options; returns the element id.
-    fn record(&self, name: &str, extra: &[&str]) -> String {
-        static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let id = format!("019a7bf0-0000-7000-8000-{n:012x}");
-        let mut args: Vec<&str> = vec!["--name", name, "--new-id", &id];
-        args.extend(extra);
-        let created = self.ok("record-create", &args);
-        text(&created, "element_id")
-    }
-    /// Declares one or more weld or contact connections into a joint intent
-    /// record: the connections ride one `--connection` value, comma-separated,
-    /// the form the command accepts (the option parser refuses a repeated flag).
-    fn intent(&self, scope: &[&str], connections: &[&str]) -> String {
-        let scope_text = scope.join(",");
-        let connection_text = connections.join(",");
-        let mut extra: Vec<&str> = vec!["--kind", "joint_intent", "--scope", &scope_text];
-        extra.extend(["--connection", &connection_text]);
-        self.record("joint intent", &extra)
-    }
-    /// Records the permitted local gap of one declared weld connection.
-    fn gap(&self, a: &str, b: &str, min: &str, max: &str, tolerance: &str) -> String {
-        self.record(
-            "gap requirement",
-            &[
-                "--kind",
-                "gap_requirement",
-                "--gap-a",
-                a,
-                "--gap-b",
-                b,
-                "--gap-min",
-                min,
-                "--gap-max",
-                max,
-                "--gap-tolerance",
-                tolerance,
-            ],
-        )
-    }
-    /// Creates one A06 weld without a path between the two parts.
-    fn weld(&self, main: &str, secondary: &str) -> String {
-        let created = self.ok(
-            "create-weld",
-            &[
-                "--name",
-                "weld",
-                "--main",
-                main,
-                "--secondary",
-                secondary,
-                "--size",
-                "6",
-                "--location",
-                "workshop",
-                "--side",
-                "arrow",
-            ],
-        );
-        text(&created, "element_id")
-    }
-    /// Creates one A06 weld with an authored world path between the two
-    /// parts: the placed weld the local-attachment validation can locate.
-    fn path_weld(&self, main: &str, secondary: &str, path: &str) -> String {
-        self.sized_path_weld(main, secondary, "6", path)
-    }
-    /// The same, with the recorded weld leg chosen by the test.
-    fn sized_path_weld(&self, main: &str, secondary: &str, size: &str, path: &str) -> String {
-        let created = self.ok(
-            "create-weld",
-            &[
-                "--name",
-                "weld",
-                "--main",
-                main,
-                "--secondary",
-                secondary,
-                "--size",
-                size,
-                "--location",
-                "workshop",
-                "--side",
-                "arrow",
-                "--path",
-                path,
-            ],
-        );
-        text(&created, "element_id")
+    /// One `run-script` invocation over the fixture store: the commands the suite
+    /// used to spawn one process each, amortized into a single process (#738 P7;
+    /// each command's own work is unchanged). Replies come back in the lines' order.
+    fn script(&self, lines: &[Scripted]) -> Vec<Json> {
+        support::script_lines(&self.shared.root, &self.store(), lines)
     }
     /// Commits a head-based revision with changed layer text and no content
     /// verification, the way a layer edited outside BeamCraft would arrive.
@@ -215,19 +110,469 @@ fn element_layer(id: &str) -> String {
     format!("derived/{}.usda", id.replace('-', ""))
 }
 
+fn reason_of(reply: &Json, rule: &str) -> String {
+    list(finding_of(reply, rule), "missing_inputs")
+        .first()
+        .unwrap()
+        .string()
+        .unwrap()
+        .to_owned()
+}
+
+fn store_revision(f: &Fixture) -> String {
+    let store = RevisionStore::new(BlobStore::new(f.shared.root.join("store")).unwrap());
+    store.open().unwrap().info().revision().to_string()
+}
+
+/// The pinned ids of the sample joint's three parts: the requirement, weld
+/// and gap lines are built before the script runs, so the parts they name
+/// carry fixed identities within their own fixture store, the way the
+/// environment rounds pin their plates.
+const JOINT_BASE: &str = "019a7bf0-0000-7000-8000-000000ba5e01";
+const JOINT_COLUMN: &str = "019a7bf0-0000-7000-8000-000000ba5e02";
+const JOINT_RIB: &str = "019a7bf0-0000-7000-8000-000000ba5e03";
+
+/// A static identity for a test-pinned part, distinct from every generated one.
+fn pinned(a: u64) -> String {
+    format!("019a7bf0-0000-7000-8000-{a:012x}")
+}
+
+/// The `define-material` line every fixture model starts with.
+fn material_line(store: &str) -> Scripted {
+    Scripted::ok(&["define-material", "--store", store, "--density", "7850"])
+}
+
+/// The material digest of a reply that carried `material_line`.
+fn material_of(replies: &[Json]) -> String {
+    text(at(&replies[0], &["definition"]), "digest")
+}
+
+/// The `define-profile` line with the family's raw options.
+fn profile_line(store: &str, extra: &[&str]) -> Scripted {
+    let mut args = vec!["define-profile", "--store", store];
+    args.extend_from_slice(extra);
+    Scripted::ok(&args)
+}
+
+/// The profile digest of a reply that carried `profile_line`.
+fn digest_of(reply: &Json) -> String {
+    text(at(reply, &["definition"]), "digest")
+}
+
+/// The 1000x500 rectangle plate line at `translation`.
+fn plate_line(store: &str, material: &str, thickness: &str, translation: &str) -> Scripted {
+    Scripted::ok(&[
+        "create-plate",
+        "--store",
+        store,
+        "--width",
+        "1000",
+        "--length",
+        "500",
+        "--thickness",
+        thickness,
+        "--material-digest",
+        material,
+        "--translation",
+        translation,
+    ])
+}
+
+/// The same rectangle pinned to `id`, for parts later lines name.
+fn pinned_plate(
+    store: &str,
+    id: &str,
+    material: &str,
+    thickness: &str,
+    translation: &str,
+) -> Scripted {
+    Scripted::ok(&[
+        "create-plate",
+        "--store",
+        store,
+        "--name",
+        "P",
+        "--new-id",
+        id,
+        "--width",
+        "1000",
+        "--length",
+        "500",
+        "--thickness",
+        thickness,
+        "--material-digest",
+        material,
+        "--translation",
+        translation,
+    ])
+}
+
+/// A `create-plate` line with the raw options the case needs.
+fn plate_with(store: &str, extra: &[&str]) -> Scripted {
+    let mut args = vec!["create-plate", "--store", store];
+    args.extend_from_slice(extra);
+    Scripted::ok(&args)
+}
+
+/// A standing rib pinned to `id`, for the requirement and weld lines that
+/// name it: `dims` is `[width, length, thickness]`.
+fn pinned_standing(
+    store: &str,
+    id: &str,
+    steel: &str,
+    dims: &[&str],
+    translation: &str,
+    corners: &[&str],
+) -> Scripted {
+    let joined = corners.join(";");
+    let mut args = vec![
+        "create-plate",
+        "--store",
+        store,
+        "--name",
+        "P",
+        "--new-id",
+        id,
+        "--width",
+        dims[0],
+        "--length",
+        dims[1],
+        "--thickness",
+        dims[2],
+        "--material-digest",
+        steel,
+        "--orientation-xyzw",
+        "0.7071067811865476,0,0,0.7071067811865476",
+        "--translation",
+        translation,
+    ];
+    if !corners.is_empty() {
+        args.push("--corners");
+        args.push(&joined);
+    }
+    Scripted::ok(&args)
+}
+
+/// A standing rib from an authored local contour (the corner cut rides the
+/// contour points, no corner treatment), pinned to `id`.
+fn pinned_contour_rib(
+    store: &str,
+    id: &str,
+    steel: &str,
+    contour: &str,
+    translation: &str,
+) -> Scripted {
+    Scripted::ok(&[
+        "create-plate",
+        "--store",
+        store,
+        "--name",
+        "P",
+        "--new-id",
+        id,
+        "--contour",
+        contour,
+        "--thickness",
+        "10",
+        "--material-digest",
+        steel,
+        "--orientation-xyzw",
+        "0.7071067811865476,0,0,0.7071067811865476",
+        "--translation",
+        translation,
+    ])
+}
+
+/// The sample joint's three lines: the base plate on the floor, the column
+/// standing on it with its face at x = 150, and the rib perpendicular to
+/// that face with its welded edge on it and its bottom on the plate.
+/// Exact placements: the check's contact facts decide the quarter-turn
+/// rounding's last-place dip and the grazing cap diagonals determinately
+/// (#721), so the joint needs no clearance offsets.
+fn joint_lines(store: &str, steel: &str, rib_corners: &[&str]) -> Vec<Scripted> {
+    vec![
+        pinned_plate(store, JOINT_BASE, steel, "10", "0,0,0"),
+        pinned_standing(
+            store,
+            JOINT_COLUMN,
+            steel,
+            &["100", "200", "40"],
+            "50,40,10",
+            &[],
+        ),
+        pinned_standing(
+            store,
+            JOINT_RIB,
+            steel,
+            &["80", "100", "10"],
+            "150,10,10",
+            rib_corners,
+        ),
+    ]
+}
+
+/// A member of `profile` between `start` and `end`.
+fn member_line(
+    store: &str,
+    profile: &str,
+    start: &str,
+    end: &str,
+    kind: &str,
+    steel: &str,
+) -> Scripted {
+    Scripted::ok(&[
+        "create-member",
+        "--store",
+        store,
+        "--profile-digest",
+        profile,
+        "--start",
+        start,
+        "--end",
+        end,
+        "--kind",
+        kind,
+        "--material-digest",
+        steel,
+    ])
+}
+
+/// One recorded input: the declared id is generated at line-build time, the
+/// way the per-command path generated it before spawning. `ok` selects the
+/// process exit the reply must carry.
+fn record_line(store: &str, ok: bool, name: &str, extra: &[&str]) -> Scripted {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let id = format!("019a7bf0-0000-7000-8000-{n:012x}");
+    let mut args: Vec<&str> = vec![
+        "record-create",
+        "--store",
+        store,
+        "--name",
+        name,
+        "--new-id",
+        &id,
+    ];
+    args.extend(extra);
+    if ok {
+        Scripted::ok(&args)
+    } else {
+        Scripted::refused(&args)
+    }
+}
+
+/// Declares one or more weld or contact connections into a joint intent
+/// record: the connections ride one `--connection` value, comma-separated,
+/// the form the command accepts (the option parser refuses a repeated flag).
+fn intent_line(store: &str, scope: &[&str], connections: &[&str]) -> Scripted {
+    let scope_text = scope.join(",");
+    let connection_text = connections.join(",");
+    let mut extra: Vec<&str> = vec!["--kind", "joint_intent", "--scope", &scope_text];
+    extra.extend(["--connection", &connection_text]);
+    record_line(store, true, "joint intent", &extra)
+}
+
+/// Records the permitted local gap of one declared weld connection.
+fn gap_line(store: &str, a: &str, b: &str, min: &str, max: &str, tolerance: &str) -> Scripted {
+    record_line(
+        store,
+        true,
+        "gap requirement",
+        &[
+            "--kind",
+            "gap_requirement",
+            "--gap-a",
+            a,
+            "--gap-b",
+            b,
+            "--gap-min",
+            min,
+            "--gap-max",
+            max,
+            "--gap-tolerance",
+            tolerance,
+        ],
+    )
+}
+
+/// Records the corner-cut requirement of the sample's rib corner: the
+/// owner's 10 mm cut with a 1 mm tolerance unless overridden.
+fn corner_line(store: &str, rib: &str, base: &str, column: &str, extra: &[&str]) -> Scripted {
+    let neighbours = format!("{base},{column}");
+    let mut extra_args: Vec<&str> = vec![
+        "--kind",
+        "corner_cut",
+        "--target",
+        rib,
+        "--neighbours",
+        &neighbours,
+        "--required-mm",
+        "10",
+        "--tolerance-mm",
+        "1",
+    ];
+    extra_args.extend(extra);
+    record_line(store, true, "corner cut", &extra_args)
+}
+
+/// Creates one A06 weld without a path between the two parts.
+fn weld_line(store: &str, main: &str, secondary: &str) -> Scripted {
+    Scripted::ok(&[
+        "create-weld",
+        "--store",
+        store,
+        "--name",
+        "weld",
+        "--main",
+        main,
+        "--secondary",
+        secondary,
+        "--size",
+        "6",
+        "--location",
+        "workshop",
+        "--side",
+        "arrow",
+    ])
+}
+
+/// Creates one A06 weld with an authored world path between the two parts:
+/// the placed weld the local-attachment validation can locate. `size` is
+/// the recorded weld leg chosen by the test.
+fn path_weld_line(store: &str, main: &str, secondary: &str, size: &str, path: &str) -> Scripted {
+    Scripted::ok(&[
+        "create-weld",
+        "--store",
+        store,
+        "--name",
+        "weld",
+        "--main",
+        main,
+        "--secondary",
+        secondary,
+        "--size",
+        size,
+        "--location",
+        "workshop",
+        "--side",
+        "arrow",
+        "--path",
+        path,
+    ])
+}
+
+/// The `check-model` line; `red` pins the process exit the report must carry.
+fn check_line(store: &str, red: bool, extra: &[&str]) -> Scripted {
+    let mut args = vec!["check-model", "--store", store];
+    args.extend_from_slice(extra);
+    if red {
+        Scripted::refused(&args)
+    } else {
+        Scripted::ok(&args)
+    }
+}
+
+/// The `record-list` line.
+fn record_list_line(store: &str) -> Scripted {
+    Scripted::ok(&["record-list", "--store", store])
+}
+
+/// A `create-assembly` line pinned to `id`.
+fn assembly_line(store: &str, id: &str, name: &str) -> Scripted {
+    Scripted::ok(&[
+        "create-assembly",
+        "--store",
+        store,
+        "--name",
+        name,
+        "--new-id",
+        id,
+    ])
+}
+
+/// An `attach-to-assembly` line.
+fn attach_line(store: &str, id: &str, assembly: &str) -> Scripted {
+    Scripted::ok(&[
+        "attach-to-assembly",
+        "--store",
+        store,
+        "--id",
+        id,
+        "--assembly-id",
+        assembly,
+    ])
+}
+
+/// A `create-lofted-plate` line.
+fn lofted_line(store: &str, steel: &str) -> Scripted {
+    Scripted::ok(&[
+        "create-lofted-plate",
+        "--store",
+        store,
+        "--start",
+        "100,100,-50;300,100,-50;300,300,-50;100,300,-50",
+        "--end",
+        "100,100,80;300,100,80;300,300,80;100,300,80",
+        "--material-digest",
+        steel,
+    ])
+}
+
+/// Cuts the rib's lower corner triangle off by plane, in the rib's element
+/// frame: `leg` is the setback along both contour edges from the corner.
+fn cut_plane_line(store: &str, rib: &str, leg: &str, operation: &str) -> Scripted {
+    let point = format!("{leg},0,0");
+    Scripted::ok(&[
+        "cut-by-plane",
+        "--store",
+        store,
+        "--id",
+        rib,
+        "--operation-id",
+        operation,
+        "--point",
+        &point,
+        "--normal",
+        "0.7071067811865476,0.7071067811865476,0",
+        "--keep",
+        "positive",
+    ])
+}
+
+/// Cuts the rib's lower corner off as an A13 chamfer-part fabrication.
+fn chamfer_line(store: &str, rib: &str, first: &str, second: &str, operation: &str) -> Scripted {
+    Scripted::ok(&[
+        "chamfer-part",
+        "--store",
+        store,
+        "--id",
+        rib,
+        "--operation-id",
+        operation,
+        "--vertex-index",
+        "0",
+        "--first-distance",
+        first,
+        "--second-distance",
+        second,
+    ])
+}
+
 #[test]
 fn a_deep_overlap_is_red_with_a_part_clash_finding_and_exit_two() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "100,0,5");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "outcome"), "model_checked");
-    assert_eq!(text(&reply, "status"), "red");
-    assert_eq!(text(at(&reply, &["scope"]), "mode"), "model");
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
-    let finding = finding_of(&reply, "PART_CLASH");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", "100,0,5"),
+        check_line(&store, true, &[]),
+    ])[2];
+    assert_eq!(text(reply, "outcome"), "model_checked");
+    assert_eq!(text(reply, "status"), "red");
+    assert_eq!(text(at(reply, &["scope"]), "mode"), "model");
+    assert_eq!(fail_count(reply, "PART_CLASH"), 1);
+    let finding = finding_of(reply, "PART_CLASH");
     assert_eq!(text(finding, "status"), "fail");
     assert_eq!(list(finding, "elements").len(), 2);
     let measured = at(finding, &["measured_mm"]).float().unwrap();
@@ -243,15 +588,15 @@ fn a_deep_overlap_is_red_with_a_part_clash_finding_and_exit_two() {
     let delta = at(finding, &["effective_tolerance_mm"]).float().unwrap();
     assert!((delta - 0.25).abs() <= 1e-9, "{delta}");
     // Both parts were checked, nothing unknown, no fix offered in this slice.
-    assert_eq!(at(&reply, &["coverage", "checked"]).unsigned().unwrap(), 2);
-    assert_eq!(at(&reply, &["coverage", "unknown"]).unsigned().unwrap(), 0);
+    assert_eq!(at(reply, &["coverage", "checked"]).unsigned().unwrap(), 2);
+    assert_eq!(at(reply, &["coverage", "unknown"]).unsigned().unwrap(), 0);
     assert!(matches!(finding.get("fix"), Ok(Json::Null)));
-    assert!(!text(at(&reply, &["coverage"]), "limitations").is_empty());
+    assert!(!text(at(reply, &["coverage"]), "limitations").is_empty());
     // The reply names the checked revision: the committed head as the strict
     // reader sees it.
     let store = RevisionStore::new(BlobStore::new(f.shared.root.join("store")).unwrap());
     let head = store.open().unwrap().info().revision().to_string();
-    assert_eq!(text(&reply, "revision_id"), head);
+    assert_eq!(text(reply, "revision_id"), head);
     let inspection = inspect(&store).unwrap();
     assert_eq!(inspection.revision.revision_id, head);
 }
@@ -259,37 +604,41 @@ fn a_deep_overlap_is_red_with_a_part_clash_finding_and_exit_two() {
 #[test]
 fn an_exact_stack_is_green_face_contact_and_exits_zero() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "0,0,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", "0,0,10"),
+        check_line(&store, false, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
+    assert_eq!(fail_count(reply, "PART_CLASH"), 0);
 }
 
 #[test]
 fn without_joint_intent_the_connectivity_rules_are_not_applicable() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "0,0,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", "0,0,10"),
+        check_line(&store, false, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "green");
     // The connectivity rules are in the counts and stay silent...
     for rule in [
         "PART_UNCONNECTED",
         "WELD_WITHOUT_CONTACT",
         "CONTACT_WITHOUT_CONNECTION",
     ] {
-        assert_eq!(fail_count(&reply, rule), 0, "{rule}");
-        assert_eq!(unknown_count(&reply, rule), 0, "{rule}");
+        assert_eq!(fail_count(reply, rule), 0, "{rule}");
+        assert_eq!(unknown_count(reply, rule), 0, "{rule}");
     }
     // ...and the coverage paragraph names the established absence: no
     // recorded joint intent, so the rules are not applicable (contract 5).
-    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    let limitations = text(at(reply, &["coverage"]), "limitations");
     assert!(
         limitations.contains("no joint intent is recorded"),
         "{limitations}"
@@ -300,47 +649,23 @@ fn without_joint_intent_the_connectivity_rules_are_not_applicable() {
 #[test]
 fn separated_plates_are_green_and_full_containment_is_red() {
     let f = Fixture::new();
-    let steel = f.material();
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
     // Separated: clear, no clash.
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "0,0,500");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", "0,0,500"),
+        check_line(&store, false, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "green");
     // Containment: a thick base holds a smaller plate entirely inside.
-    f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "1000",
-            "--length",
-            "500",
-            "--thickness",
-            "100",
-            "--material-digest",
-            &steel,
-        ],
-    );
-    let inserted = f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "400",
-            "--length",
-            "300",
-            "--thickness",
-            "10",
-            "--material-digest",
-            &steel,
-            "--translation",
-            "100,100,3",
-        ],
-    );
-    let _ = text(at(&inserted, &["plate"]), "element_id");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let contained = list(&reply, "findings")
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "100", "0,0,0"),
+        plate_line(&store, &steel, "10", "100,100,3"),
+        check_line(&store, true, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "red");
+    let contained = list(reply, "findings")
         .iter()
         .find(|finding| text(finding, "message").contains("contained"))
         .unwrap_or_else(|| panic!("no contained finding in {reply:?}"));
@@ -350,14 +675,16 @@ fn separated_plates_are_green_and_full_containment_is_red() {
 #[test]
 fn a_band_edge_overlap_is_unknown_yellow_and_exits_zero() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "100,0,9.5");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
-    assert_eq!(unknown_count(&reply, "PART_CLASH"), 1);
-    let finding = finding_of(&reply, "PART_CLASH");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", "100,0,9.5"),
+        check_line(&store, false, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "unknown");
+    assert_eq!(unknown_count(reply, "PART_CLASH"), 1);
+    let finding = finding_of(reply, "PART_CLASH");
     assert_eq!(text(finding, "status"), "unknown");
     assert_eq!(list(finding, "missing_inputs").len(), 1);
     // Yellow still means not checked, and the process says so with exit 0.
@@ -388,30 +715,18 @@ fn a_column_through_its_base_plate_is_red_with_the_measured_thickness() {
         (&i_shape[..], "500,250,-50", "500,250,1000", 10.0),
     ] {
         let f = Fixture::new();
-        let steel = f.material();
-        f.plate(&steel, "20", "0,0,0");
-        let defined = f.ok("define-profile", profile);
-        let digest = text(at(&defined, &["definition"]), "digest");
-        f.ok(
-            "create-member",
-            &[
-                "--profile-digest",
-                &digest,
-                "--start",
-                start,
-                "--end",
-                end,
-                "--kind",
-                "column",
-                "--material-digest",
-                &steel,
-            ],
-        );
-        let (code, reply) = f.check(&[]);
-        assert_eq!(code, 2, "{start}: {reply:?}");
-        assert_eq!(text(&reply, "status"), "red");
-        assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
-        let finding = finding_of(&reply, "PART_CLASH");
+        let store = f.store();
+        let setup = f.script(&[material_line(&store), profile_line(&store, profile)]);
+        let steel = material_of(&setup);
+        let digest = digest_of(&setup[1]);
+        let reply = &f.script(&[
+            plate_line(&store, &steel, "20", "0,0,0"),
+            member_line(&store, &digest, start, end, "column", &steel),
+            check_line(&store, true, &[]),
+        ])[2];
+        assert_eq!(text(reply, "status"), "red", "{start}");
+        assert_eq!(fail_count(reply, "PART_CLASH"), 1);
+        let finding = finding_of(reply, "PART_CLASH");
         assert_eq!(text(finding, "status"), "fail");
         let measured = at(finding, &["measured_mm"]).float().unwrap();
         assert!((measured - expected).abs() <= 1e-6, "{start}: {measured}");
@@ -427,39 +742,29 @@ fn exact_face_contact_stays_green_wherever_the_footprint_lies() {
     // never a crossing. The result must not depend on the placement.
     for placement in ["400,200,20", "400,20,20"] {
         let f = Fixture::new();
-        let steel = f.material();
-        f.ok(
-            "create-plate",
-            &[
-                "--width",
-                "1000",
-                "--length",
-                "500",
-                "--thickness",
-                "20",
-                "--material-digest",
-                &steel,
-            ],
-        );
-        f.ok(
-            "create-plate",
-            &[
-                "--width",
-                "200",
-                "--length",
-                "100",
-                "--thickness",
-                "10",
-                "--material-digest",
-                &steel,
-                "--translation",
-                placement,
-            ],
-        );
-        let (code, reply) = f.check(&[]);
-        assert_eq!(code, 0, "{placement}: {reply:?}");
-        assert_eq!(text(&reply, "status"), "green", "{placement}: {reply:?}");
-        assert_eq!(unknown_count(&reply, "PART_CLASH"), 0, "{placement}");
+        let store = f.store();
+        let steel = material_of(&f.script(&[material_line(&store)]));
+        let reply = &f.script(&[
+            plate_line(&store, &steel, "20", "0,0,0"),
+            plate_with(
+                &store,
+                &[
+                    "--width",
+                    "200",
+                    "--length",
+                    "100",
+                    "--thickness",
+                    "10",
+                    "--material-digest",
+                    &steel,
+                    "--translation",
+                    placement,
+                ],
+            ),
+            check_line(&store, false, &[]),
+        ])[2];
+        assert_eq!(text(reply, "status"), "green", "{placement}: {reply:?}");
+        assert_eq!(unknown_count(reply, "PART_CLASH"), 0, "{placement}");
     }
 }
 
@@ -470,46 +775,27 @@ fn columns_standing_on_a_base_plate_are_green() {
     // an I-shape column in the same spot. Both stand exactly on the plate's
     // top face and both are green.
     let f = Fixture::new();
-    let steel = f.material();
-    let rectangular = text(
-        at(
-            &f.ok("define-profile", &["--width", "200", "--height", "200"]),
-            &["definition"],
-        ),
-        "digest",
-    );
-    f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "1000",
-            "--length",
-            "500",
-            "--thickness",
-            "20",
-            "--material-digest",
-            &steel,
-        ],
-    );
-    f.ok(
-        "create-member",
-        &[
-            "--profile-digest",
-            &rectangular,
-            "--start",
+    let store = f.store();
+    let setup = f.script(&[
+        material_line(&store),
+        profile_line(&store, &["--width", "200", "--height", "200"]),
+    ]);
+    let steel = material_of(&setup);
+    let digest = digest_of(&setup[1]);
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "20", "0,0,0"),
+        member_line(
+            &store,
+            &digest,
             "500,250,20",
-            "--end",
             "500,250,1000",
-            "--kind",
             "column",
-            "--material-digest",
             &steel,
-        ],
-    );
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green", "{reply:?}");
-    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
+        ),
+        check_line(&store, false, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "green", "{reply:?}");
+    assert_eq!(unknown_count(reply, "PART_CLASH"), 0);
 }
 
 #[test]
@@ -518,52 +804,33 @@ fn an_i_shape_column_standing_on_a_base_plate_is_green() {
     // the profile's faceted geometry rests on the plate's cap diagonal and
     // stays green with exact coordinates.
     let f = Fixture::new();
-    let steel = f.material();
-    let i_shape = text(
-        at(
-            &f.ok(
-                "define-profile",
-                &[
-                    "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
-                    "--r", "0",
-                ],
-            ),
-            &["definition"],
+    let store = f.store();
+    let setup = f.script(&[
+        material_line(&store),
+        profile_line(
+            &store,
+            &[
+                "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
+                "--r", "0",
+            ],
         ),
-        "digest",
-    );
-    f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "1000",
-            "--length",
-            "500",
-            "--thickness",
-            "20",
-            "--material-digest",
-            &steel,
-        ],
-    );
-    f.ok(
-        "create-member",
-        &[
-            "--profile-digest",
-            &i_shape,
-            "--start",
+    ]);
+    let steel = material_of(&setup);
+    let digest = digest_of(&setup[1]);
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "20", "0,0,0"),
+        member_line(
+            &store,
+            &digest,
             "500,250,20",
-            "--end",
             "500,250,1000",
-            "--kind",
             "column",
-            "--material-digest",
             &steel,
-        ],
-    );
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green", "{reply:?}");
-    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
+        ),
+        check_line(&store, false, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "green", "{reply:?}");
+    assert_eq!(unknown_count(reply, "PART_CLASH"), 0);
 }
 
 #[test]
@@ -573,66 +840,57 @@ fn a_rotated_plate_flush_with_a_side_wall_is_green() {
     // units in the last place into the base, the edge traversal sample
     // measures that sliver, and the near-threshold rule reads it clear.
     let f = Fixture::new();
-    let steel = f.material();
-    f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "1000",
-            "--length",
-            "500",
-            "--thickness",
-            "10",
-            "--material-digest",
-            &steel,
-        ],
-    );
-    f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "80",
-            "--length",
-            "100",
-            "--thickness",
-            "10",
-            "--material-digest",
-            &steel,
-            "--orientation-xyzw",
-            "0.7071067811865476,0,0,0.7071067811865476",
-            "--translation",
-            "150,10,10",
-        ],
-    );
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green", "{reply:?}");
-    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_with(
+            &store,
+            &[
+                "--width",
+                "80",
+                "--length",
+                "100",
+                "--thickness",
+                "10",
+                "--material-digest",
+                &steel,
+                "--orientation-xyzw",
+                "0.7071067811865476,0,0,0.7071067811865476",
+                "--translation",
+                "150,10,10",
+            ],
+        ),
+        check_line(&store, false, &[]),
+    ])[2];
+    assert_eq!(text(reply, "status"), "green", "{reply:?}");
+    assert_eq!(unknown_count(reply, "PART_CLASH"), 0);
 }
 
 #[test]
 fn a_part_without_material_is_red_by_completeness() {
     let f = Fixture::new();
-    let created = f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "1000",
-            "--length",
-            "500",
-            "--thickness",
-            "10",
-            "--translation",
-            "0,0,0",
-        ],
-    );
-    let _ = text(at(&created, &["plate"]), "element_id");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let finding = finding_of(&reply, "PART_WITHOUT_MATERIAL");
+    let store = f.store();
+    let reply = &f.script(&[
+        plate_with(
+            &store,
+            &[
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--translation",
+                "0,0,0",
+            ],
+        ),
+        check_line(&store, true, &[]),
+    ])[1];
+    assert_eq!(text(reply, "status"), "red");
+    let finding = finding_of(reply, "PART_WITHOUT_MATERIAL");
     assert_eq!(text(finding, "status"), "fail");
-    assert_eq!(fail_count(&reply, "PART_WITHOUT_MATERIAL"), 1);
+    assert_eq!(fail_count(reply, "PART_WITHOUT_MATERIAL"), 1);
     // A finding without a measurement keeps its shape: no bound, no applied δ.
     assert!(matches!(finding.get("mesh_bound_mm"), Ok(Json::Null)));
     assert!(matches!(
@@ -644,25 +902,27 @@ fn a_part_without_material_is_red_by_completeness() {
 #[test]
 fn a_degenerate_plate_is_reported_and_covered_unknown() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.ok(
-        "create-plate",
-        &[
-            "--contour",
-            "0,0,0;0,500,0;1000,500,0;1000,0,0",
-            "--thickness",
-            "10",
-            "--material-digest",
-            &steel,
-        ],
-    );
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    let finding = finding_of(&reply, "PART_DEGENERATE");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        plate_with(
+            &store,
+            &[
+                "--contour",
+                "0,0,0;0,500,0;1000,500,0;1000,0,0",
+                "--thickness",
+                "10",
+                "--material-digest",
+                &steel,
+            ],
+        ),
+        check_line(&store, true, &[]),
+    ])[1];
+    let finding = finding_of(reply, "PART_DEGENERATE");
     assert_eq!(text(finding, "status"), "fail");
     assert!(text(finding, "message").contains("contour_winding_clockwise"));
     // The element is explicit in coverage: unknown, geometry unsupported.
-    let rows = list(at(&reply, &["coverage"]), "elements");
+    let rows = list(at(reply, &["coverage"]), "elements");
     let row = rows.first().unwrap_or_else(|| panic!("no coverage rows"));
     assert_eq!(text(row, "bucket"), "unknown");
     assert_eq!(text(row, "reason"), "geometry_unsupported");
@@ -671,8 +931,10 @@ fn a_degenerate_plate_is_reported_and_covered_unknown() {
 #[test]
 fn a_tampered_quantity_is_a_stale_integrity_finding() {
     let f = Fixture::new();
-    let steel = f.material();
-    let id = f.plate(&steel, "10", "0,0,0");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let made = f.script(&[plate_line(&store, &steel, "10", "0,0,0")]);
+    let id = text(at(&made[0], &["plate"]), "element_id");
     f.tamper(|name, text| {
         if name == element_layer(&id) {
             text.replace("bim:massKg = 39.25", "bim:massKg = 99.0")
@@ -680,96 +942,91 @@ fn a_tampered_quantity_is_a_stale_integrity_finding() {
             text
         }
     });
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    let finding = finding_of(&reply, "QUANTITY_STALE");
+    let reply = &f.script(&[check_line(&store, true, &[])])[0];
+    let finding = finding_of(reply, "QUANTITY_STALE");
     assert_eq!(text(finding, "status"), "fail");
     assert!(text(finding, "message").contains("integrity failure"));
     // The same reply names the revision the check identified.
     let head = store_revision(&f);
-    assert_eq!(text(&reply, "revision_id"), head);
-}
-
-fn store_revision(f: &Fixture) -> String {
-    let store = RevisionStore::new(BlobStore::new(f.shared.root.join("store")).unwrap());
-    store.open().unwrap().info().revision().to_string()
+    assert_eq!(text(reply, "revision_id"), head);
 }
 
 #[test]
 fn element_scope_narrows_the_checks_and_unknown_ids_are_refused() {
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let clashed = f.plate(&steel, "10", "100,0,5");
-    let far = f.plate(&steel, "10", "0,0,500");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, clashed, far, assembly) = (
+        pinned(0xba5e11),
+        pinned(0xba5e12),
+        pinned(0xba5e13),
+        pinned(0xba5e14),
+    );
     // An assembly over the clashing pair gives the pair a common subtree.
-    let assembly = text(&f.ok("create-assembly", &["--name", "Bay"]), "element_id");
-    f.ok(
-        "attach-to-assembly",
-        &["--id", &base, "--assembly-id", &assembly],
-    );
-    f.ok(
-        "attach-to-assembly",
-        &["--id", &clashed, "--assembly-id", &assembly],
-    );
-    // The assembly's subtree contains the clashing pair: the clash is found.
-    let (code, reply) = f.check(&["--element", &assembly]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(at(&reply, &["scope"]), "mode"), "element_subtree");
-    assert_eq!(text(at(&reply, &["scope"]), "element"), assembly);
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
+    let replies = f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &clashed, &steel, "10", "100,0,5"),
+        pinned_plate(&store, &far, &steel, "10", "0,0,500"),
+        assembly_line(&store, &assembly, "Bay"),
+        attach_line(&store, &base, &assembly),
+        attach_line(&store, &clashed, &assembly),
+        // The assembly's subtree contains the clashing pair: the clash is found.
+        check_line(&store, true, &["--element", &assembly]),
+        // A part's scope resolves to its assembly: the same subtree, same clash.
+        check_line(&store, true, &["--element", &base]),
+        // The far plate's own subtree has no clash and checks one element.
+        check_line(&store, false, &["--element", &far]),
+        // An id the revision does not carry is a refusal, not an empty report.
+        check_line(
+            &store,
+            true,
+            &["--element", "019a7bf0-0000-7000-8000-00000000dead"],
+        ),
+    ]);
+    let reply = &replies[6];
+    assert_eq!(text(at(reply, &["scope"]), "mode"), "element_subtree");
+    assert_eq!(text(at(reply, &["scope"]), "element"), assembly);
+    assert_eq!(fail_count(reply, "PART_CLASH"), 1);
     // The subtree holds the assembly and its two parts; the far plate is
     // outside the scope and absent from the coverage.
-    assert_eq!(at(&reply, &["scope", "elements"]).unsigned().unwrap(), 3);
-    let rows = list(at(&reply, &["coverage"]), "elements");
+    assert_eq!(at(reply, &["scope", "elements"]).unsigned().unwrap(), 3);
+    let rows = list(at(reply, &["coverage"]), "elements");
     assert_eq!(rows.len(), 3);
-    // A part's scope resolves to its assembly: the same subtree, same clash.
-    let (code, reply) = f.check(&["--element", &base]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
-    // The far plate's own subtree has no clash and checks one element.
-    let (code, reply) = f.check(&["--element", &far]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 0);
-    assert_eq!(at(&reply, &["coverage", "checked"]).unsigned().unwrap(), 1);
-    // An id the revision does not carry is a refusal, not an empty report.
-    let (code, body) = f.check(&["--element", "019a7bf0-0000-7000-8000-00000000dead"]);
-    assert_eq!(code, 2);
-    assert_eq!(text(&body, "outcome"), "rejected");
-    assert_eq!(text(&body, "code"), "NOT_FOUND");
+    let reply = &replies[7];
+    assert_eq!(fail_count(reply, "PART_CLASH"), 1);
+    let reply = &replies[8];
+    assert_eq!(fail_count(reply, "PART_CLASH"), 0);
+    assert_eq!(at(reply, &["coverage", "checked"]).unsigned().unwrap(), 1);
+    let body = &replies[9];
+    assert_eq!(text(body, "outcome"), "rejected");
+    assert_eq!(text(body, "code"), "NOT_FOUND");
 }
 
 #[test]
 fn pagination_pages_findings_only_and_counts_cover_the_scope() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "100,0,5");
-    let (code, reply) = f.check(&["--limit", "1", "--offset", "0"]);
-    assert_eq!(code, 2, "{reply:?}");
-    // The findings page holds one finding; the status and counts stay whole.
-    assert_eq!(list(&reply, "findings").len(), 1);
-    assert_eq!(at(&reply, &["findings_total"]).unsigned().unwrap(), 1);
-    assert_eq!(text(&reply, "status"), "red");
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
-    // Paging past the findings shows an empty page and the same red status.
-    let (code, reply) = f.check(&["--limit", "1", "--offset", "1"]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(list(&reply, "findings").len(), 0);
-    assert_eq!(text(&reply, "status"), "red");
-    // A zero or oversized limit is refused like every listing.
-    let (code, body) = f.check(&["--limit", "0"]);
-    assert_eq!(code, 2);
-    assert_eq!(text(&body, "outcome"), "rejected");
-}
-
-fn reason_of(reply: &Json, rule: &str) -> String {
-    list(finding_of(reply, rule), "missing_inputs")
-        .first()
-        .unwrap()
-        .string()
-        .unwrap()
-        .to_owned()
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let replies = f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", "100,0,5"),
+        // The findings page holds one finding; the status and counts stay whole.
+        check_line(&store, true, &["--limit", "1", "--offset", "0"]),
+        // Paging past the findings shows an empty page and the same red status.
+        check_line(&store, true, &["--limit", "1", "--offset", "1"]),
+        // A zero or oversized limit is refused like every listing.
+        check_line(&store, true, &["--limit", "0"]),
+    ]);
+    let reply = &replies[2];
+    assert_eq!(list(reply, "findings").len(), 1);
+    assert_eq!(at(reply, &["findings_total"]).unsigned().unwrap(), 1);
+    assert_eq!(text(reply, "status"), "red");
+    assert_eq!(fail_count(reply, "PART_CLASH"), 1);
+    let reply = &replies[3];
+    assert_eq!(list(reply, "findings").len(), 0);
+    assert_eq!(text(reply, "status"), "red");
+    let body = &replies[4];
+    assert_eq!(text(body, "outcome"), "rejected");
 }
 
 #[test]
@@ -778,26 +1035,41 @@ fn a_subtree_check_is_quiet_about_declared_members_outside_it() {
     // members: they exist and are evaluated in the model, so the connection
     // is simply outside the checked scope, not unresolved.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,10");
-    f.intent(&[&base, &column], &[&format!("{base}:contact:{column}")]);
-    let (code, reply) = f.check(&["--element", &base]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5e21), pinned(0xba5e22));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,10"),
+        intent_line(
+            &store,
+            &[&base, &column],
+            &[&format!("{base}:contact:{column}")],
+        ),
+        check_line(&store, false, &["--element", &base]),
+    ])[3];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
+
     // The ghost is a different case: declared and absent from the model, so
     // the same subtree check reports it unresolved.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,10");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5e23), pinned(0xba5e24));
     let ghost = "019a7bf0-0000-7000-8000-00000000dead";
-    f.intent(&[&base, &column, ghost], &[&format!("{base}:weld:{ghost}")]);
-    let (code, reply) = f.check(&["--element", &base]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
-    assert_eq!(reason_of(&reply, "PART_UNCONNECTED"), "target_unresolved");
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,10"),
+        intent_line(
+            &store,
+            &[&base, &column, ghost],
+            &[&format!("{base}:weld:{ghost}")],
+        ),
+        check_line(&store, false, &["--element", &base]),
+    ])[3];
+    assert_eq!(text(reply, "status"), "unknown");
+    assert_eq!(reason_of(reply, "PART_UNCONNECTED"), "target_unresolved");
 }
 
 #[test]
@@ -809,22 +1081,28 @@ fn one_connection_option_carries_several_comma_separated_connections() {
     // them all: the satisfied pair stays quiet, the separated pair turns the
     // check red.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,10");
-    let far = f.plate(&steel, "10", "0,0,200");
-    f.intent(
-        &[&base, &column, &far],
-        &[&format!("{base}:contact:{column},{base}:contact:{far}")],
-    );
-    let listed = f.run("record-list", &[]).1;
-    let rows = list(&listed, "records");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column, far) = (pinned(0xba5e31), pinned(0xba5e32), pinned(0xba5e33));
+    let replies = f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,10"),
+        pinned_plate(&store, &far, &steel, "10", "0,0,200"),
+        intent_line(
+            &store,
+            &[&base, &column, &far],
+            &[&format!("{base}:contact:{column},{base}:contact:{far}")],
+        ),
+        record_list_line(&store),
+        check_line(&store, true, &[]),
+    ]);
+    let listed = &replies[4];
+    let rows = list(listed, "records");
     assert_eq!(rows.len(), 1);
     assert_eq!(list(rows.first().unwrap(), "connections").len(), 2);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    assert!(fail_count(&reply, "PART_UNCONNECTED") >= 1, "{reply:?}");
+    let reply = &replies[5];
+    assert_eq!(text(reply, "status"), "red");
+    assert!(fail_count(reply, "PART_UNCONNECTED") >= 1, "{reply:?}");
 }
 
 #[test]
@@ -832,24 +1110,33 @@ fn a_declared_contact_over_touching_parts_is_green() {
     // The connected variant of the sample column base: the owner declares the
     // parts in contact, and they touch within the product tolerance.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,10");
-    f.intent(&[&base, &column], &[&format!("{base}:contact:{column}")]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(fail_count(&reply, "PART_UNCONNECTED"), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5e41), pinned(0xba5e42));
+    let replies = f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,10"),
+        intent_line(
+            &store,
+            &[&base, &column],
+            &[&format!("{base}:contact:{column}")],
+        ),
+        check_line(&store, false, &[]),
+        record_list_line(&store),
+    ]);
+    let reply = &replies[3];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(fail_count(reply, "PART_UNCONNECTED"), 0);
     // The coverage paragraph states the declared intent, not an absence.
-    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    let limitations = text(at(reply, &["coverage"]), "limitations");
     assert!(
         limitations.contains("declared joint intent"),
         "{limitations}"
     );
     // The record itself is listed and reports its payload.
-    let listed = f.run("record-list", &[]).1;
-    assert_eq!(text(&listed, "outcome"), "records");
-    let rows = list(&listed, "records");
+    let listed = &replies[4];
+    assert_eq!(text(listed, "outcome"), "records");
+    let rows = list(listed, "records");
     assert_eq!(rows.len(), 1);
     assert_eq!(text(rows.first().unwrap(), "kind"), "joint_intent");
     assert_eq!(
@@ -868,14 +1155,21 @@ fn a_declared_contact_over_touching_parts_is_green() {
 fn a_declared_contact_over_separated_parts_is_red_part_unconnected() {
     // The unconnected variant: the declared contact is absent, 2 mm of air.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,12");
-    f.intent(&[&base, &column], &[&format!("{base}:contact:{column}")]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let finding = finding_of(&reply, "PART_UNCONNECTED");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5e43), pinned(0xba5e44));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,12"),
+        intent_line(
+            &store,
+            &[&base, &column],
+            &[&format!("{base}:contact:{column}")],
+        ),
+        check_line(&store, true, &[]),
+    ])[3];
+    assert_eq!(text(reply, "status"), "red");
+    let finding = finding_of(reply, "PART_UNCONNECTED");
     assert_eq!(text(finding, "status"), "fail");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 2.0).abs() <= 1e-6, "{measured}");
@@ -890,39 +1184,54 @@ fn a_weld_present_without_contact_stays_unknown_by_the_recorded_rule() {
     // requirement the local gap is judged — the pathless A06 weld is never
     // locally attached, so the gap stays unknown (attachment_unvalidated).
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,12");
-    f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
-    f.weld(&base, &column);
-    f.gap(&base, &column, "0", "0.2", "0.05");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
-    let finding = finding_of(&reply, "WELD_WITHOUT_CONTACT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5e51), pinned(0xba5e52));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,12"),
+        intent_line(
+            &store,
+            &[&base, &column],
+            &[&format!("{base}:weld:{column}")],
+        ),
+        weld_line(&store, &base, &column),
+        gap_line(&store, &base, &column, "0", "0.2", "0.05"),
+        check_line(&store, false, &[]),
+    ])[5];
+    assert_eq!(text(reply, "status"), "unknown");
+    let finding = finding_of(reply, "WELD_WITHOUT_CONTACT");
     assert_eq!(text(finding, "status"), "unknown");
     assert_eq!(
-        reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+        reason_of(reply, "WELD_WITHOUT_CONTACT"),
         "attachment_unvalidated"
     );
     // The weld exists, so the connection is satisfied: no PART_UNCONNECTED.
-    let unconnected = list(&reply, "findings")
+    let unconnected = list(reply, "findings")
         .iter()
         .filter(|finding| text(finding, "rule") == "PART_UNCONNECTED")
         .count();
     assert_eq!(unconnected, 0);
+
     // Without a recorded gap requirement the same joint stays unknown for a
     // different reason: no supported rule decides the local gap.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,12");
-    f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
-    f.weld(&base, &column);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5e53), pinned(0xba5e54));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,12"),
+        intent_line(
+            &store,
+            &[&base, &column],
+            &[&format!("{base}:weld:{column}")],
+        ),
+        weld_line(&store, &base, &column),
+        check_line(&store, false, &[]),
+    ])[4];
     assert_eq!(
-        reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+        reason_of(reply, "WELD_WITHOUT_CONTACT"),
         "no_supported_rule"
     );
 }
@@ -935,34 +1244,27 @@ fn a_lofted_plate_the_check_cannot_evaluate_is_unknown_not_green() {
     // 8.1: a solid part the check cannot evaluate is not an established
     // absence).
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    let created = f.ok(
-        "create-lofted-plate",
-        &[
-            "--start",
-            "100,100,-50;300,100,-50;300,300,-50;100,300,-50",
-            "--end",
-            "100,100,80;300,100,80;300,300,80;100,300,80",
-            "--material-digest",
-            &steel,
-        ],
-    );
-    let loft = at(&created, &["plate", "id"]).string().unwrap();
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let replies = f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        lofted_line(&store, &steel),
+        check_line(&store, false, &[]),
+    ]);
+    let loft = at(&replies[1], &["plate", "id"]).string().unwrap();
     // The write reply's own summary is not green either.
-    assert_eq!(text(at(&created, &["checks"]), "status"), "unknown");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
+    assert_eq!(text(at(&replies[1], &["checks"]), "status"), "unknown");
+    let reply = &replies[2];
+    assert_eq!(text(reply, "status"), "unknown");
     // The lofted plate's coverage row names the unsupported geometry.
-    let row = list(at(&reply, &["coverage"]), "elements")
+    let row = list(at(reply, &["coverage"]), "elements")
         .iter()
         .find(|row| text(row, "id") == loft)
         .unwrap_or_else(|| panic!("no coverage row for {loft} in {reply:?}"));
     assert_eq!(text(row, "bucket"), "unknown");
     assert_eq!(text(row, "reason"), "geometry_unsupported");
     // The evaluated plate stays checked.
-    assert_eq!(at(&reply, &["coverage", "checked"]).unsigned().unwrap(), 1);
+    assert_eq!(at(reply, &["coverage", "checked"]).unsigned().unwrap(), 1);
 }
 
 #[test]
@@ -973,14 +1275,24 @@ fn connection_elements_stay_not_applicable_and_records_are_not_parts() {
     // part at all (not_a_part) — no solid part lands in either (contract
     // sections 6 and 8.1).
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,10");
-    let intent = f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
-    let weld = f.weld(&base, &column);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    let rows = list(at(&reply, &["coverage"]), "elements");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5e61), pinned(0xba5e62));
+    let replies = f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,10"),
+        intent_line(
+            &store,
+            &[&base, &column],
+            &[&format!("{base}:weld:{column}")],
+        ),
+        weld_line(&store, &base, &column),
+        check_line(&store, false, &[]),
+    ]);
+    let intent = text(&replies[2], "element_id");
+    let weld = text(&replies[3], "element_id");
+    let reply = &replies[4];
+    let rows = list(at(reply, &["coverage"]), "elements");
     let row_of = |id: &str| {
         rows.iter()
             .find(|row| text(row, "id") == id)
@@ -993,7 +1305,7 @@ fn connection_elements_stay_not_applicable_and_records_are_not_parts() {
     assert_eq!(text(intent_row, "bucket"), "not_applicable");
     assert_eq!(text(intent_row, "reason"), "not_a_part");
     // Both real parts stay checked.
-    assert_eq!(at(&reply, &["coverage", "checked"]).unsigned().unwrap(), 2);
+    assert_eq!(at(reply, &["coverage", "checked"]).unsigned().unwrap(), 2);
 }
 
 #[test]
@@ -1005,16 +1317,19 @@ fn an_attached_weld_bridging_an_excessive_gap_turns_the_joint_red() {
     // 3 mm opening is well beyond the contact tolerance: local attachment
     // does not cap the measurable gap there (contract section 5.1).
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let top = f.plate(&steel, "10", "0,0,13");
-    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
-    f.path_weld(&base, &top, "100,100,11.5;300,100,11.5");
-    f.gap(&base, &top, "0", "2", "0.3");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let finding = finding_of(&reply, "WELD_WITHOUT_CONTACT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, top) = (pinned(0xba5e71), pinned(0xba5e72));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &top, &steel, "10", "0,0,13"),
+        intent_line(&store, &[&base, &top], &[&format!("{base}:weld:{top}")]),
+        path_weld_line(&store, &base, &top, "6", "100,100,11.5;300,100,11.5"),
+        gap_line(&store, &base, &top, "0", "2", "0.3"),
+        check_line(&store, true, &[]),
+    ])[5];
+    assert_eq!(text(reply, "status"), "red");
+    let finding = finding_of(reply, "WELD_WITHOUT_CONTACT");
     assert_eq!(text(finding, "status"), "fail");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 3.0).abs() <= 1e-6, "{measured}");
@@ -1039,29 +1354,36 @@ fn a_tight_fit_and_an_in_range_gap_pass_with_a_path_at_the_joint() {
     // recorded tolerance: the lower band edge at or below zero cannot
     // straddle (contract section 7.3, #724).
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let top = f.plate(&steel, "10", "0,0,10");
-    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
-    f.path_weld(&base, &top, "100,100,10;300,100,10");
-    f.gap(&base, &top, "0", "2", "0.05");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, top) = (pinned(0xba5e81), pinned(0xba5e82));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &top, &steel, "10", "0,0,10"),
+        intent_line(&store, &[&base, &top], &[&format!("{base}:weld:{top}")]),
+        path_weld_line(&store, &base, &top, "6", "100,100,10;300,100,10"),
+        gap_line(&store, &base, &top, "0", "2", "0.05"),
+        check_line(&store, false, &[]),
+    ])[5];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
+
     // A 1.5 mm opening inside the permitted range passes too, judged from
     // the path that spans the contact.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let top = f.plate(&steel, "10", "0,0,11.5");
-    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
-    f.path_weld(&base, &top, "100,100,10.75;300,100,10.75");
-    f.gap(&base, &top, "0", "2", "0.3");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, top) = (pinned(0xba5e83), pinned(0xba5e84));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &top, &steel, "10", "0,0,11.5"),
+        intent_line(&store, &[&base, &top], &[&format!("{base}:weld:{top}")]),
+        path_weld_line(&store, &base, &top, "6", "100,100,10.75;300,100,10.75"),
+        gap_line(&store, &base, &top, "0", "2", "0.3"),
+        check_line(&store, false, &[]),
+    ])[5];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
 }
 
 #[test]
@@ -1071,17 +1393,20 @@ fn a_weld_path_away_from_the_joint_stays_unknown_attachment_unvalidated() {
     // locally attached and its gap stays unjudged while the rule keeps
     // reporting the unvalidated attachment.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let top = f.plate(&steel, "10", "0,0,13");
-    f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
-    f.path_weld(&base, &top, "1100,250,11.5;1200,250,11.5");
-    f.gap(&base, &top, "0", "2", "0.3");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, top) = (pinned(0xba5e91), pinned(0xba5e92));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &top, &steel, "10", "0,0,13"),
+        intent_line(&store, &[&base, &top], &[&format!("{base}:weld:{top}")]),
+        path_weld_line(&store, &base, &top, "6", "1100,250,11.5;1200,250,11.5"),
+        gap_line(&store, &base, &top, "0", "2", "0.3"),
+        check_line(&store, false, &[]),
+    ])[5];
+    assert_eq!(text(reply, "status"), "unknown");
     assert_eq!(
-        reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+        reason_of(reply, "WELD_WITHOUT_CONTACT"),
         "attachment_unvalidated"
     );
 }
@@ -1099,32 +1424,52 @@ fn weld_paths_on_one_part_away_from_the_joint_stay_unvalidated() {
         "155,205,10;700,400,10",
     ] {
         let f = Fixture::new();
-        let steel = f.material();
-        let base = f.plate(&steel, "10", "0,0,0");
-        let rib = f.standing(&steel, "80", "100", "10", "150,210,10", &[]);
-        f.intent(&[&base, &rib], &[&format!("{base}:weld:{rib}")]);
-        f.path_weld(&base, &rib, path);
-        f.gap(&base, &rib, "0", "2", "0.3");
-        let (code, reply) = f.check(&[]);
-        assert_eq!(code, 0, "{path}: {reply:?}");
-        assert_eq!(text(&reply, "status"), "unknown", "{path}");
+        let store = f.store();
+        let steel = material_of(&f.script(&[material_line(&store)]));
+        let (base, rib) = (pinned(0xba5ea1), pinned(0xba5ea2));
+        let reply = &f.script(&[
+            pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+            pinned_standing(
+                &store,
+                &rib,
+                &steel,
+                &["80", "100", "10"],
+                "150,210,10",
+                &[],
+            ),
+            intent_line(&store, &[&base, &rib], &[&format!("{base}:weld:{rib}")]),
+            path_weld_line(&store, &base, &rib, "6", path),
+            gap_line(&store, &base, &rib, "0", "2", "0.3"),
+            check_line(&store, false, &[]),
+        ])[5];
+        assert_eq!(text(reply, "status"), "unknown", "{path}");
         assert_eq!(
-            reason_of(&reply, "WELD_WITHOUT_CONTACT"),
+            reason_of(reply, "WELD_WITHOUT_CONTACT"),
             "attachment_unvalidated",
             "{path}"
         );
     }
     // The path along the rib's bottom edge is the joint itself: green.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let rib = f.standing(&steel, "80", "100", "10", "150,210,10", &[]);
-    f.intent(&[&base, &rib], &[&format!("{base}:weld:{rib}")]);
-    f.path_weld(&base, &rib, "155,205,10;225,205,10");
-    f.gap(&base, &rib, "0", "2", "0.3");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, rib) = (pinned(0xba5eb1), pinned(0xba5eb2));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_standing(
+            &store,
+            &rib,
+            &steel,
+            &["80", "100", "10"],
+            "150,210,10",
+            &[],
+        ),
+        intent_line(&store, &[&base, &rib], &[&format!("{base}:weld:{rib}")]),
+        path_weld_line(&store, &base, &rib, "6", "155,205,10;225,205,10"),
+        gap_line(&store, &base, &rib, "0", "2", "0.3"),
+        check_line(&store, false, &[]),
+    ])[5];
+    assert_eq!(text(reply, "status"), "green");
 }
 
 #[test]
@@ -1139,19 +1484,25 @@ fn an_exact_tight_fit_passes_contact_required_and_fails_a_required_opening() {
         ("1", "2", "0", false),
     ] {
         let f = Fixture::new();
-        let steel = f.material();
-        let base = f.plate(&steel, "10", "0,0,0");
-        let top = f.plate(&steel, "10", "0,0,10");
-        f.intent(&[&base, &top], &[&format!("{base}:weld:{top}")]);
-        f.path_weld(&base, &top, "100,100,10;300,100,10");
-        f.gap(&base, &top, min, max, tolerance);
-        let (code, reply) = f.check(&[]);
+        let store = f.store();
+        let steel = material_of(&f.script(&[material_line(&store)]));
+        let (base, top) = (pinned(0xba5ec1), pinned(0xba5ec2));
+        let reply = &f.script(&[
+            pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+            pinned_plate(&store, &top, &steel, "10", "0,0,10"),
+            intent_line(&store, &[&base, &top], &[&format!("{base}:weld:{top}")]),
+            path_weld_line(&store, &base, &top, "6", "100,100,10;300,100,10"),
+            gap_line(&store, &base, &top, min, max, tolerance),
+            check_line(&store, !green, &[]),
+        ])[5];
         if green {
-            assert_eq!(code, 0, "[{min}, {max}] ± {tolerance}: {reply:?}");
-            assert_eq!(text(&reply, "status"), "green");
+            assert_eq!(
+                text(reply, "status"),
+                "green",
+                "[{min}, {max}] ± {tolerance}"
+            );
         } else {
-            assert_eq!(code, 2, "[{min}, {max}] ± {tolerance}: {reply:?}");
-            let finding = finding_of(&reply, "WELD_WITHOUT_CONTACT");
+            let finding = finding_of(reply, "WELD_WITHOUT_CONTACT");
             assert_eq!(text(finding, "status"), "fail");
             let measured = at(finding, &["measured_mm"]).float().unwrap();
             assert!(measured.abs() <= 1e-12, "{measured}");
@@ -1166,48 +1517,49 @@ fn a_duplicate_part_and_a_sub_tolerance_copy_are_red() {
     // with the overlap measured from the shared faces, exit 2.
     for translation in ["0,0,0", "0.2,0,0"] {
         let f = Fixture::new();
-        let steel = f.material();
-        f.plate(&steel, "20", "0,0,0");
-        f.plate(&steel, "20", translation);
-        let (code, reply) = f.check(&[]);
-        assert_eq!(code, 2, "{translation}: {reply:?}");
-        assert_eq!(text(&reply, "status"), "red");
-        assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
-        let measured = at(finding_of(&reply, "PART_CLASH"), &["measured_mm"])
+        let store = f.store();
+        let steel = material_of(&f.script(&[material_line(&store)]));
+        let reply = &f.script(&[
+            plate_line(&store, &steel, "20", "0,0,0"),
+            plate_line(&store, &steel, "20", translation),
+            check_line(&store, true, &[]),
+        ])[2];
+        assert_eq!(text(reply, "status"), "red");
+        assert_eq!(fail_count(reply, "PART_CLASH"), 1);
+        let measured = at(finding_of(reply, "PART_CLASH"), &["measured_mm"])
             .float()
             .unwrap();
         assert!((measured - 10.0).abs() <= 1e-9, "{measured}");
     }
     // A duplicate column, created twice on the same axis.
     let f = Fixture::new();
-    let steel = f.material();
-    let profile = text(
-        at(
-            &f.ok("define-profile", &["--width", "200", "--height", "200"]),
-            &["definition"],
+    let store = f.store();
+    let setup = f.script(&[
+        material_line(&store),
+        profile_line(&store, &["--width", "200", "--height", "200"]),
+    ]);
+    let steel = material_of(&setup);
+    let digest = digest_of(&setup[1]);
+    let reply = &f.script(&[
+        member_line(
+            &store,
+            &digest,
+            "500,250,20",
+            "500,250,1000",
+            "column",
+            &steel,
         ),
-        "digest",
-    );
-    for _ in 0..2 {
-        f.ok(
-            "create-member",
-            &[
-                "--profile-digest",
-                &profile,
-                "--start",
-                "500,250,20",
-                "--end",
-                "500,250,1000",
-                "--kind",
-                "column",
-                "--material-digest",
-                &steel,
-            ],
-        );
-    }
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 1);
+        member_line(
+            &store,
+            &digest,
+            "500,250,20",
+            "500,250,1000",
+            "column",
+            &steel,
+        ),
+        check_line(&store, true, &[]),
+    ])[2];
+    assert_eq!(fail_count(reply, "PART_CLASH"), 1);
 }
 
 #[test]
@@ -1216,16 +1568,23 @@ fn contact_without_connection_is_red_where_a_weld_is_declared() {
     // declared, but none exists. Contact alone never proves a weld; the
     // declared one is missing.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,10");
-    f.intent(&[&base, &column], &[&format!("{base}:weld:{column}")]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let unconnected = finding_of(&reply, "PART_UNCONNECTED");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5ed1), pinned(0xba5ed2));
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,10"),
+        intent_line(
+            &store,
+            &[&base, &column],
+            &[&format!("{base}:weld:{column}")],
+        ),
+        check_line(&store, true, &[]),
+    ])[3];
+    assert_eq!(text(reply, "status"), "red");
+    let unconnected = finding_of(reply, "PART_UNCONNECTED");
     assert_eq!(text(unconnected, "status"), "fail");
-    let contacted = finding_of(&reply, "CONTACT_WITHOUT_CONNECTION");
+    let contacted = finding_of(reply, "CONTACT_WITHOUT_CONNECTION");
     assert_eq!(text(contacted, "status"), "fail");
 }
 
@@ -1235,159 +1594,42 @@ fn an_unresolved_declared_target_stays_unknown_and_named() {
     // deleted after the declaration) is unresolved: unknown with the
     // target named, the record kept, never auto-repaired.
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.plate(&steel, "10", "0,0,10");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (base, column) = (pinned(0xba5ee1), pinned(0xba5ee2));
     let ghost = "019a7bf0-0000-7000-8000-00000000dead";
-    f.intent(&[&base, &column, ghost], &[&format!("{base}:weld:{ghost}")]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
-    let finding = finding_of(&reply, "PART_UNCONNECTED");
+    let reply = &f.script(&[
+        pinned_plate(&store, &base, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &column, &steel, "10", "0,0,10"),
+        intent_line(
+            &store,
+            &[&base, &column, ghost],
+            &[&format!("{base}:weld:{ghost}")],
+        ),
+        check_line(&store, false, &[]),
+    ])[3];
+    assert_eq!(text(reply, "status"), "unknown");
+    let finding = finding_of(reply, "PART_UNCONNECTED");
     assert_eq!(text(finding, "status"), "unknown");
-    assert_eq!(reason_of(&reply, "PART_UNCONNECTED"), "target_unresolved");
+    assert_eq!(reason_of(reply, "PART_UNCONNECTED"), "target_unresolved");
     assert!(
         text(finding, "message").contains("evaluated parts"),
         "{reply:?}"
     );
 }
 
-/// A standing plate: width along world X, height along world Z (a quarter
-/// turn about X), thickness running along world −Y.
-impl Fixture {
-    fn standing(
-        &self,
-        steel: &str,
-        width: &str,
-        length: &str,
-        thickness: &str,
-        translation: &str,
-        corners: &[&str],
-    ) -> String {
-        let corner_text = corners.join(";");
-        let mut args: Vec<&str> = vec![
-            "--width",
-            width,
-            "--length",
-            length,
-            "--thickness",
-            thickness,
-            "--material-digest",
-            steel,
-            "--orientation-xyzw",
-            "0.7071067811865476,0,0,0.7071067811865476",
-            "--translation",
-            translation,
-        ];
-        if !corners.is_empty() {
-            args.extend(["--corners", &corner_text]);
-        }
-        let created = self.ok("create-plate", &args);
-        text(at(&created, &["plate"]), "element_id")
-    }
-    /// The sample column base: the base plate on the floor, the column
-    /// standing on it with its face at x = 150, and the rib perpendicular to
-    /// that face with its welded edge on it and its bottom on the plate.
-    /// Exact placements: the check's contact facts decide the quarter-turn
-    /// rounding's last-place dip and the grazing cap diagonals determinately
-    /// (#721), so the joint needs no clearance offsets.
-    fn joint(&self, steel: &str, rib_corners: &[&str]) -> (String, String, String) {
-        let base = self.plate(steel, "10", "0,0,0");
-        let column = self.standing(steel, "100", "200", "40", "50,40,10", &[]);
-        let rib = self.standing(steel, "80", "100", "10", "150,10,10", rib_corners);
-        (base, column, rib)
-    }
-    /// Records the corner-cut requirement of the sample's rib corner: the
-    /// owner's 10 mm cut with a 1 mm tolerance unless overridden.
-    fn corner(&self, rib: &str, base: &str, column: &str, extra: &[&str]) -> String {
-        let neighbours = format!("{base},{column}");
-        let mut extra_args: Vec<&str> = vec![
-            "--kind",
-            "corner_cut",
-            "--target",
-            rib,
-            "--neighbours",
-            &neighbours,
-            "--required-mm",
-            "10",
-            "--tolerance-mm",
-            "1",
-        ];
-        extra_args.extend(extra);
-        self.record("corner cut", &extra_args)
-    }
-    /// The sample rib from an authored local contour (the corner cut rides the
-    /// contour points, no corner treatment): the same standing placement as
-    /// [`Fixture::joint`]'s rib.
-    fn standing_contour(&self, steel: &str, contour: &str, translation: &str) -> String {
-        let created = self.ok(
-            "create-plate",
-            &[
-                "--contour",
-                contour,
-                "--thickness",
-                "10",
-                "--material-digest",
-                steel,
-                "--orientation-xyzw",
-                "0.7071067811865476,0,0,0.7071067811865476",
-                "--translation",
-                translation,
-            ],
-        );
-        text(at(&created, &["plate"]), "element_id")
-    }
-    /// Cuts the rib's lower corner triangle off by plane, in the rib's element
-    /// frame: `leg` is the setback along both contour edges from the corner.
-    fn cut_rib_corner_by_plane(&self, rib: &str, leg: &str, operation: &str) -> Json {
-        let point = format!("{leg},0,0");
-        self.ok(
-            "cut-by-plane",
-            &[
-                "--id",
-                rib,
-                "--operation-id",
-                operation,
-                "--point",
-                &point,
-                "--normal",
-                "0.7071067811865476,0.7071067811865476,0",
-                "--keep",
-                "positive",
-            ],
-        )
-    }
-    /// Cuts the rib's lower corner off as an A13 chamfer-part fabrication.
-    fn chamfer_rib_part(&self, rib: &str, first: &str, second: &str, operation: &str) -> Json {
-        self.ok(
-            "chamfer-part",
-            &[
-                "--id",
-                rib,
-                "--operation-id",
-                operation,
-                "--vertex-index",
-                "0",
-                "--first-distance",
-                first,
-                "--second-distance",
-                second,
-            ],
-        )
-    }
-}
-
 #[test]
 fn without_a_recorded_requirement_the_corner_rules_are_not_applicable() {
     let f = Fixture::new();
-    let steel = f.material();
-    let _ = f.joint(&steel, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(fail_count(&reply, "CORNER_NOT_CUT"), 0);
-    assert_eq!(unknown_count(&reply, "CORNER_NOT_CUT"), 0);
-    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &[]);
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[3];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(fail_count(reply, "CORNER_NOT_CUT"), 0);
+    assert_eq!(unknown_count(reply, "CORNER_NOT_CUT"), 0);
+    let limitations = text(at(reply, &["coverage"]), "limitations");
     assert!(
         limitations.contains("no corner-cut requirement is recorded"),
         "{limitations}"
@@ -1398,34 +1640,44 @@ fn without_a_recorded_requirement_the_corner_rules_are_not_applicable() {
 #[test]
 fn the_record_vehicle_carries_the_corner_cut_end_to_end() {
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    let requirement = f.corner(&rib, &base, &column, &[]);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(record_list_line(&store));
+    lines.push(check_line(&store, false, &[]));
+    let replies = f.script(&lines);
+    let requirement = text(&replies[3], "element_id");
     // The record lists the recorded values back.
-    let listed = f.run("record-list", &[]).1;
-    let rows = list(&listed, "records");
+    let listed = &replies[4];
+    let rows = list(listed, "records");
     let row = rows
         .iter()
         .find(|row| text(row, "kind") == "corner_cut")
         .unwrap_or_else(|| panic!("no corner_cut record in {listed:?}"));
     assert_eq!(text(row, "id"), requirement);
-    assert_eq!(text(row, "target"), rib);
+    assert_eq!(text(row, "target"), JOINT_RIB);
     let neighbours = list(row, "neighbours");
     assert_eq!(neighbours.len(), 2);
-    assert_eq!(neighbours.first().unwrap().string().unwrap(), base);
-    assert_eq!(neighbours.get(1).unwrap().string().unwrap(), column);
+    assert_eq!(neighbours.first().unwrap().string().unwrap(), JOINT_BASE);
+    assert_eq!(neighbours.get(1).unwrap().string().unwrap(), JOINT_COLUMN);
     let required = at(row, &["required_mm"]).float().unwrap();
     assert!((required - 10.0).abs() <= 1e-9, "{required}");
     assert_eq!(text(row, "purpose"), "clearance");
     assert!(matches!(row.get("upper_bound_mm"), Ok(Json::Null)));
     // The correct 10 mm cut is green against the recorded requirement.
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(fail_count(&reply, "CORNER_NOT_CUT"), 0);
-    assert_eq!(unknown_count(&reply, "CORNER_NOT_CUT"), 0);
-    assert_eq!(unknown_count(&reply, "CORNER_OVERCUT"), 0);
-    let limitations = text(at(&reply, &["coverage"]), "limitations");
+    let reply = &replies[5];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(fail_count(reply, "CORNER_NOT_CUT"), 0);
+    assert_eq!(unknown_count(reply, "CORNER_NOT_CUT"), 0);
+    assert_eq!(unknown_count(reply, "CORNER_OVERCUT"), 0);
+    let limitations = text(at(reply, &["coverage"]), "limitations");
     assert!(
         limitations.contains("corner-cut rules ran over 1 recorded requirement"),
         "{limitations}"
@@ -1439,13 +1691,20 @@ fn the_model_without_the_cut_is_red_and_the_fix_hint_reaches_green() {
     // carries the one unambiguous repair; applying it and rechecking lands
     // green (contract section 9: apply one fix, then recheck).
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &[]);
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &[]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[4];
+    assert_eq!(text(reply, "status"), "red");
+    let finding = finding_of(reply, "CORNER_NOT_CUT");
     assert_eq!(text(finding, "status"), "fail");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!(measured.abs() <= 1e-9, "{measured}");
@@ -1461,7 +1720,7 @@ fn the_model_without_the_cut_is_red_and_the_fix_hint_reaches_green() {
             .collect::<Vec<_>>(),
         vec![
             "--id".into(),
-            rib.clone(),
+            JOINT_RIB.to_owned(),
             "--vertex".into(),
             "0".into(),
             "--corner".into(),
@@ -1474,12 +1733,13 @@ fn the_model_without_the_cut_is_red_and_the_fix_hint_reaches_green() {
         .iter()
         .map(|a| a.string().unwrap().to_owned())
         .collect::<Vec<_>>();
-    let refs: Vec<&str> = argument_refs.iter().map(String::as_str).collect();
-    f.ok("set-plate-corner", &refs);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let mut refs: Vec<&str> = argument_refs.iter().map(String::as_str).collect();
+    let mut args = vec!["set-plate-corner", "--store", store.as_str()];
+    args.append(&mut refs);
+    let replies = f.script(&[Scripted::ok(&args), check_line(&store, false, &[])]);
+    let reply = &replies[1];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
 }
 
 #[test]
@@ -1488,13 +1748,20 @@ fn a_twenty_millimetre_cut_is_overcut_with_measured_and_required() {
     // CORNER_OVERCUT, measured 20 mm and required 10 mm, subject to the
     // recorded tolerance; no fix is offered.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:20"]);
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let finding = finding_of(&reply, "CORNER_OVERCUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:20"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[4];
+    assert_eq!(text(reply, "status"), "red");
+    let finding = finding_of(reply, "CORNER_OVERCUT");
     assert_eq!(text(finding, "status"), "fail");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
@@ -1520,14 +1787,22 @@ fn a_twenty_millimetre_cut_is_overcut_with_measured_and_required() {
         assert_eq!(text(value, "source"), "measured");
     }
     assert!(matches!(finding.get("fix"), Ok(Json::Null)));
+
     // An undersized 5 mm cut stays CORNER_NOT_CUT with the leg reported.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:5"]);
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:5"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[4];
+    let finding = finding_of(reply, "CORNER_NOT_CUT");
     assert_eq!(text(finding, "status"), "fail");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 5.0).abs() <= 1e-9, "{measured}");
@@ -1539,27 +1814,39 @@ fn a_recorded_upper_bound_replaces_the_band_upper_edge_in_the_reply() {
     // overcut; with the owner's standalone maximum of 12 ± 2 recorded, the
     // same cut passes: the bound replaces the band's upper edge.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:12"]);
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(finding_of(&reply, "CORNER_OVERCUT"), "status"), "fail");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:12"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[4];
+    assert_eq!(text(finding_of(reply, "CORNER_OVERCUT"), "status"), "fail");
+
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:12"]);
-    f.corner(
-        &rib,
-        &base,
-        &column,
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:12"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
         &["--upper-bound-mm", "12", "--upper-bound-tolerance-mm", "2"],
-    );
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
+    ));
+    lines.push(check_line(&store, false, &[]));
+    lines.push(record_list_line(&store));
+    let replies = f.script(&lines);
+    let reply = &replies[4];
+    assert_eq!(text(reply, "status"), "green");
     // The bound travels through the record vehicle.
-    let listed = f.run("record-list", &[]).1;
-    let row = list(&listed, "records")
+    let listed = &replies[5];
+    let row = list(listed, "records")
         .iter()
         .find(|row| text(row, "kind") == "corner_cut")
         .unwrap_or_else(|| panic!("no corner_cut record in {listed:?}"));
@@ -1573,17 +1860,19 @@ fn a_ghost_corner_target_stays_unresolved_and_bad_input_refuses() {
     // ghost case: judged, unknown (target_unresolved), the requirement kept;
     // nothing auto-retargets.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    let ghost = "019a7bf0-0000-7000-8000-00000000dead";
-    let neighbours = format!("{base},{column}");
-    f.record(
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let neighbours = format!("{JOINT_BASE},{JOINT_COLUMN}");
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(record_line(
+        &store,
+        true,
         "corner cut",
         &[
             "--kind",
             "corner_cut",
             "--target",
-            ghost,
+            "019a7bf0-0000-7000-8000-00000000dead",
             "--neighbours",
             &neighbours,
             "--required-mm",
@@ -1591,21 +1880,13 @@ fn a_ghost_corner_target_stays_unresolved_and_bad_input_refuses() {
             "--tolerance-mm",
             "1",
         ],
-    );
-    let _ = rib;
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
-    assert_eq!(text(finding, "status"), "unknown");
-    assert_eq!(reason_of(&reply, "CORNER_NOT_CUT"), "target_unresolved");
-    assert!(text(finding, "message").contains("stays recorded"));
-    // The command refuses a corner-cut requirement without its target.
-    let (code, body) = f.run(
-        "record-create",
+    ));
+    lines.push(check_line(&store, false, &[]));
+    lines.push(record_line(
+        &store,
+        false,
+        "corner cut",
         &[
-            "--name",
-            "corner cut",
             "--kind",
             "corner_cut",
             "--neighbours",
@@ -1614,12 +1895,18 @@ fn a_ghost_corner_target_stays_unresolved_and_bad_input_refuses() {
             "10",
             "--tolerance-mm",
             "1",
-            "--new-id",
-            "019a7bf0-0000-7000-8000-00000000feed",
         ],
-    );
-    assert_eq!(code, 2);
-    assert_eq!(text(&body, "outcome"), "rejected");
+    ));
+    let replies = f.script(&lines);
+    let reply = &replies[4];
+    assert_eq!(text(reply, "status"), "unknown");
+    let finding = finding_of(reply, "CORNER_NOT_CUT");
+    assert_eq!(text(finding, "status"), "unknown");
+    assert_eq!(reason_of(reply, "CORNER_NOT_CUT"), "target_unresolved");
+    assert!(text(finding, "message").contains("stays recorded"));
+    // The command refuses a corner-cut requirement without its target.
+    let body = &replies[5];
+    assert_eq!(text(body, "outcome"), "rejected");
 }
 
 // #725: the corner-cut measurement judged every row of the issue's table on
@@ -1635,24 +1922,52 @@ fn a_weld_leg_within_the_cut_is_green_and_past_it_turns_the_clearance_red() {
     // while the recorded requirement stays 10 mm: the finding rides the
     // corner token with the weld record named in its basis and bounds.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "6", "150,5,10;150,40,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(path_weld_line(
+        &store,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        "6",
+        "150,5,10;150,40,10",
+    ));
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
 
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    f.corner(&rib, &base, &column, &[]);
-    let weld = f.sized_path_weld(&base, &column, "14", "150,5,10;150,40,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(path_weld_line(
+        &store,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        "14",
+        "150,5,10;150,40,10",
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let replies = f.script(&lines);
+    let weld = text(&replies[4], "element_id");
+    let reply = &replies[5];
+    assert_eq!(text(reply, "status"), "red");
+    let finding = finding_of(reply, "CORNER_NOT_CUT");
     assert_eq!(text(finding, "status"), "fail");
     // #723: no fix (a larger cut and a smaller weld both repair it, and the
     // 14 mm chamfer would overcut the 10 mm requirement), the weld named in
@@ -1688,14 +2003,27 @@ fn a_weld_elsewhere_between_the_neighbours_leaves_the_clearance_quiet() {
     // a weld elsewhere between the same parts produces no corner finding
     // (contract 4.4), and the 14 mm leg changes nothing.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "14", "150,20,10;150,40,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(path_weld_line(
+        &store,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        "14",
+        "150,20,10;150,40,10",
+    ));
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
 }
 
 #[test]
@@ -1704,16 +2032,23 @@ fn a_pathless_weld_between_the_neighbours_stays_unknown_for_the_clearance() {
     // establish whether it passes the corner, so the clearance stays unknown
     // (attachment_unvalidated) — the clearance only.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    f.corner(&rib, &base, &column, &[]);
-    f.weld(&base, &column);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
-    let findings = list(&reply, "findings");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(weld_line(&store, JOINT_BASE, JOINT_COLUMN));
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "unknown");
+    let findings = list(reply, "findings");
     assert_eq!(findings.len(), 1, "{findings:?}");
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    let finding = finding_of(reply, "CORNER_NOT_CUT");
     assert_eq!(text(finding, "status"), "unknown");
     assert_eq!(list(finding, "missing_inputs").len(), 1);
     assert!(
@@ -1729,18 +2064,31 @@ fn a_weld_leg_at_the_band_edge_is_unknown_indeterminate() {
     // the near-threshold band edge (contact tolerance 0.5), so the clearance
     // stays unknown (indeterminate) with the admitted leg reported.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "10.5", "150,5,10;150,40,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "unknown");
-    let findings = list(&reply, "findings");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(path_weld_line(
+        &store,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        "10.5",
+        "150,5,10;150,40,10",
+    ));
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "unknown");
+    let findings = list(reply, "findings");
     assert_eq!(findings.len(), 1, "{findings:?}");
-    let finding = finding_of(&reply, "CORNER_NOT_CUT");
+    let finding = finding_of(reply, "CORNER_NOT_CUT");
     assert_eq!(text(finding, "status"), "unknown");
-    assert_eq!(reason_of(&reply, "CORNER_NOT_CUT"), "indeterminate");
+    assert_eq!(reason_of(reply, "CORNER_NOT_CUT"), "indeterminate");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 10.0).abs() <= 1e-6, "{measured}");
 }
@@ -1752,24 +2100,50 @@ fn a_rounding_and_a_chamfer_with_equal_setbacks_differ_in_the_clearance() {
     // same weld turns the clearance red there (beside the size finding the
     // rounding already carries at the required 10 mm).
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:10"]);
-    f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "8", "150,5,10;150,40,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(path_weld_line(
+        &store,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        "8",
+        "150,5,10;150,40,10",
+    ));
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "green");
 
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=round:10"]);
-    f.corner(&rib, &base, &column, &[]);
-    f.sized_path_weld(&base, &column, "8", "150,5,10;150,40,10");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    assert_eq!(fail_count(&reply, "CORNER_NOT_CUT"), 2);
-    let clearance = list(&reply, "findings")
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=round:10"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(path_weld_line(
+        &store,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        "8",
+        "150,5,10;150,40,10",
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "red");
+    assert_eq!(fail_count(reply, "CORNER_NOT_CUT"), 2);
+    let clearance = list(reply, "findings")
         .iter()
         .find(|f| text(f, "basis").contains("contract 4.4"))
         .expect("the clearance finding is missing");
@@ -1783,13 +2157,20 @@ fn an_asymmetric_parameterized_chamfer_is_overcut_with_named_values() {
     // named, in either order of the two distances.
     for corners in ["0=chamfer:10,40", "0=chamfer:40,10"] {
         let f = Fixture::new();
-        let steel = f.material();
-        let (base, column, rib) = f.joint(&steel, &[corners]);
-        f.corner(&rib, &base, &column, &[]);
-        let (code, reply) = f.check(&[]);
-        assert_eq!(code, 2, "{corners}: {reply:?}");
-        assert_eq!(text(&reply, "status"), "red");
-        let finding = finding_of(&reply, "CORNER_OVERCUT");
+        let store = f.store();
+        let steel = material_of(&f.script(&[material_line(&store)]));
+        let mut lines = joint_lines(&store, &steel, &[corners]);
+        lines.push(corner_line(
+            &store,
+            JOINT_RIB,
+            JOINT_BASE,
+            JOINT_COLUMN,
+            &[],
+        ));
+        lines.push(check_line(&store, true, &[]));
+        let reply = &f.script(&lines)[4];
+        assert_eq!(text(reply, "status"), "red", "{corners}");
+        let finding = finding_of(reply, "CORNER_OVERCUT");
         assert_eq!(text(finding, "status"), "fail");
         let bounds = list(finding, "bounds");
         assert_eq!(bounds.len(), 3, "{corners}");
@@ -1820,31 +2201,62 @@ fn contour_authored_cuts_are_judged_like_parameterized_ones() {
     // CORNER_OVERCUT with measured 20, no fix (contract 9: contour
     // reconstruction is no set-plate-corner repair).
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.standing(&steel, "100", "200", "40", "50,40,10", &[]);
-    let rib = f.standing_contour(&steel, "10,0,0;80,0,0;80,100,0;0,100,0;0,10,0", "150,10,10");
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        pinned_plate(&store, JOINT_BASE, &steel, "10", "0,0,0"),
+        pinned_standing(
+            &store,
+            JOINT_COLUMN,
+            &steel,
+            &["100", "200", "40"],
+            "50,40,10",
+            &[],
+        ),
+        pinned_contour_rib(
+            &store,
+            JOINT_RIB,
+            &steel,
+            "10,0,0;80,0,0;80,100,0;0,100,0;0,10,0",
+            "150,10,10",
+        ),
+        corner_line(&store, JOINT_RIB, JOINT_BASE, JOINT_COLUMN, &[]),
+        check_line(&store, false, &[]),
+    ])[4];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
+
     let f = Fixture::new();
-    let steel = f.material();
-    let base = f.plate(&steel, "10", "0,0,0");
-    let column = f.standing(&steel, "100", "200", "40", "50,40,10", &[]);
-    let rib = f.standing_contour(&steel, "20,0,0;80,0,0;80,100,0;0,100,0;0,20,0", "150,10,10");
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "red");
-    let finding = finding_of(&reply, "CORNER_OVERCUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let reply = &f.script(&[
+        pinned_plate(&store, JOINT_BASE, &steel, "10", "0,0,0"),
+        pinned_standing(
+            &store,
+            JOINT_COLUMN,
+            &steel,
+            &["100", "200", "40"],
+            "50,40,10",
+            &[],
+        ),
+        pinned_contour_rib(
+            &store,
+            JOINT_RIB,
+            &steel,
+            "20,0,0;80,0,0;80,100,0;0,100,0;0,20,0",
+            "150,10,10",
+        ),
+        corner_line(&store, JOINT_RIB, JOINT_BASE, JOINT_COLUMN, &[]),
+        check_line(&store, true, &[]),
+    ])[4];
+    assert_eq!(text(reply, "status"), "red");
+    let finding = finding_of(reply, "CORNER_OVERCUT");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
     assert!(matches!(finding.get("fix"), Ok(Json::Null)));
     // At exact coordinates the flush rib, column and plate only touch.
-    assert_eq!(fail_count(&reply, "PART_CLASH"), 0);
-    assert_eq!(unknown_count(&reply, "PART_CLASH"), 0);
+    assert_eq!(fail_count(reply, "PART_CLASH"), 0);
+    assert_eq!(unknown_count(reply, "PART_CLASH"), 0);
 }
 
 #[test]
@@ -1853,34 +2265,73 @@ fn plane_cut_and_chamfer_part_corners_are_judged_like_parameterized_ones() {
     // is green like the parameterized chamfer; a 20×20 plane cut is
     // CORNER_OVERCUT with measured 20.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &[]);
-    f.cut_rib_corner_by_plane(&rib, "10", "019a7bf0-0000-7000-8000-00000000c011");
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &[]);
+    lines.push(cut_plane_line(
+        &store,
+        JOINT_RIB,
+        "10",
+        "019a7bf0-0000-7000-8000-00000000c011",
+    ));
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
+
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &[]);
-    f.cut_rib_corner_by_plane(&rib, "20", "019a7bf0-0000-7000-8000-00000000c012");
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    let finding = finding_of(&reply, "CORNER_OVERCUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &[]);
+    lines.push(cut_plane_line(
+        &store,
+        JOINT_RIB,
+        "20",
+        "019a7bf0-0000-7000-8000-00000000c012",
+    ));
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[5];
+    let finding = finding_of(reply, "CORNER_OVERCUT");
     let measured = at(finding, &["measured_mm"]).float().unwrap();
     assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
+
     // The A13 fabrication route: the same final 10×10 shape, green.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &[]);
-    f.chamfer_rib_part(&rib, "10", "10", "019a7bf0-0000-7000-8000-00000000c013");
-    f.corner(&rib, &base, &column, &[]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    assert_eq!(list(&reply, "findings").len(), 0);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &[]);
+    lines.push(chamfer_line(
+        &store,
+        JOINT_RIB,
+        "10",
+        "10",
+        "019a7bf0-0000-7000-8000-00000000c013",
+    ));
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, false, &[]));
+    let reply = &f.script(&lines)[5];
+    assert_eq!(text(reply, "status"), "green");
+    assert_eq!(list(reply, "findings").len(), 0);
 }
 
 #[test]
@@ -1900,12 +2351,19 @@ fn a_rounding_is_judged_by_its_admitted_leg_and_stays_without_the_chamfer_fix() 
         ("0=round:20", Some("CORNER_OVERCUT"), 20.0),
     ] {
         let f = Fixture::new();
-        let steel = f.material();
-        let (base, column, rib) = f.joint(&steel, &[corners]);
-        f.corner(&rib, &base, &column, &[]);
-        let (code, reply) = f.check(&[]);
-        assert_eq!(code, 2, "{corners}: {reply:?}");
-        let finding = finding_of(&reply, rule.unwrap());
+        let store = f.store();
+        let steel = material_of(&f.script(&[material_line(&store)]));
+        let mut lines = joint_lines(&store, &steel, &[corners]);
+        lines.push(corner_line(
+            &store,
+            JOINT_RIB,
+            JOINT_BASE,
+            JOINT_COLUMN,
+            &[],
+        ));
+        lines.push(check_line(&store, true, &[]));
+        let reply = &f.script(&lines)[4];
+        let finding = finding_of(reply, rule.unwrap());
         assert_eq!(text(finding, "status"), "fail", "{corners}");
         let value = at(finding, &["measured_mm"]).float().unwrap();
         assert!(
@@ -1926,124 +2384,39 @@ fn a_rounding_is_judged_by_its_admitted_leg_and_stays_without_the_chamfer_fix() 
 // equivalent — it never receives the chamfer fix.
 
 /// Builds the sample joint with the corner cut of `size` mm authored three
-/// ways; returns the three element ids the requirement names.
-fn joint_with_cut(f: &Fixture, size: &str, authoring: &str) -> (String, String, String) {
-    let steel = f.material();
+/// ways; the requirement names the pinned ids.
+fn joint_with_cut_lines(store: &str, steel: &str, size: &str, authoring: &str) -> Vec<Scripted> {
     match authoring {
         "corner parameters" => {
             let corners = format!("0=chamfer:{size}");
-            f.joint(&steel, &[&corners])
+            joint_lines(store, steel, &[&corners])
         }
         "contour points" => {
-            let base = f.plate(&steel, "10", "0,0,0");
-            let column = f.standing(&steel, "100", "200", "40", "50,40,10", &[]);
             let contour = format!("{size},0,0;80,0,0;80,100,0;0,100,0;0,{size},0");
-            let rib = f.standing_contour(&steel, &contour, "150,10,10");
-            (base, column, rib)
+            vec![
+                pinned_plate(store, JOINT_BASE, steel, "10", "0,0,0"),
+                pinned_standing(
+                    store,
+                    JOINT_COLUMN,
+                    steel,
+                    &["100", "200", "40"],
+                    "50,40,10",
+                    &[],
+                ),
+                pinned_contour_rib(store, JOINT_RIB, steel, &contour, "150,10,10"),
+            ]
         }
         _ => {
-            let (base, column, rib) = f.joint(&steel, &[]);
-            f.cut_rib_corner_by_plane(&rib, size, "019a7bf0-0000-7000-8000-00000000e001");
-            (base, column, rib)
+            let mut lines = joint_lines(store, steel, &[]);
+            lines.push(cut_plane_line(
+                store,
+                JOINT_RIB,
+                size,
+                "019a7bf0-0000-7000-8000-00000000e001",
+            ));
+            lines
         }
     }
-}
-
-/// The #634 sample on a real I-section column (h 200, b 200, tw 9, tf 15,
-/// r 18) standing on a 1000x500x20 base plate, with a 80x100x10 rib against the
-/// flange face y = 350 whose lower inner corner sits at y 350, z 20. The rib is
-/// authored with the given plate options; returns (base, column, rib).
-fn i_section_sample(f: &Fixture, rib_options: &[&str]) -> (String, String, String) {
-    let steel = f.material();
-    let profile = text(
-        at(
-            &f.ok(
-                "define-profile",
-                &[
-                    "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
-                    "--r", "18",
-                ],
-            ),
-            &["definition"],
-        ),
-        "digest",
-    );
-    let base = f.plate(&steel, "20", "0,0,0");
-    let column = text(
-        at(
-            &f.ok(
-                "create-member",
-                &[
-                    "--profile-digest",
-                    &profile,
-                    "--start",
-                    "500,250,20",
-                    "--end",
-                    "500,250,1000",
-                    "--kind",
-                    "column",
-                    "--material-digest",
-                    &steel,
-                ],
-            ),
-            &["member"],
-        ),
-        "element_id",
-    );
-    let mut args: Vec<&str> = vec![
-        "--thickness",
-        "10",
-        "--material-digest",
-        &steel,
-        "--orientation-xyzw",
-        "0.5,0.5,0.5,0.5",
-        "--translation",
-        "495,350,20",
-    ];
-    args.extend(rib_options);
-    let rib = text(at(&f.ok("create-plate", &args), &["plate"]), "element_id");
-    f.corner(&rib, &base, &column, &[]);
-    (base, column, rib)
-}
-
-#[test]
-fn a_contour_authored_cut_on_an_i_section_column_is_judged_like_the_others() {
-    // #746: the 10 mm rib against the 9 mm web of an I-section column. The
-    // contour-authored chamfer's extended edge met the extended top edge at a
-    // phantom point 0.5 mm off the web, so the requirement read indeterminate
-    // while the parameterized and plane-cut chamfers of the same final shape
-    // read green. All three are green now; the 20 mm contour cut is overcut.
-    for rib_options in [
-        &[
-            "--width",
-            "80",
-            "--length",
-            "100",
-            "--corners",
-            "0=chamfer:10",
-        ][..],
-        &["--contour", "10,0;80,0;80,100;0,100;0,10"][..],
-    ] {
-        let f = Fixture::new();
-        i_section_sample(&f, rib_options);
-        let (code, reply) = f.check(&[]);
-        assert_eq!(code, 0, "{rib_options:?}: {reply:?}");
-        assert_eq!(text(&reply, "status"), "green", "{rib_options:?}");
-        assert_eq!(list(&reply, "findings").len(), 0, "{rib_options:?}");
-    }
-    let f = Fixture::new();
-    let (_, _, rib) = i_section_sample(&f, &["--width", "80", "--length", "100"]);
-    f.cut_rib_corner_by_plane(&rib, "10", "019a7bf0-0000-7000-8000-00000000c746");
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(&reply, "status"), "green");
-    let f = Fixture::new();
-    i_section_sample(&f, &["--contour", "20,0;80,0;80,100;0,100;0,20"]);
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 2, "{reply:?}");
-    let finding = finding_of(&reply, "CORNER_OVERCUT");
-    let measured = at(finding, &["measured_mm"]).float().unwrap();
-    assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
 }
 
 #[test]
@@ -2057,17 +2430,25 @@ fn equivalent_final_cuts_receive_equivalent_check_results() {
         let mut verdicts: Vec<(String, f64)> = Vec::new();
         for authoring in ["corner parameters", "contour points", "plane cut"] {
             let f = Fixture::new();
-            let (base, column, rib) = joint_with_cut(&f, size, authoring);
-            f.corner(&rib, &base, &column, &[]);
-            let (code, reply) = f.check(&[]);
+            let store = f.store();
+            let steel = material_of(&f.script(&[material_line(&store)]));
+            let mut lines = joint_with_cut_lines(&store, &steel, size, authoring);
+            lines.push(corner_line(
+                &store,
+                JOINT_RIB,
+                JOINT_BASE,
+                JOINT_COLUMN,
+                &[],
+            ));
+            lines.push(check_line(&store, size != "10", &[]));
+            let replies = f.script(&lines);
+            let reply = replies.last().unwrap();
             if size == "10" {
-                assert_eq!(code, 0, "{authoring}: {reply:?}");
-                assert_eq!(text(&reply, "status"), "green", "{authoring}");
-                assert_eq!(list(&reply, "findings").len(), 0, "{authoring}");
+                assert_eq!(text(reply, "status"), "green", "{authoring}");
+                assert_eq!(list(reply, "findings").len(), 0, "{authoring}");
                 verdicts.push(("green".to_owned(), 0.0));
             } else {
-                assert_eq!(code, 2, "{authoring}: {reply:?}");
-                let finding = finding_of(&reply, "CORNER_OVERCUT");
+                let finding = finding_of(reply, "CORNER_OVERCUT");
                 assert_eq!(text(finding, "status"), "fail", "{authoring}");
                 let measured = at(finding, &["measured_mm"]).float().unwrap();
                 assert!((measured - 20.0).abs() <= 1e-9, "{authoring}: {measured}");
@@ -2095,21 +2476,38 @@ fn an_equal_setback_rounding_is_not_the_chamfer_it_mimics() {
     // make the rounding the chamfer the requirement's repair would set
     // (contract 9).
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=chamfer:5"]);
-    f.corner(&rib, &base, &column, &[]);
-    let (_, reply) = f.check(&[]);
-    let chamfer = finding_of(&reply, "CORNER_NOT_CUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=chamfer:5"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[4];
+    let chamfer = finding_of(reply, "CORNER_NOT_CUT");
     assert_eq!(text(chamfer, "status"), "fail");
     let chamfer_measured = at(chamfer, &["measured_mm"]).float().unwrap();
     assert!((chamfer_measured - 5.0).abs() <= 1e-9, "{chamfer_measured}");
     assert_eq!(text(at(chamfer, &["fix"]), "command"), "set-plate-corner");
+
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &["0=round:5"]);
-    f.corner(&rib, &base, &column, &[]);
-    let (_, reply) = f.check(&[]);
-    let rounding = finding_of(&reply, "CORNER_NOT_CUT");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let mut lines = joint_lines(&store, &steel, &["0=round:5"]);
+    lines.push(corner_line(
+        &store,
+        JOINT_RIB,
+        JOINT_BASE,
+        JOINT_COLUMN,
+        &[],
+    ));
+    lines.push(check_line(&store, true, &[]));
+    let reply = &f.script(&lines)[4];
+    let rounding = finding_of(reply, "CORNER_NOT_CUT");
     assert_eq!(text(rounding, "status"), "fail");
     let rounding_measured = at(rounding, &["measured_mm"]).float().unwrap();
     let admitted = 5.0 * (2.0 - std::f64::consts::SQRT_2);
@@ -2218,31 +2616,41 @@ fn store_root_of(f: &Fixture) -> String {
     f.shared.root.join("store").to_str().unwrap().to_owned()
 }
 
+/// The stacked-pair model of the summary slice: the material and two plates
+/// ride one script each way the checks do.
+fn stacked_pair(f: &Fixture, second: &str) -> String {
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", second),
+    ]);
+    steel
+}
+
 #[test]
 fn a_write_on_a_red_model_returns_red_checks_with_write_exit_zero() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "100,0,5");
+    let steel = stacked_pair(&f, "100,0,5");
+    let store = f.store();
     // The write succeeded: exit 0, its own created reply — and the summary of
     // the resulting revision rides beside it as red.
-    let (code, reply) = f.run(
+    let reply = &f.script(&[Scripted::ok(&[
         "create-plate",
-        &[
-            "--width",
-            "400",
-            "--length",
-            "300",
-            "--thickness",
-            "12",
-            "--material-digest",
-            &steel,
-            "--translation",
-            "8000,0,0",
-        ],
-    );
-    assert_eq!(code, 0, "{reply:?}");
-    let summary = summary_of(&reply);
+        "--store",
+        &store,
+        "--width",
+        "400",
+        "--length",
+        "300",
+        "--thickness",
+        "12",
+        "--material-digest",
+        &steel,
+        "--translation",
+        "8000,0,0",
+    ])])[0];
+    let summary = summary_of(reply);
     assert_eq!(text(summary, "status"), "red");
     assert!(at(summary, &["findings_total"]).unsigned().unwrap() >= 1);
     assert_eq!(summary_fail(summary, "PART_CLASH"), 1);
@@ -2251,35 +2659,33 @@ fn a_write_on_a_red_model_returns_red_checks_with_write_exit_zero() {
     // not an unpinned head or the pre-write one.
     assert_eq!(
         text(summary, "revision_id"),
-        text(at(&reply, &["revision"]), "revision_id")
+        text(at(reply, &["revision"]), "revision_id")
     );
 }
 
 #[test]
 fn a_write_on_a_green_model_reports_green_checks() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "0,0,10");
-    let (code, reply) = f.run(
+    let steel = stacked_pair(&f, "0,0,10");
+    let store = f.store();
+    let reply = &f.script(&[Scripted::ok(&[
         "create-plate",
-        &[
-            "--width",
-            "400",
-            "--length",
-            "300",
-            "--thickness",
-            "12",
-            "--material-digest",
-            &steel,
-            "--translation",
-            "8000,0,0",
-        ],
-    );
-    assert_eq!(code, 0, "{reply:?}");
-    assert_eq!(text(summary_of(&reply), "status"), "green");
+        "--store",
+        &store,
+        "--width",
+        "400",
+        "--length",
+        "300",
+        "--thickness",
+        "12",
+        "--material-digest",
+        &steel,
+        "--translation",
+        "8000,0,0",
+    ])])[0];
+    assert_eq!(text(summary_of(reply), "status"), "green");
     assert_eq!(
-        at(summary_of(&reply), &["findings_total"])
+        at(summary_of(reply), &["findings_total"])
             .unsigned()
             .unwrap(),
         0
@@ -2314,9 +2720,7 @@ fn the_opt_out_omits_the_summary_and_any_other_value_keeps_it() {
 #[test]
 fn a_session_write_carries_the_same_summary() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "100,0,5");
+    let steel = stacked_pair(&f, "100,0,5");
     let store = store_root_of(&f);
     let mut session = SessionLines::start(&store);
     let reply = session.ask(&format!(
@@ -2340,9 +2744,7 @@ fn a_drafted_write_reports_draft_not_evaluated_and_the_commit_checks_the_result(
     // draft as not evaluated, with no revision named. The commit then checks
     // the resulting revision — which carries the drafted plate, so red.
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "0,0,10");
+    let steel = stacked_pair(&f, "0,0,10");
     let store = store_root_of(&f);
     let mut session = SessionLines::start(&store);
     let opened = session.ask("batch-open");
@@ -2377,45 +2779,54 @@ fn the_record_write_turns_the_summary_red_and_the_repair_write_green() {
     // uncut rib makes the recording write's own summary red with
     // CORNER_NOT_CUT; the repair write's summary is green.
     let f = Fixture::new();
-    let steel = f.material();
-    let (base, column, rib) = f.joint(&steel, &[]);
-    let neighbours = format!("{base},{column}");
-    let (code, reply) = f.run(
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let neighbours = format!("{JOINT_BASE},{JOINT_COLUMN}");
+    let mut lines = joint_lines(&store, &steel, &[]);
+    lines.push(Scripted::ok(&[
         "record-create",
-        &[
-            "--name",
-            "corner cut",
-            "--kind",
-            "corner_cut",
-            "--target",
-            &rib,
-            "--neighbours",
-            &neighbours,
-            "--required-mm",
-            "10",
-            "--tolerance-mm",
-            "1",
-            "--new-id",
-            "019a7bf0-0000-7000-8000-00000000f00d",
-        ],
-    );
-    assert_eq!(code, 0, "{reply:?}");
-    let summary = summary_of(&reply);
+        "--store",
+        &store,
+        "--name",
+        "corner cut",
+        "--kind",
+        "corner_cut",
+        "--target",
+        JOINT_RIB,
+        "--neighbours",
+        &neighbours,
+        "--required-mm",
+        "10",
+        "--tolerance-mm",
+        "1",
+        "--new-id",
+        "019a7bf0-0000-7000-8000-00000000f00d",
+    ]));
+    lines.push(Scripted::ok(&[
+        "set-plate-corner",
+        "--store",
+        &store,
+        "--id",
+        JOINT_RIB,
+        "--vertex",
+        "0",
+        "--corner",
+        "chamfer:10",
+    ]));
+    let replies = f.script(&lines);
+    let reply = &replies[3];
+    let summary = summary_of(reply);
     assert_eq!(text(summary, "status"), "red");
     assert_eq!(summary_fail(summary, "CORNER_NOT_CUT"), 1);
     assert_eq!(
         text(summary, "revision_id"),
-        text(at(&reply, &["revision"]), "revision_id")
+        text(at(reply, &["revision"]), "revision_id")
     );
     // The unambiguous repair of the finding, applied as an ordinary write.
-    let (code, repaired) = f.run(
-        "set-plate-corner",
-        &["--id", &rib, "--vertex", "0", "--corner", "chamfer:10"],
-    );
-    assert_eq!(code, 0, "{repaired:?}");
-    assert_eq!(text(summary_of(&repaired), "status"), "green");
+    let repaired = &replies[4];
+    assert_eq!(text(summary_of(repaired), "status"), "green");
     assert_eq!(
-        at(summary_of(&repaired), &["findings_total"])
+        at(summary_of(repaired), &["findings_total"])
             .unsigned()
             .unwrap(),
         0
@@ -2428,13 +2839,16 @@ fn the_summary_counts_equal_the_paged_report_of_the_same_revision() {
     // write equals a findings-page-1 report of the same revision, and the
     // page shows one finding while the counts stay whole-scope.
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    f.plate(&steel, "10", "100,0,5");
-    f.plate(&steel, "10", "200,0,5");
-    let (code, reply) = f.run(
-        "create-plate",
-        &[
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let replies = f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        plate_line(&store, &steel, "10", "100,0,5"),
+        plate_line(&store, &steel, "10", "200,0,5"),
+        Scripted::ok(&[
+            "create-plate",
+            "--store",
+            &store,
             "--width",
             "400",
             "--length",
@@ -2445,27 +2859,27 @@ fn the_summary_counts_equal_the_paged_report_of_the_same_revision() {
             &steel,
             "--translation",
             "8000,0,0",
-        ],
-    );
-    assert_eq!(code, 0, "{reply:?}");
-    let summary = summary_of(&reply);
-    let (code, report) = f.check(&["--offset", "0", "--limit", "1"]);
-    assert_eq!(code, 2, "{report:?}");
-    assert_eq!(text(&report, "revision_id"), text(summary, "revision_id"));
+        ]),
+        check_line(&store, true, &["--offset", "0", "--limit", "1"]),
+    ]);
+    let reply = &replies[3];
+    let summary = summary_of(reply);
+    let report = &replies[4];
+    assert_eq!(text(report, "revision_id"), text(summary, "revision_id"));
     assert_eq!(
-        at(&report, &["findings_total"]).unsigned().unwrap(),
+        at(report, &["findings_total"]).unsigned().unwrap(),
         at(summary, &["findings_total"]).unsigned().unwrap()
     );
-    assert_eq!(list(&report, "findings").len(), 1, "one finding per page");
+    assert_eq!(list(report, "findings").len(), 1, "one finding per page");
     for rule in beamcraft_commands::check::RULES {
         assert_eq!(
             summary_fail(summary, rule),
-            fail_count(&report, rule),
+            fail_count(report, rule),
             "{rule} fail"
         );
         assert_eq!(
             summary_unknown(summary, rule),
-            unknown_count(&report, rule),
+            unknown_count(report, rule),
             "{rule} unknown"
         );
     }
@@ -2474,11 +2888,14 @@ fn the_summary_counts_equal_the_paged_report_of_the_same_revision() {
 #[test]
 fn reads_and_store_level_writes_carry_no_checks_summary() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
-    // A read reply never carries the summary.
-    let (code, reply) = f.check(&[]);
-    assert_eq!(code, 0, "{reply:?}");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let replies = f.script(&[
+        plate_line(&store, &steel, "10", "0,0,0"),
+        // A read reply never carries the summary.
+        check_line(&store, false, &[]),
+    ]);
+    let reply = &replies[1];
     assert!(reply.get("checks").is_err());
     // A store-level write (the blob primitive) is not a model write: no summary.
     let blob = f.shared.root.join("blob.bin");
@@ -2516,42 +2933,44 @@ fn reads_and_store_level_writes_carry_no_checks_summary() {
 fn whole_weld_gaps_judge_both_range_edges() {
     for (min, max, expected) in [("0", "2", 9.0), ("5", "10", 1.0)] {
         let f = Fixture::new();
-        let steel = f.material();
-        let a = f.plate(&steel, "10", "0,0,0");
+        let store = f.store();
+        let steel = material_of(&f.script(&[material_line(&store)]));
+        let (a, b) = (pinned(0xba6a71), pinned(0xba6a72));
         let angle = 0.01_f64;
         let orientation = format!("0,{},0,{}", -(angle / 2.0).sin(), (angle / 2.0).cos());
-        let b = text(
-            at(
-                &f.ok(
-                    "create-plate",
-                    &[
-                        "--width",
-                        "1000",
-                        "--length",
-                        "500",
-                        "--thickness",
-                        "10",
-                        "--material-digest",
-                        &steel,
-                        "--translation",
-                        "0,0,10",
-                        "--orientation-xyzw",
-                        &orientation,
-                    ],
-                ),
-                &["plate"],
-            ),
-            "element_id",
-        );
-        f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
         let path = [100.0, 900.0]
             .map(|x| format!("{x},100,{}", 10.0 + x * angle.tan() / 2.0))
             .join(";");
-        f.path_weld(&a, &b, &path);
-        f.gap(&a, &b, min, max, "0.3");
-        let (code, report) = f.check(&[]);
-        assert_eq!(code, 2, "[{min}, {max}]: {report:?}");
-        let finding = finding_of(&report, "WELD_WITHOUT_CONTACT");
+        let replies = f.script(&[
+            pinned_plate(&store, &a, &steel, "10", "0,0,0"),
+            Scripted::ok(&[
+                "create-plate",
+                "--store",
+                &store,
+                "--name",
+                "P",
+                "--new-id",
+                &b,
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--material-digest",
+                &steel,
+                "--translation",
+                "0,0,10",
+                "--orientation-xyzw",
+                &orientation,
+            ]),
+            intent_line(&store, &[&a, &b], &[&format!("{a}:weld:{b}")]),
+            path_weld_line(&store, &a, &b, "6", &path),
+            gap_line(&store, &a, &b, min, max, "0.3"),
+            check_line(&store, true, &[]),
+        ]);
+        let report = &replies[5];
+        let finding = finding_of(report, "WELD_WITHOUT_CONTACT");
         assert_eq!(text(finding, "status"), "fail");
         assert!((at(finding, &["measured_mm"]).float().unwrap() - expected).abs() < 0.01);
     }
@@ -2560,37 +2979,39 @@ fn whole_weld_gaps_judge_both_range_edges() {
 #[test]
 fn exact_contact_endpoints_do_not_hide_a_hole_inside_the_weld_path() {
     let f = Fixture::new();
-    let steel = f.material();
-    let a = f.plate(&steel, "10", "0,0,0");
-    let b = text(
-        at(
-            &f.ok(
-                "create-plate",
-                &[
-                    "--width",
-                    "1000",
-                    "--length",
-                    "500",
-                    "--thickness",
-                    "10",
-                    "--material-digest",
-                    &steel,
-                    "--translation",
-                    "0,0,10",
-                    "--hole-rect",
-                    "450,200,100,100",
-                ],
-            ),
-            &["plate"],
-        ),
-        "element_id",
-    );
-    f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
-    f.path_weld(&a, &b, "100,250,10;900,250,10");
-    f.gap(&a, &b, "0", "0", "0");
-    let (_, report) = f.check(&[]);
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (a, b) = (pinned(0xba6a81), pinned(0xba6a82));
+    f.script(&[
+        pinned_plate(&store, &a, &steel, "10", "0,0,0"),
+        Scripted::ok(&[
+            "create-plate",
+            "--store",
+            &store,
+            "--name",
+            "P",
+            "--new-id",
+            &b,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--material-digest",
+            &steel,
+            "--translation",
+            "0,0,10",
+            "--hole-rect",
+            "450,200,100,100",
+        ]),
+        intent_line(&store, &[&a, &b], &[&format!("{a}:weld:{b}")]),
+        path_weld_line(&store, &a, &b, "6", "100,250,10;900,250,10"),
+        gap_line(&store, &a, &b, "0", "0", "0"),
+    ]);
     // Both authored endpoints lie exactly on both parts, but the segment
     // between them crosses the hole. Incomplete coverage cannot report green.
+    let (_, report) = f.run("check-model", &[]);
     assert_ne!(text(&report, "status"), "green", "{report:?}");
     assert!(
         unknown_count(&report, "WELD_WITHOUT_CONTACT") > 0
@@ -2602,7 +3023,8 @@ fn exact_contact_endpoints_do_not_hide_a_hole_inside_the_weld_path() {
 #[test]
 fn replay_checks_the_result_revision_after_geometry_and_requirement_edits() {
     let f = Fixture::new();
-    let steel = f.material();
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
     let args = [
         "--width",
         "1000",
@@ -2617,29 +3039,48 @@ fn replay_checks_the_result_revision_after_geometry_and_requirement_edits() {
         "--new-id",
         "019a7bf0-0000-7000-8000-000000000302",
     ];
-    let original = f.ok("create-plate", &args);
-    let a = text(at(&original, &["plate"]), "element_id");
-    let b = f.plate(&steel, "10", "0,0,10");
-    f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
-    assert_eq!(text(&f.check(&[]).1, "status"), "red");
-    let replay = f.ok("create-plate", &args);
-    assert_eq!(text(&replay, "outcome"), "plate_replayed");
-    assert_eq!(at(&replay, &["checks"]), at(&original, &["checks"]));
+    let create = |store: &str, args: &[&str]| {
+        let mut all = vec!["create-plate", "--store", store];
+        all.extend_from_slice(args);
+        Scripted::ok(&all)
+    };
+    let b = pinned(0xba6a91);
+    let replies = f.script(&[
+        create(&store, &args),
+        pinned_plate(&store, &b, &steel, "10", "0,0,10"),
+        intent_line(
+            &store,
+            &["019a7bf0-0000-7000-8000-000000000302", &b],
+            &[&format!("019a7bf0-0000-7000-8000-000000000302:weld:{b}")],
+        ),
+        check_line(&store, true, &[]),
+        create(&store, &args),
+        plate_line(&store, &steel, "10", "0,0,5"),
+        create(&store, &args),
+    ]);
+    let original = &replies[0];
     assert_eq!(
-        text(at(&replay, &["revision"]), "revision_id"),
-        text(at(&replay, &["checks"]), "revision_id")
+        text(at(original, &["plate"]), "element_id"),
+        "019a7bf0-0000-7000-8000-000000000302"
+    );
+    let replay = &replies[4];
+    assert_eq!(text(replay, "outcome"), "plate_replayed");
+    assert_eq!(at(replay, &["checks"]), at(original, &["checks"]));
+    assert_eq!(
+        text(at(replay, &["revision"]), "revision_id"),
+        text(at(replay, &["checks"]), "revision_id")
     );
     // A different later geometry also must not change the replay's report.
-    f.plate(&steel, "10", "0,0,5");
-    let replay = f.ok("create-plate", &args);
-    assert_eq!(at(&replay, &["checks"]), at(&original, &["checks"]));
+    let replay = &replies[6];
+    assert_eq!(at(replay, &["checks"]), at(original, &["checks"]));
 }
 
 #[test]
 fn a_carried_batch_operation_replays_the_batch_snapshot_in_a_session() {
     let f = Fixture::new();
-    let steel = f.material();
-    f.plate(&steel, "10", "0,0,0");
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    f.script(&[plate_line(&store, &steel, "10", "0,0,0")]);
     let store = store_root_of(&f);
     let mut session = SessionLines::start(&store);
     assert_eq!(text(&session.ask("batch-open"), "outcome"), "batch_opened");
@@ -2649,7 +3090,7 @@ fn a_carried_batch_operation_replays_the_batch_snapshot_in_a_session() {
     session.ask(&line);
     let committed = session.ask("batch-commit");
     assert_eq!(text(at(&committed, &["checks"]), "status"), "green");
-    f.plate(&steel, "10", "0,0,5");
+    f.script(&[plate_line(&store, &steel, "10", "0,0,5")]);
     let replay = session.ask(&line);
     assert_eq!(text(&replay, "outcome"), "plate_replayed");
     assert_eq!(at(&replay, &["checks"]), at(&committed, &["checks"]));
@@ -2658,34 +3099,215 @@ fn a_carried_batch_operation_replays_the_batch_snapshot_in_a_session() {
 #[test]
 fn a_replayed_requirement_reads_the_welds_of_its_original_revision() {
     let f = Fixture::new();
-    let steel = f.material();
-    let a = f.plate(&steel, "10", "0,0,0");
-    let b = f.plate(&steel, "10", "0,0,10");
-    f.intent(&[&a, &b], &[&format!("{a}:weld:{b}")]);
-    let args = [
-        "--name",
-        "gap",
-        "--kind",
-        "gap_requirement",
-        "--gap-a",
-        &a,
-        "--gap-b",
-        &b,
-        "--gap-min",
-        "0",
-        "--gap-max",
-        "2",
-        "--gap-tolerance",
-        "0.3",
-        "--new-id",
-        "019a7bf0-0000-7000-8000-000000000501",
-        "--op-id",
-        "019a7bf0-0000-7000-8000-000000000502",
+    let store = f.store();
+    let steel = material_of(&f.script(&[material_line(&store)]));
+    let (a, b) = (pinned(0xba6ab1), pinned(0xba6ab2));
+    let lines = vec![
+        pinned_plate(&store, &a, &steel, "10", "0,0,0"),
+        pinned_plate(&store, &b, &steel, "10", "0,0,10"),
+        intent_line(&store, &[&a, &b], &[&format!("{a}:weld:{b}")]),
+        Scripted::ok(&[
+            "record-create",
+            "--store",
+            &store,
+            "--name",
+            "gap",
+            "--kind",
+            "gap_requirement",
+            "--gap-a",
+            &a,
+            "--gap-b",
+            &b,
+            "--gap-min",
+            "0",
+            "--gap-max",
+            "2",
+            "--gap-tolerance",
+            "0.3",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-000000000501",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-000000000502",
+        ]),
+        path_weld_line(&store, &a, &b, "6", "100,100,10;300,100,10"),
+        check_line(&store, false, &[]),
+        Scripted::ok(&[
+            "record-create",
+            "--store",
+            &store,
+            "--name",
+            "gap",
+            "--kind",
+            "gap_requirement",
+            "--gap-a",
+            &a,
+            "--gap-b",
+            &b,
+            "--gap-min",
+            "0",
+            "--gap-max",
+            "2",
+            "--gap-tolerance",
+            "0.3",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-000000000501",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-000000000502",
+        ]),
     ];
-    let original = f.ok("record-create", &args);
-    assert_eq!(text(at(&original, &["checks"]), "status"), "red");
-    f.path_weld(&a, &b, "100,100,10;300,100,10");
-    assert_eq!(text(&f.check(&[]).1, "status"), "green");
-    let replay = f.ok("record-create", &args);
-    assert_eq!(at(&replay, &["checks"]), at(&original, &["checks"]));
+    let replies = f.script(&lines);
+    let original = &replies[3];
+    assert_eq!(text(at(original, &["checks"]), "status"), "red");
+    let reply = &replies[5];
+    assert_eq!(text(reply, "status"), "green");
+    let replay = &replies[6];
+    assert_eq!(at(replay, &["checks"]), at(original, &["checks"]));
+}
+
+/// The #634 sample on a real I-section column (h 200, b 200, tw 9, tf 15,
+/// r 18) standing on a 1000x500x20 base plate, with a 80x100x10 rib against the
+/// flange face y = 350 whose lower inner corner sits at y 350, z 20. The rib is
+/// authored with the given plate options; the requirement names the pinned ids.
+fn i_section_lines(store: &str, steel: &str, profile: &str, rib_options: &[&str]) -> Vec<Scripted> {
+    let (base, column, rib) = (pinned(0xba6b01), pinned(0xba6b02), pinned(0xba6b03));
+    let mut rib_args: Vec<&str> = vec![
+        "--name",
+        "P",
+        "--new-id",
+        &rib,
+        "--thickness",
+        "10",
+        "--material-digest",
+        steel,
+        "--orientation-xyzw",
+        "0.5,0.5,0.5,0.5",
+        "--translation",
+        "495,350,20",
+    ];
+    rib_args.extend(rib_options);
+    // The member carries the pinned column identity: the requirement line
+    // names it among the neighbours.
+    let member = Scripted::ok(&[
+        "create-member",
+        "--store",
+        store,
+        "--name",
+        "C",
+        "--new-id",
+        &column,
+        "--profile-digest",
+        profile,
+        "--start",
+        "500,250,20",
+        "--end",
+        "500,250,1000",
+        "--kind",
+        "column",
+        "--material-digest",
+        steel,
+    ]);
+    vec![
+        pinned_plate(store, &base, steel, "20", "0,0,0"),
+        member,
+        plate_with(store, &rib_args),
+        corner_line(store, &rib, &base, &column, &[]),
+    ]
+}
+
+#[test]
+fn a_contour_authored_cut_on_an_i_section_column_is_judged_like_the_others() {
+    // #746: the 10 mm rib against the 9 mm web of an I-section column. The
+    // contour-authored chamfer's extended edge met the extended top edge at a
+    // phantom point 0.5 mm off the web, so the requirement read indeterminate
+    // while the parameterized and plane-cut chamfers of the same final shape
+    // read green. All three are green now; the 20 mm contour cut is overcut.
+    for rib_options in [
+        &[
+            "--width",
+            "80",
+            "--length",
+            "100",
+            "--corners",
+            "0=chamfer:10",
+        ][..],
+        &["--contour", "10,0;80,0;80,100;0,100;0,10"][..],
+    ] {
+        let f = Fixture::new();
+        let store = f.store();
+        let setup = f.script(&[
+            material_line(&store),
+            profile_line(
+                &store,
+                &[
+                    "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
+                    "--r", "18",
+                ],
+            ),
+        ]);
+        let steel = material_of(&setup);
+        let profile = digest_of(&setup[1]);
+        let mut lines = i_section_lines(&store, &steel, &profile, rib_options);
+        lines.push(check_line(&store, false, &[]));
+        let replies = f.script(&lines);
+        let reply = replies.last().unwrap();
+        assert_eq!(text(reply, "status"), "green", "{rib_options:?}");
+        assert_eq!(list(reply, "findings").len(), 0, "{rib_options:?}");
+    }
+    let f = Fixture::new();
+    let store = f.store();
+    let setup = f.script(&[
+        material_line(&store),
+        profile_line(
+            &store,
+            &[
+                "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
+                "--r", "18",
+            ],
+        ),
+    ]);
+    let steel = material_of(&setup);
+    let profile = digest_of(&setup[1]);
+    let mut lines = i_section_lines(
+        &store,
+        &steel,
+        &profile,
+        &["--width", "80", "--length", "100"],
+    );
+    lines.push(cut_plane_line(
+        &store,
+        &pinned(0xba6b03),
+        "10",
+        "019a7bf0-0000-7000-8000-00000000c746",
+    ));
+    lines.push(check_line(&store, false, &[]));
+    let replies = f.script(&lines);
+    let reply = replies.last().unwrap();
+    assert_eq!(text(reply, "status"), "green");
+
+    let f = Fixture::new();
+    let store = f.store();
+    let setup = f.script(&[
+        material_line(&store),
+        profile_line(
+            &store,
+            &[
+                "--family", "i_shape", "--h", "200", "--b", "200", "--tw", "9", "--tf", "15",
+                "--r", "18",
+            ],
+        ),
+    ]);
+    let steel = material_of(&setup);
+    let profile = digest_of(&setup[1]);
+    let mut lines = i_section_lines(
+        &store,
+        &steel,
+        &profile,
+        &["--contour", "20,0;80,0;80,100;0,100;0,20"],
+    );
+    lines.push(check_line(&store, true, &[]));
+    let replies = f.script(&lines);
+    let reply = replies.last().unwrap();
+    let finding = finding_of(reply, "CORNER_OVERCUT");
+    let measured = at(finding, &["measured_mm"]).float().unwrap();
+    assert!((measured - 20.0).abs() <= 1e-9, "{measured}");
 }
