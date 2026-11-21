@@ -39,7 +39,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    Base, RevisionSummary, base_of, control, host_uuid, integrity, load_base, open_base, summarize,
+    Base, RevisionSummary, base_of, control, has_head, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::transaction::PriorOp;
@@ -285,7 +286,10 @@ fn apply(
 ) -> Result<AssemblyChange, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
-    if needs_head && head.is_none() {
+    // Under an open draft batch the base is the draft state and `head` is `None` there; the
+    // batched attach still resolves its part from that base (the same model the interactive
+    // path reads), so only a revision-less store refuses here.
+    if needs_head && !has_head(&head) {
         return Err(CommandError::new(
             ErrorCode::NotFound,
             "part_id",

@@ -43,8 +43,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
-    summarize,
+    Base, RevisionSummary, control, digest_of, has_head, host_uuid, integrity, load_base,
+    open_base, summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::command::evaluate_plate;
@@ -293,7 +293,7 @@ fn apply_cut(
     if let Some(replayed) = replay_cut(store, request, fingerprint, remove)? {
         return Ok(replayed);
     }
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     let before: BTreeMap<String, ContentDigest> = base
@@ -614,7 +614,7 @@ pub fn a13_record(
 ) -> Result<A13Result, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     let before: BTreeMap<String, ContentDigest> = base

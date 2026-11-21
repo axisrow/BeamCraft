@@ -31,8 +31,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
-    summarize,
+    Base, RevisionSummary, control, digest_of, has_head, host_uuid, integrity, load_base,
+    open_base, summarize,
 };
 pub use steel::engine::part::PartRecord;
 use steel::engine::transaction::PriorOp;
@@ -138,7 +138,7 @@ fn copy_with_mode(
     command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     let before: std::collections::BTreeMap<String, _> = base

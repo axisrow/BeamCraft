@@ -188,6 +188,179 @@ fn a_batch_publishes_one_revision_and_the_words_work_in_a_script() {
 }
 
 #[test]
+fn a_batched_attach_resolves_a_part_created_earlier_in_the_same_script() {
+    // #767: a command inside a batch resolves its targets from the script's working state,
+    // exactly as the interactive path does. The assembly commits alone, then the plate is
+    // created inside the batch and the attach in a later command of the same script must
+    // resolve it from the draft — refusing it against the committed head used to kill the
+    // script mid-way with NOT_FOUND and abandon the batch.
+    let f = fixture("script-batch-attach");
+    let store_arg = f.root.join("store").to_str().unwrap().to_owned();
+    let (code, summary) = raw(
+        &store_arg,
+        &f.root.join("batch-attach.json"),
+        &[
+            &[
+                "create-assembly",
+                "--store",
+                &store_arg,
+                "--name",
+                "Frame",
+                "--new-id",
+                "019a7bf0-0000-7000-8000-000000400001",
+            ],
+            &["batch-open"],
+            &[
+                "create-plate",
+                "--store",
+                &store_arg,
+                "--width",
+                "200",
+                "--length",
+                "200",
+                "--thickness",
+                "10",
+                "--new-id",
+                "019a7bf0-0000-7000-8000-000000400002",
+                "--name",
+                "Wing",
+            ],
+            &[
+                "attach-to-assembly",
+                "--store",
+                &store_arg,
+                "--id",
+                "019a7bf0-0000-7000-8000-000000400002",
+                "--assembly-id",
+                "019a7bf0-0000-7000-8000-000000400001",
+            ],
+            &["batch-commit"],
+        ],
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        at(&summary, &["failed"]).unsigned().unwrap(),
+        0,
+        "{summary:?}"
+    );
+    let replies = list(&summary, "replies");
+    let outcomes: Vec<String> = replies
+        .iter()
+        .map(|r| text(at(r, &["reply"]), "outcome"))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            "assembly_created",
+            "batch_opened",
+            "plate_created",
+            "part_attached",
+            "batch_committed"
+        ]
+    );
+    // The two modelled commands landed as one revision; a separate one-shot process sees
+    // the attachment in the committed store.
+    let (code, head) = StoreFixture::run_in(&store_arg, "open-revision", &[]);
+    assert_eq!(code, 0);
+    assert_eq!(text(&head, "sequence"), "2");
+    let (code, view) = StoreFixture::run_in(&store_arg, "assemblies", &[]);
+    assert_eq!(code, 0);
+    let assemblies = list(&view, "assemblies");
+    assert_eq!(assemblies.len(), 1);
+    assert_eq!(text(&assemblies[0], "name"), "Frame");
+    assert_eq!(list(&assemblies[0], "parts").len(), 1);
+}
+
+#[test]
+fn a_batched_update_resolves_the_plate_created_earlier_in_the_same_script() {
+    // Review round of #767: `update-element` is a `Route::Plate` command and batchable like
+    // the attach, so the same seam flip fixes it. The plate exists only in the draft when
+    // the later command of the same script patches it; the committed store must end up with
+    // the patched thickness, published as one revision.
+    let f = fixture("script-batch-update");
+    let store_arg = f.root.join("store").to_str().unwrap().to_owned();
+    let id = "019a7bf0-0000-7000-8000-000000400003";
+    let (code, summary) = raw(
+        &store_arg,
+        &f.root.join("batch-update.json"),
+        &[
+            // The first revision belongs outside a batch (`batch-open` refuses an empty store).
+            &[
+                "define-material",
+                "--store",
+                &store_arg,
+                "--grade",
+                "RS",
+                "--density",
+                "7850",
+            ],
+            &["batch-open"],
+            &[
+                "create-plate",
+                "--store",
+                &store_arg,
+                "--width",
+                "200",
+                "--length",
+                "200",
+                "--thickness",
+                "10",
+                "--new-id",
+                id,
+                "--name",
+                "Wing",
+            ],
+            &[
+                "update-element",
+                "--store",
+                &store_arg,
+                "--id",
+                id,
+                "--thickness",
+                "12",
+            ],
+            &["batch-commit"],
+        ],
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        at(&summary, &["failed"]).unsigned().unwrap(),
+        0,
+        "{summary:?}"
+    );
+    let replies = list(&summary, "replies");
+    let outcomes: Vec<String> = replies
+        .iter()
+        .map(|r| text(at(r, &["reply"]), "outcome"))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            "definition_created",
+            "batch_opened",
+            "plate_created",
+            "element_updated",
+            "batch_committed"
+        ]
+    );
+    assert_eq!(
+        at(&replies[4], &["reply", "commands"]).unsigned().unwrap(),
+        2
+    );
+    // A separate one-shot process sees the patched plate in the committed store.
+    let (code, view) = StoreFixture::run_in(&store_arg, "inspect-elements", &[]);
+    assert_eq!(code, 0);
+    let plates = list(&view, "plates");
+    assert_eq!(plates.len(), 1);
+    assert_eq!(
+        at(&plates[0], &["dimensions_mm", "thickness"])
+            .float()
+            .unwrap(),
+        12.0
+    );
+}
+
+#[test]
 fn a_script_ending_with_an_open_batch_abandons_it() {
     let f = fixture("script-abandoned");
     let store = f.root.join("store");

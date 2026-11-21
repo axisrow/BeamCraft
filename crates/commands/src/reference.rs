@@ -61,8 +61,8 @@ use beamcraft_model::reference::{
 };
 use session::Refusal;
 use session::pipeline::{
-    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
-    summarize,
+    Base, RevisionSummary, control, digest_of, has_head, host_uuid, integrity, load_base,
+    open_base, summarize,
 };
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -461,7 +461,7 @@ fn edit(
 ) -> Result<Edited, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &ids.project, &ids.workspace)?;
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     let before: std::collections::BTreeMap<String, ContentDigest> = base
@@ -775,7 +775,7 @@ pub fn update_wrapper_source(
     let control = control();
     let (mut pin, bytes) = pin_source(&request.source_path, &control)?;
     let (head, base) = load_base(store, &request.ids.project, &request.ids.workspace)?;
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     let known = read_head(&base, &control)?;
