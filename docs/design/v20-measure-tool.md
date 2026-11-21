@@ -2,10 +2,12 @@
 
 Date: 2026-11-14. Status: **proposed; nothing implemented.** A planning note for fork issue axisrow/BeamCraft#561
 (upstream [Apibim-com#861](https://github.com/Apibim-com/BeamCraft/issues/861)): the ribbon's
-Measure button is a stub (`apps/beamcraft-ui/src/app/workbench.rs`, `tool_button(ui, Icon::Measure,
-"Measure", false, false)`), and no plan row specifies the tool it advertises. This note proposes
+Measure button was a stub (`apps/beamcraft-ui/src/app/workbench.rs`, `tool_button(ui, Icon::Measure,
+"Measure", false, false)`) and no plan row specified the tool it advertised (the stub is now
+hidden; the button returns wired with V20.2). This note proposes
 the minimal point-to-point tool; the plan row **V20** lands with it in `docs/plan/tasks.md`.
-Owner acceptance of this note precedes any implementation, and this note's PR changes no code.
+Owner acceptance of this note precedes any implementation, and the planning PR that landed it
+changed no code.
 
 ## What the plan has for measurements today
 
@@ -107,7 +109,9 @@ Negative cases (F04 `code` + F06 reason, exit 2, nothing written):
 
 - **The button stops being a stub.** Enabled exactly when the Fit model button next to it is
   enabled — a pane with an open store exists — and carrying the active state while the tool
-  runs. No third state, no hiding.
+  runs. No third state, no hiding. Until this slice lands the ribbon shows **no Measure button
+  at all**: the disabled stub is hidden (axisrow/BeamCraft#561), because a permanently disabled
+  button advertising a tool that exists nowhere is worse than none.
 - **Two clicks, the window's snaps.** Clicking Measure puts the active pane into the two-point
   measure mode. Each click consumes the window's existing snap resolution — the V04 snap query
   with the kinds and switches of the V11 snap panel; the tool adds no snapping of its own and no
