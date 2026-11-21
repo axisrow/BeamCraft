@@ -921,7 +921,6 @@ impl App {
                     }
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
                         group(ui, "Inspect", &mut |ui| {
-                            tool_button(ui, Icon::Measure, "Measure", false, false);
                             if tool_button(ui, Icon::Fit, "Fit model", false, has_pane).clicked() {
                                 self.pending_fit = true;
                             }
