@@ -439,7 +439,7 @@
    "rule_id": "IFCX-ERR-003",
    "severity": "error",
    "f04_code": "INVALID_ARGUMENT",
-   "text": "An existing output file is not replaced unless overwrite is requested; a symbolic link or reparse point at the output name or its parent is refused."
+   "text": "An existing output file is not replaced unless overwrite is requested; a symbolic link or reparse point at the output name is refused; the destination directory is resolved to its canonical form first, so ordinary system links among its ancestors do not refuse an otherwise valid destination, while a missing directory or a parent that is not a directory is refused."
   },
   {
    "rule_id": "IFCX-ERR-004",
