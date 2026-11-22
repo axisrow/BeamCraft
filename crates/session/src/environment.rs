@@ -49,6 +49,9 @@ pub struct EnvironmentInfo {
     pub id: String,
     /// `bim:environment:title`, when declared.
     pub title: Option<String>,
+    /// `bim:environment:version`, when declared: the version of the data pack the environment
+    /// names, recorded with the environment identity in a project created from it (#628).
+    pub version: Option<String>,
     /// SHA-256 of the environment file bytes.
     pub digest: ContentDigest,
     /// Size of the environment file in bytes.
@@ -132,7 +135,8 @@ fn library_list(items: &[Value], seen: &mut Vec<String>) -> Result<Vec<String>, 
 /// Reads the declarations of an environment layer without touching any library.
 ///
 /// The environment is a USD layer whose `customLayerData` carries `bim:environment:id`, an
-/// optional `bim:environment:title`, `bim:environment:libraries`, a non-empty ordered list of
+/// optional `bim:environment:title` and `bim:environment:version`,
+/// `bim:environment:libraries`, a non-empty ordered list of
 /// contained relative profile-library paths, and optionally
 /// `bim:environment:fastener-libraries` and `bim:environment:material-libraries`, the same kind
 /// of list for the environment's fastener and material libraries; all are strongest first. A
@@ -170,6 +174,7 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
     let id = get("bim:environment:id")?
         .ok_or_else(|| invalid("the environment declares no bim:environment:id"))?;
     let title = get("bim:environment:title")?;
+    let version = get("bim:environment:version")?;
     let mut seen = Vec::new();
     let libraries = match data.get("bim:environment:libraries") {
         Some(Value::Array(items)) => library_list(items, &mut seen)?,
@@ -210,6 +215,7 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
     Ok(EnvironmentInfo {
         id,
         title,
+        version,
         digest: layer.digest,
         bytes: layer.bytes,
         libraries,
@@ -413,6 +419,18 @@ fn plain(path: &Path) -> PathBuf {
 }
 
 fn read_environment(file: &Path) -> Result<(String, Option<String>), Refusal> {
+    let info = read_environment_file(file)?;
+    Ok((info.id, info.title))
+}
+
+/// Reads and admits the declarations of the environment `file`, with the
+/// [`MAX_ENVIRONMENT_BYTES`] bound enforced before the bytes are parsed. The reader a project
+/// creation uses to learn the identity it records before anything is copied (#628);
+/// `install_environment` re-reads and copies the files afterwards.
+///
+/// # Errors
+/// A typed [`Refusal`] as [`parse_environment`] and for a file that cannot be read.
+pub fn read_environment_file(file: &Path) -> Result<EnvironmentInfo, Refusal> {
     let mut bytes = Vec::new();
     fs::File::open(file)
         .and_then(|f| {
@@ -425,8 +443,7 @@ fn read_environment(file: &Path) -> Result<(String, Option<String>), Refusal> {
                 "the environment file could not be read",
             )
         })?;
-    let info = parse_environment(bytes)?;
-    Ok((info.id, info.title))
+    parse_environment(bytes)
 }
 
 #[cfg(test)]
@@ -439,6 +456,28 @@ mod tests {
         format!(
             "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"{id}\"\n        string[] \"bim:environment:libraries\" = {libraries}\n    }}\n)\n"
         )
+    }
+
+    #[test]
+    fn an_environment_may_declare_its_version() {
+        let declared = format!(
+            "{}        string \"bim:environment:version\" = \"2\"\n    }}\n)\n",
+            layer_head("v")
+        );
+        let info = parse_environment(declared.into_bytes()).unwrap();
+        assert_eq!(info.version.as_deref(), Some("2"));
+        let none = parse_environment(layer("v", "[\"a.usda\"]").into_bytes()).unwrap();
+        assert_eq!(none.version, None);
+        // A version that is not a string label is refused, never read as absent.
+        let mistyped = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:version\" = [\"2\"]\n    }}\n)\n",
+                layer_head("v")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(mistyped.code, ErrorCode::InvalidArgument);
     }
 
     /// The header of a layer whose `customLayerData` is still open, with the required profile

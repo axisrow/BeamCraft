@@ -3898,6 +3898,109 @@ fn the_project_record_is_validated_read_and_kept_through_edits() {
     }
 }
 
+#[test]
+fn the_recorded_environment_identity_is_read_and_validated() {
+    let root = |data: &str| {
+        format!("#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\ncustomLayerData={{{data}}})\n")
+    };
+    let read = |data: &str| {
+        project_environment_record_bytes(root(data).as_bytes())
+            .unwrap()
+            .map(|r| (r.id, r.version))
+    };
+    // An id alone, an id with its declared version, and no record at all: a plain project or
+    // one created before the record existed reads as none and stays a plain project.
+    assert_eq!(
+        read("string bimProjectEnvironmentId=\"acme\""),
+        Some(("acme".to_owned(), None))
+    );
+    assert_eq!(
+        read("string bimProjectEnvironmentId=\"acme\"\nstring bimProjectEnvironmentVersion=\"7\""),
+        Some(("acme".to_owned(), Some("7".to_owned())))
+    );
+    assert_eq!(read(""), None);
+    // A version without an id (no build writes one), a non-text value and an empty id are
+    // INVALID_ID, never read as absent and never repaired.
+    for bad in [
+        "string bimProjectEnvironmentVersion=\"7\"",
+        "int bimProjectEnvironmentId=7",
+        "int bimProjectEnvironmentVersion=7",
+        "string bimProjectEnvironmentId=\"\"",
+    ] {
+        assert!(
+            project_environment_record_bytes(root(bad).as_bytes()).is_err(),
+            "{bad}"
+        );
+    }
+    // An open of a stage whose root carries a malformed record is refused on every open and
+    // validation, as the project record is.
+    let stage = |data: &str| {
+        let mut input = initial();
+        let text = format!(
+            "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\nsubLayers=[@authored.usda@,@derived.usda@,@weak.usda@]\ncustomLayerData={{string bimProjectId=\"0199e7a0-0000-7000-8000-000000000001\"\n{data}}})\n"
+        );
+        *input
+            .assets
+            .iter_mut()
+            .find(|a| a.name == "root.usda")
+            .unwrap() = asset("root.usda", text);
+        input.manifest = input.manifest_digest().unwrap();
+        input
+    };
+    for bad in [
+        "string bimProjectEnvironmentVersion=\"7\"",
+        "int bimProjectEnvironmentId=7",
+    ] {
+        let refused = Author::open(
+            stage(bad),
+            targets(),
+            None,
+            schema_identity().unwrap(),
+            &control(),
+        )
+        .err()
+        .map(|e| e.code);
+        assert_eq!(refused, Some(ErrorCode::InvalidId), "{bad}");
+        assert_eq!(
+            validate_layers(stage(bad), schema_identity().unwrap(), &control())
+                .err()
+                .map(|e| e.code),
+            Some(ErrorCode::InvalidId),
+            "{bad}"
+        );
+    }
+    // A record that reads is carried through edits with the rest of the dictionary.
+    let (mut a, o) = open(stage(
+        "string bimProjectEnvironmentId=\"acme\"\nstring bimProjectEnvironmentVersion=\"7\"",
+    ));
+    assert_eq!(
+        project_environment_record(&o.metadata)
+            .unwrap()
+            .map(|r| (r.id, r.version)),
+        Some(("acme".to_owned(), Some("7".to_owned())))
+    );
+    let mut populate = batch(&o.context, elements());
+    populate.resources = resources();
+    let installed = a
+        .prepare(populate, &control())
+        .and_then(|p| {
+            a.install(
+                &o.context,
+                &p.token,
+                &p.op_id,
+                Decision::Accepted,
+                &control(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        project_environment_record(&installed.metadata)
+            .unwrap()
+            .map(|r| (r.id, r.version)),
+        Some(("acme".to_owned(), Some("7".to_owned())))
+    );
+}
+
 fn mark(series: &str, number: u32) -> Mark {
     Mark {
         series: series.into(),

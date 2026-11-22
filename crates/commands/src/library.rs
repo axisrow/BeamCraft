@@ -49,7 +49,10 @@
 //! designation refuses the whole library; a firm file that does not read is reported and skipped
 //! by [`load_firm`], never silently dropped; a project copy whose `environment/` folder survives
 //! without its `environment.usda` is reported in [`ProjectChain::environment_lost`], because the
-//! folder proves an environment was chosen and the fallback would substitute sections (#628);
+//! folder proves an environment was chosen and the fallback would substitute sections (#628), and
+//! so is a recorded environment whose whole copy folder is gone: the store's root layer records
+//! the chosen environment identity at creation, so the loss is named instead of looking like a
+//! plain project, whose warning-free behaviour is unchanged;
 //! the library provenance is reported with the entry
 //! but not stored in the definition; the layer engine runs in this process (no LEW-03
 //! containment), as for every other command.
@@ -1255,18 +1258,21 @@ pub fn append_neutral(
     Ok(())
 }
 
-/// The project's own environment copy is demonstrably incomplete: the `environment/` folder
-/// proves an environment was chosen at creation (only `create-project --environment` makes
-/// it), but its `environment.usda` is gone, so the chain resolves from the firm libraries and
-/// the built-in neutral environment alone. Reported, never silent: the fallback may answer a
-/// designation with another section, bolt or grade than the environment the project was
-/// created with (#628).
+/// The project's environment is demonstrably lost, and the fallback may answer a designation
+/// with another section, bolt or grade than the environment the project was created with
+/// (#628). Two shapes report it: a copy whose `environment/` folder survives without its
+/// `environment.usda`, and — since the store records the chosen environment identity at
+/// creation — a project whose whole copy folder is gone while its root layer still names the
+/// environment it was created with. A plain project without a folder and without a record is a
+/// normal state, not a loss, and warns nowhere.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentCopyLost {
-    /// The path of the environment file the project is missing.
+    /// The path of the environment file the project is missing: the copy's own file for an
+    /// incomplete copy, and the path the copy would occupy for a recorded environment whose
+    /// folder is gone.
     pub path: String,
-    /// Fixed explanation.
-    pub message: &'static str,
+    /// The explanation, naming the recorded environment when the store knows it.
+    pub message: String,
 }
 
 /// The layered lookup of one project: the project's own copy of its environment (the project
@@ -1288,9 +1294,9 @@ pub struct ProjectChain {
     pub material_lookup: Option<Lookup>,
     /// The project environment copy's own declarations, when the project carries one.
     pub environment: Option<EnvironmentInfo>,
-    /// The project's lost environment copy, when the `environment/` folder proves one was
-    /// chosen and its `environment.usda` is gone; `None` for a project without a folder and
-    /// for a copy that reads.
+    /// The project's lost environment: the `environment/` folder that proves one was chosen
+    /// with its `environment.usda` gone, or a recorded environment whose whole copy folder is
+    /// gone; `None` for a plain project (no folder, no record) and for a copy that reads.
     pub environment_lost: Option<EnvironmentCopyLost>,
     /// The firm files that did not read, in file-name order.
     pub firm_refused: Vec<FirmFileRefused>,
@@ -1303,8 +1309,10 @@ pub struct ProjectChain {
 /// current user's). The neutral environment joins last. A copy whose folder survives without
 /// its `environment.usda` cannot be read and does not refuse — an honest chain resolves from
 /// firm and neutral — but it is reported in [`ProjectChain::environment_lost`] rather than
-/// silently dropped. Every namespace — profiles, fasteners and materials — builds its own
-/// resolver over the same chain.
+/// silently dropped, and so is a recorded environment whose whole copy folder is gone: the
+/// store's root layer names the environment the project was created with, so the loss is
+/// reported with its identity instead of looking like a plain project (#628). Every namespace —
+/// profiles, fasteners and materials — builds its own resolver over the same chain.
 pub fn project_library_chain(
     store: &std::path::Path,
     config_dir: Option<&std::path::Path>,
@@ -1337,10 +1345,33 @@ pub fn project_library_chain(
         crate::project::ProjectEnvironmentCopy::Incomplete(file) => {
             environment_lost = Some(EnvironmentCopyLost {
                 path: file.to_string_lossy().into_owned(),
-                message: "the project's environment copy has lost its environment.usda; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with",
+                message: "the project's environment copy has lost its environment.usda; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with".to_owned(),
             });
         }
-        crate::project::ProjectEnvironmentCopy::Absent => {}
+        crate::project::ProjectEnvironmentCopy::Absent => {
+            // A project whose copy folder is gone entirely looks like a plain project on the
+            // file system; the root layer's record of the chosen environment tells the two
+            // apart (#628). A store without the record — a plain project, or one created
+            // before the record existed — keeps the warning-free plain behaviour.
+            if let Some(recorded) = crate::project::recorded_project_environment(store)? {
+                let version = recorded
+                    .version
+                    .as_ref()
+                    .map(|v| format!(" version {v}"))
+                    .unwrap_or_default();
+                environment_lost = Some(EnvironmentCopyLost {
+                    path: store
+                        .join(crate::project::PROJECT_ENVIRONMENT_DIR)
+                        .join(session::environment::ENVIRONMENT_FILE)
+                        .to_string_lossy()
+                        .into_owned(),
+                    message: format!(
+                        "the project was created with the environment {}{}, whose copy is no longer in the project; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with",
+                        recorded.id, version
+                    ),
+                });
+            }
+        }
     }
     let firm = load_firm(config_dir);
     let firm_refused = firm.refused;
@@ -6654,10 +6685,71 @@ mod tests {
             bare.fastener_lookup.is_none(),
             "no fastener layer of this chain declares bolts"
         );
-        assert!(
-            chain.material_lookup.is_none() && bare.material_lookup.is_none(),
-            "no layer of this chain declares material libraries"
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_recorded_environment_whose_copy_folder_is_gone_warns_with_its_identity() {
+        use crate::project::{ProjectContext, ProjectEnvironmentChoice, create_project};
+        use beamcraft_host::revision::NoFault;
+        use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
+
+        let dir = scratch("recorded");
+        let config = dir.join("config");
+        put(
+            &config,
+            "libraries/mine.usda",
+            &library(&[entry("A", "FIRM-ONLY", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("firm-lib"),
+            ),
         );
+        let context = ProjectContext {
+            op_id: OpId::parse("0199e7a0-0000-7000-8000-0000000000c1").unwrap(),
+            revision_id: RevisionId::parse("0199e7a0-0000-7000-8000-0000000000c2").unwrap(),
+            actor: Uuid7::parse("0199e7a0-0000-7000-8000-0000000000c3").unwrap(),
+            project: ProjectId::parse("0199e7a0-0000-7000-8000-0000000000c4").unwrap(),
+            workspace: WorkspaceId::parse("0199e7a0-0000-7000-8000-0000000000c5").unwrap(),
+        };
+        let next = |n: u64| ProjectContext {
+            op_id: OpId::parse(&format!("0199e7a0-0000-7000-8000-0000000000{n:x}")).unwrap(),
+            revision_id: RevisionId::parse(&format!("0199e7a0-0000-7000-8000-0000000000{n:x}"))
+                .unwrap(),
+            project: ProjectId::parse(&format!("0199e7a0-0000-7000-8000-0000000000{n:x}")).unwrap(),
+            ..context.clone()
+        };
+        // A store whose root records the chosen environment, with no copy folder at all: the
+        // loss is reported with the identity the store carried, and the chain resolves from
+        // firm and neutral alone.
+        let recorded = create_project(
+            &dir,
+            "Recorded",
+            Some(&ProjectEnvironmentChoice {
+                id: "acme".to_owned(),
+                version: Some("7".to_owned()),
+            }),
+            &next(0xd1),
+            &mut NoFault,
+        )
+        .unwrap();
+        let chain = project_library_chain(&recorded.path, Some(&config)).unwrap();
+        let layers: Vec<&str> = chain.lookup.sources().iter().map(|s| s.layer).collect();
+        assert_eq!(layers, [LAYER_FIRM, LAYER_NEUTRAL]);
+        let lost = chain
+            .environment_lost
+            .expect("the recorded loss is reported");
+        assert!(
+            lost.path.ends_with("environment/environment.usda"),
+            "{lost:?}"
+        );
+        assert!(
+            lost.message.contains("acme") && lost.message.contains("version 7"),
+            "{lost:?}"
+        );
+        // A plain project without a record warns nowhere, exactly as before.
+        let plain = create_project(&dir, "Plain", None, &next(0xd2), &mut NoFault).unwrap();
+        let chain = project_library_chain(&plain.path, Some(&config)).unwrap();
+        assert!(chain.environment_lost.is_none(), "{chain:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

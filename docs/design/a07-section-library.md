@@ -478,6 +478,36 @@ the same name, a member placed with the library deleted, and every refusal leavi
 for byte unchanged with no temporary file left), and `cargo test -p beamcraft-cli --lib library`
 (lookup, containment, prim names, render and read back, environment parsing).
 
+## 12. The project records its environment (#628)
+
+A project created with an environment records the chosen identity in its store: the first
+revision's root layer carries `bimProjectEnvironmentId` and — when the environment declares one —
+`bimProjectEnvironmentVersion` beside the D1 `bimProjectId`. The environment layer format gains
+the optional `bim:environment:version` declaration (a label; the shipped environments declare
+`"1"`). The record is written once with the first revision and no command rewrites it, exactly
+like the project record it sits beside; the schema descriptor names the two keys, so its digest
+changes and old stores read accepted-stale per the standing rule (reads still open them; the
+first edit refuses with `UNSUPPORTED_VERSION`; `open-revision` reports the pins).
+
+The record exists so the last portability hole closes: a copy whose whole `environment/` folder
+is deleted was indistinguishable from a plain project, and the fallback to firm and neutral was
+silent. The library chain reads the record from the store's verified root blob, so the warning
+matrix of #754 gains one row and keeps the others:
+
+| Project state | Chain behaviour |
+|---|---|
+| Plain project: no `environment/` folder, no record | No warning; firm and neutral alone (unchanged) |
+| Copy present | The copy answers first, no warning (unchanged) |
+| Copy folder survives, `environment.usda` gone | `environment_lost`, the #754 message (unchanged) |
+| Copy present, a listed library gone | Loud refusal of the whole chain (unchanged) |
+| No copy folder, but the store records an environment | `environment_lost` naming the recorded id and version (new) |
+
+Placed definitions are untouched by any of this: a designation the model has defined answers
+from the model layer before the chain is consulted, so opening a project whose environment is
+absent resolves every placed definition. The record is provenance and warning input; it never
+re-resolves a designation. A store without a record — a plain project, or one created before
+the record existed — behaves exactly as before.
+
 ## Provenance
 
 Section families and their parameters are generic engineering geometry described in public

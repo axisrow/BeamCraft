@@ -578,6 +578,7 @@ pub(super) fn snapshot(
         ));
     }
     project_record(metadata)?;
+    project_environment_record(metadata)?;
     // The F12 descriptor is optional; when present it is validated as a whole, and its project
     // identity can never disagree with the root layer's own project record.
     let descriptor = super::descriptor::descriptor_of(metadata)?;
