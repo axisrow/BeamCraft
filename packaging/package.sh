@@ -35,7 +35,7 @@ fi
 rm -rf "$name"
 rm -f "$name.zip"
 mkdir -p "$name/docs/brand"
-cp README.md LICENSE NOTICE "$name/"
+cp README.md LICENSE NOTICE ATTRIBUTION.md "$name/"
 cp docs/brand/LICENSE-brand.txt "$name/docs/brand/"
 
 if [ "$kind" = macos ]; then
@@ -50,7 +50,8 @@ if [ "$kind" = macos ]; then
     cp "$release/beamcraft" "$release/beamcraft-ui" "$app/Contents/MacOS/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$app/Contents/Resources/assets/fonts/inter/"
-    cp licenses/OFL-1.1-Inter.txt "$app/Contents/Resources/licenses/"
+    cp licenses/OFL-1.1-Inter.txt licenses/TOST-1.0-openusd.txt \
+        "$app/Contents/Resources/licenses/"
     cp -R environments "$app/Contents/Resources/"
     cp -R assets/libraries "$app/Contents/Resources/assets/"
     # The arm64 kernel refuses unsigned executables; ad-hoc signing keeps the
@@ -64,7 +65,7 @@ else
     cp "$release/beamcraft$ext" "$release/beamcraft-ui$ext" "$name/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$name/assets/fonts/inter/"
-    cp licenses/OFL-1.1-Inter.txt "$name/licenses/"
+    cp licenses/OFL-1.1-Inter.txt licenses/TOST-1.0-openusd.txt "$name/licenses/"
     cp -R environments "$name/"
     cp -R assets/libraries "$name/assets/"
     if [ "$kind" = win ]; then
@@ -75,6 +76,32 @@ else
         chmod +x "$name/install-linux.sh"
     fi
 fi
+
+# Self-check (Q02 finding F1): every file the shipped NOTICE points to must be
+# in the package, so a future provenance pointer fails packaging here instead of
+# dangling on a clean machine. third-party/ names describe files inside the
+# foreign crate, not package members; the macOS bundle keeps licences under
+# Contents/Resources instead of the package root.
+roots="$name"
+if [ "$kind" = macos ]; then
+    roots="$roots $app/Contents/Resources"
+fi
+while IFS= read -r rel; do
+    case "$rel" in third-party/*) continue ;; esac
+    shipped=""
+    for root in $roots; do
+        if [ -f "$root/$rel" ]; then
+            shipped=1
+            break
+        fi
+    done
+    if [ -z "$shipped" ]; then
+        echo "NOTICE references a file the package does not ship: $rel" >&2
+        exit 2
+    fi
+done <<EOF
+$(grep -oE '[A-Za-z0-9][A-Za-z0-9/._-]*\.(md|txt)' "$name/NOTICE" | sort -u)
+EOF
 
 if [ "$kind" = win ]; then
     7z a "$name.zip" "$name" >/dev/null
