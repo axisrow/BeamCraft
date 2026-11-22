@@ -67,7 +67,7 @@ impl Fixture {
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("environment.usda"),
-            "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n        string \"bim:environment:id\" = \"acme\"\n        string \"bim:environment:title\" = \"Acme\"\n        string[] \"bim:environment:libraries\" = [\"acme.usda\"]\n    }\n)\n",
+            "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n        string \"bim:environment:id\" = \"acme\"\n        string \"bim:environment:version\" = \"7\"\n        string \"bim:environment:title\" = \"Acme\"\n        string[] \"bim:environment:libraries\" = [\"acme.usda\"]\n    }\n)\n",
         )
         .unwrap();
         let entry = |prim: &str, designation: &str, height: f64| {
@@ -235,6 +235,66 @@ fn pinned_definitions_keep_their_values_after_the_copy_is_lost() {
     // The chain reports the loss wherever the chain itself is asked.
     let listed = f.ok(&["list-library", "--project", &store]);
     assert!(lost_of(&listed).ends_with("environment/environment.usda"));
+}
+
+#[test]
+fn a_recorded_environment_warns_when_its_whole_copy_folder_is_gone() {
+    let f = Fixture::new();
+    f.install_acme();
+    f.firm();
+    let store = f.create("Recorded", &["--environment", "acme"]);
+    f.member(&store, "X-1");
+    assert_eq!(f.profile_height(&store, "X-1"), 200.0);
+
+    // The copy folder is gone entirely. On the file system this looks exactly like a plain
+    // project, but the store records the environment it was created with (the identity was
+    // written with the first revision), so the loss is named instead of looking plain.
+    fs::remove_dir_all(Path::new(&store).join("environment")).unwrap();
+    let listed = f.ok(&["list-library", "--project", &store]);
+    assert_eq!(f.layers(&store), ["firm", "neutral"]);
+    assert!(
+        lost_of(&listed).ends_with("environment/environment.usda"),
+        "{}",
+        lost_of(&listed).display()
+    );
+    assert_eq!(
+        text(at(&listed, &["environment_lost"]), "message"),
+        "the project was created with the environment acme version 7, whose copy is no longer in the project; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with"
+    );
+
+    // Every placed definition still resolves: the model layer answers before the chain is ever
+    // consulted, so a member of the same name keeps its pinned profile without the copy.
+    f.member(&store, "X-1");
+    assert_eq!(
+        f.profile_height(&store, "X-1"),
+        200.0,
+        "the pinned definition answers without the library files"
+    );
+    // A designation only the copy answered is absent now; nothing is substituted under it.
+    assert_eq!(
+        f.code(&["show-library", "--project", &store, "--designation", "X-1"]),
+        "NOT_FOUND"
+    );
+    // The firm layer still answers its own designation, with the same warning beside it.
+    let shown = f.ok(&[
+        "show-library",
+        "--project",
+        &store,
+        "--designation",
+        "FIRM-ONLY",
+    ]);
+    assert_eq!(text(at(&shown, &["library"]), "id"), "firm-lib");
+    assert!(lost_of(&shown).ends_with("environment/environment.usda"));
+
+    // A plain project — no folder, no record — stays warning-free, exactly as before.
+    let plain = f.create("Plain2", &[]);
+    assert!(!Path::new(&plain).join("environment").exists());
+    let listed = f.ok(&["list-library", "--project", &plain]);
+    assert!(
+        listed.get("environment_lost").is_err(),
+        "a plain project warns nowhere: {listed:?}"
+    );
+    assert!(listed.get("environment").is_err());
 }
 
 #[test]

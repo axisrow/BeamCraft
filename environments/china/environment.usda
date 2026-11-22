@@ -4,6 +4,7 @@
     upAxis = "Z"
     customLayerData = {
         string "bim:environment:id" = "china"
+        string "bim:environment:version" = "1"
         string "bim:environment:title" = "China (GB/T 706-2016, GB/T 11263-2017, GB/T 5782, GB/T 1591-2018)"
         string[] "bim:environment:libraries" = ["profiles-gb-t-706.usda", "profiles-gb-t-11263.usda"]
         string[] "bim:environment:fastener-libraries" = ["gb-fasteners.usda"]

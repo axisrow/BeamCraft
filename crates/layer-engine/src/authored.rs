@@ -47,6 +47,7 @@ pub fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
 }
 
 use crate::*;
+use beamcraft_model::command::label_is_valid;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 use std::collections::BTreeMap;
 
@@ -55,7 +56,9 @@ use std::collections::BTreeMap;
 pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
     "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256;",
-    "bimProjectId=string(uuid7,optional,root layer only,written once with the first revision)\n",
+    "bimProjectId=string(uuid7,optional,root layer only,written once with the first revision);",
+    "bimProjectEnvironmentId=string(optional,root layer only,written once with the first revision);",
+    "bimProjectEnvironmentVersion=string(optional,root layer only,only with the id)\n",
     "part=/World/Steel/Parts/PRT_<uuid7-32>;kinds=plate|beam|column;type=Xform\n",
     "assembly=/World/Steel/Assemblies/ASM_<uuid7-32>;connection=/World/Steel/Connections/CON_<uuid7-32>;",
     "level=/World/Levels/LVL_<uuid7-32>;reference=/World/References/REF_<uuid7-32>;type=Xform\n",
@@ -266,6 +269,65 @@ pub fn project_record(metadata: &BTreeMap<String, Value>) -> Result<Option<Strin
         Some(_) => Err(fail(ErrorCode::InvalidId, "invalid project record")),
     }
 }
+
+/// Key of the environment record in the root layer's `customLayerData` (#628): the id of the
+/// environment the project was created with, so a project whose `environment/` copy folder is
+/// gone entirely is still distinguishable from a plain project that never had one.
+pub const PROJECT_ENVIRONMENT_ID_KEY: &str = "bimProjectEnvironmentId";
+/// Key of the recorded environment's declared version, written only when the environment
+/// declares one; it never appears without [`PROJECT_ENVIRONMENT_ID_KEY`].
+pub const PROJECT_ENVIRONMENT_VERSION_KEY: &str = "bimProjectEnvironmentVersion";
+
+/// The environment identity recorded in the metadata of the root layer (#628).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectEnvironmentRecord {
+    /// `bimProjectEnvironmentId`: the environment the project was created with.
+    pub id: String,
+    /// The environment's declared version, when it declared one.
+    pub version: Option<String>,
+}
+
+/// The environment record of the root layer's metadata (#628), or `None` for a store that has
+/// none — a plain project, or one created before the record existed. A record whose id is not a
+/// valid label, a version that is not one, or a version without an id (which no build writes)
+/// is `INVALID_ID`: it is never read as "absent" and never repaired.
+pub fn project_environment_record(
+    metadata: &BTreeMap<String, Value>,
+) -> Result<Option<ProjectEnvironmentRecord>, Diagnostic> {
+    let Some(Value::Dictionary(data)) = metadata.get("customLayerData") else {
+        return Ok(None);
+    };
+    match data.get(PROJECT_ENVIRONMENT_ID_KEY) {
+        None if data.contains_key(PROJECT_ENVIRONMENT_VERSION_KEY) => Err(fail(
+            ErrorCode::InvalidId,
+            "invalid project environment record: a version without an id",
+        )),
+        None => Ok(None),
+        Some(Value::Text(id)) if label_is_valid(id) => {
+            let version = match data.get(PROJECT_ENVIRONMENT_VERSION_KEY) {
+                None => None,
+                Some(Value::Text(version)) if label_is_valid(version) => Some(version.clone()),
+                Some(_) => Err(fail(
+                    ErrorCode::InvalidId,
+                    "invalid project environment record",
+                ))?,
+            };
+            Ok(Some(ProjectEnvironmentRecord {
+                id: id.clone(),
+                version,
+            }))
+        }
+        Some(_) => Err(fail(
+            ErrorCode::InvalidId,
+            "invalid project environment record",
+        )),
+    }
+}
+
+/// The environment record of the bytes of a root layer (#628): the reader the library chain
+/// uses for a store whose revision it has verified, so the recorded identity is read without
+/// composing the whole stage.
+pub use edit::project_environment_record_bytes;
 
 /// Explicit property opinion in the owned edit layer, distinct from composition results.
 #[derive(Debug, Clone, PartialEq)]

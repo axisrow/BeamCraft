@@ -41,24 +41,28 @@ fn info_json(info: &LibraryInfo) -> Json {
 }
 
 fn environment_json(info: &EnvironmentInfo) -> Json {
-    Json::object([
-        ("id", Json::text(info.id.clone())),
-        ("title", optional(&info.title)),
-        ("digest", Json::text(info.digest.to_string())),
-        ("bytes", Json::uint(info.bytes)),
+    let mut object = BTreeMap::from([
+        ("id".to_owned(), Json::text(info.id.clone())),
+        ("title".to_owned(), optional(&info.title)),
+        ("digest".to_owned(), Json::text(info.digest.to_string())),
+        ("bytes".to_owned(), Json::uint(info.bytes)),
         (
-            "libraries",
+            "libraries".to_owned(),
             Json::Array(info.libraries.iter().map(Json::text).collect()),
         ),
         (
-            "fastener_libraries",
+            "fastener_libraries".to_owned(),
             Json::Array(info.fastener_libraries.iter().map(Json::text).collect()),
         ),
         (
-            "material_libraries",
+            "material_libraries".to_owned(),
             Json::Array(info.material_libraries.iter().map(Json::text).collect()),
         ),
-    ])
+    ]);
+    if let Some(version) = &info.version {
+        object.insert("version".into(), Json::text(version.clone()));
+    }
+    Json::Object(object)
 }
 
 fn source_json(source: &Source) -> Json {
@@ -145,7 +149,7 @@ fn firm_refused_json(refused: &[FirmFileRefused]) -> Json {
 fn environment_lost_json(lost: &EnvironmentCopyLost) -> Json {
     Json::object([
         ("path", Json::text(lost.path.clone())),
-        ("message", Json::text(lost.message)),
+        ("message", Json::text(lost.message.clone())),
     ])
 }
 
