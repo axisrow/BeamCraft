@@ -6,8 +6,10 @@
 //! The bytes are written to a temporary file in the destination directory, flushed and synced,
 //! and installed under the final name only after the caller's writer succeeded. An existing file
 //! is not replaced unless the caller asks for it; a symbolic link or Windows reparse point at the
-//! output name or at its parent directory is refused. A failure removes the temporary file and
-//! leaves no output. The path is an I/O-edge argument and authorises nothing else.
+//! output name is refused. The destination directory is resolved to its canonical form first, so
+//! ordinary system links among its ancestors (such as `/tmp` on macOS) do not refuse an otherwise
+//! valid destination. A failure removes the temporary file and leaves no output. The path is an
+//! I/O-edge argument and authorises nothing else.
 
 use crate::storage::is_link;
 use beamcraft_model::error::ErrorCode;
@@ -54,7 +56,7 @@ impl Drop for Temporary {
 fn unsafe_directory() -> OutputError {
     OutputError::new(
         ErrorCode::InvalidArgument,
-        "the output directory, or one of its ancestors, is a link or not a directory",
+        "the output directory is not a real directory",
     )
 }
 
@@ -103,10 +105,12 @@ impl Destination {
 }
 
 /// Validates a destination without creating anything: a local path (no network share or device
-/// namespace), a file name, and a directory whose every component, from the first one the caller
-/// wrote down, is an ordinary directory (no symbolic link and no reparse point at any level, so
-/// a link cannot redirect the write). Relative paths are taken from the current directory, which
-/// is the caller's own choice. An existing target must be a regular file, not a link.
+/// namespace), a file name, and a directory resolved to its canonical form first — ordinary
+/// system links among its ancestors do not refuse an otherwise valid destination — whose every
+/// resolved component is then an ordinary directory (no link can redirect the write). A missing
+/// directory is refused during the resolution. Relative paths are taken from the current
+/// directory, which is the caller's own choice. An existing target must be a regular file, not a
+/// link.
 pub fn resolve_destination(target: &Path) -> Result<Destination, OutputError> {
     let invalid = |m| OutputError::new(ErrorCode::InvalidArgument, m);
     if is_network_or_device_path(&target.to_string_lossy()) && cfg!(windows) {
@@ -130,12 +134,27 @@ pub fn resolve_destination(target: &Path) -> Result<Destination, OutputError> {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
+    // The canonical directory first: OS-standard links among the ancestors (like `/tmp` on
+    // macOS) resolve instead of refusing. A missing directory fails here; the walk below then
+    // verifies the resolved components (a parent that is a file is not a directory).
+    let directory = fs::canonicalize(parent).map_err(|e| {
+        if e.kind() == ErrorKind::NotFound {
+            invalid("the output directory does not exist")
+        } else {
+            unsafe_directory()
+        }
+    })?;
     let mut prefix = PathBuf::new();
-    for component in parent.components() {
+    for component in directory.components() {
         match component {
             Component::CurDir => continue,
+            Component::Prefix(_) | Component::RootDir => {
+                // A volume root is a directory by definition.
+                prefix.push(component);
+                continue;
+            }
             Component::ParentDir => {
-                // Every directory walked so far was checked, so the lexical parent is the real one.
+                // A canonical path has none; kept so the match stays total.
                 if !prefix.pop() {
                     prefix.push("..");
                 }
@@ -145,22 +164,11 @@ pub fn resolve_destination(target: &Path) -> Result<Destination, OutputError> {
         if prefix.as_os_str().is_empty() {
             continue;
         }
-        let meta = fs::symlink_metadata(&prefix).map_err(|_| {
-            OutputError::new(
-                ErrorCode::InvalidArgument,
-                "the output directory does not exist",
-            )
-        })?;
+        let meta = fs::symlink_metadata(&prefix).map_err(|_| unsafe_directory())?;
         if is_link(&meta) || !meta.is_dir() {
             return Err(unsafe_directory());
         }
     }
-    let directory = fs::canonicalize(if prefix.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        prefix.as_path()
-    })
-    .map_err(|_| unsafe_directory())?;
     match fs::symlink_metadata(target) {
         Ok(meta) => {
             if is_link(&meta) || !meta.is_file() {
@@ -302,14 +310,9 @@ mod tests {
     use std::io::Write;
 
     fn scratch(tag: &str) -> PathBuf {
-        // macOS: /var in the default temp path is a link to /private/var, and the validator
-        // refuses links above the output, so hand it the resolved root (tests only).
-        let base = if cfg!(target_os = "macos") {
-            fs::canonicalize(std::env::temp_dir()).expect("the temp directory resolves")
-        } else {
-            std::env::temp_dir()
-        };
-        let dir = base.join(format!(
+        // The default temp path is reached through a link on macOS (/var -> /private/var); the
+        // resolver canonicalizes ancestors itself, so the tests run on the path as written.
+        let dir = std::env::temp_dir().join(format!(
             "beamcraft-output-{tag}-{}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
@@ -377,6 +380,15 @@ mod tests {
             publish_file(&missing, false, put("x")).unwrap_err().code,
             ErrorCode::InvalidArgument
         );
+        // A parent that exists but is a plain file is not a directory either.
+        let file = dir.join("plain.txt");
+        fs::write(&file, "text").unwrap();
+        assert_eq!(
+            publish_file(&file.join("under").join("a.ifc"), false, put("x"))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
         let as_dir = dir.join("sub");
         fs::create_dir(&as_dir).unwrap();
         assert_eq!(
@@ -394,7 +406,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_link_at_the_name_or_the_parent_is_refused() {
+    fn a_link_at_the_name_is_refused_and_a_directory_link_parent_is_resolved() {
         let dir = scratch("links");
         let real = dir.join("real.ifc");
         fs::write(&real, "keep").unwrap();
@@ -409,9 +421,9 @@ mod tests {
         fs::create_dir(&sub).unwrap();
         let dir_link = dir.join("dirlink");
         std::os::unix::fs::symlink(&sub, &dir_link).unwrap();
-        let error = publish_file(&dir_link.join("a.ifc"), false, put("x")).unwrap_err();
-        assert_eq!(error.code, ErrorCode::InvalidArgument);
-        assert!(leftovers(&sub).is_empty());
+        // A directory link as the parent resolves to the real directory.
+        publish_file(&dir_link.join("a.ifc"), false, put("x")).unwrap();
+        assert_eq!(fs::read_to_string(sub.join("a.ifc")).unwrap(), "x");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -438,17 +450,28 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_link_anywhere_above_the_output_is_refused() {
+    fn a_link_anywhere_above_the_output_is_resolved() {
         let dir = scratch("ancestor");
         let real = dir.join("real");
         fs::create_dir_all(real.join("child")).unwrap();
         std::os::unix::fs::symlink(&real, dir.join("alias")).unwrap();
+        // A link above the output (what /tmp is on macOS) resolves; the file lands in the
+        // directory the link points at.
         let through = dir.join("alias").join("child").join("a.ifc");
-        let error = publish_file(&through, false, put("x")).unwrap_err();
-        assert_eq!(error.code, ErrorCode::InvalidArgument);
-        assert!(leftovers(&real.join("child")).is_empty());
-        // The same file reached by a path without a link is fine.
-        publish_file(&real.join("child").join("a.ifc"), false, put("x")).unwrap();
+        publish_file(&through, false, put("x")).unwrap();
+        assert_eq!(
+            fs::read_to_string(real.join("child").join("a.ifc")).unwrap(),
+            "x"
+        );
+        // The same directory reached by a path without a link is fine, and a genuinely missing
+        // directory is still refused.
+        publish_file(&real.join("child").join("b.ifc"), false, put("y")).unwrap();
+        assert_eq!(
+            publish_file(&dir.join("nope").join("c.ifc"), false, put("z"))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
