@@ -782,8 +782,11 @@ degraded element never panics; a request failure leaves no file.
 **Output publication.** The writer streams to a temporary file in the destination directory,
 checks the running size against the cap, flushes and syncs it, and installs it under the final name
 only after every check passed. An existing file is not replaced unless the caller asks for it, and
-a symbolic link or Windows reparse point at the output name or its parent is refused, as the byte
-storage refuses them (`IFCX-ERR-002`, `IFCX-ERR-003`). A failure removes the temporary file.
+a symbolic link or Windows reparse point at the output name is refused, as the byte storage
+refuses them (`IFCX-ERR-002`, `IFCX-ERR-003`). The destination directory is resolved to its
+canonical form before the checks, so ordinary system links among its ancestors (like /tmp on
+macOS) resolve instead of refusing an otherwise valid destination; a missing directory and a
+parent that is not a directory still refuse. A failure removes the temporary file.
 No network access is involved; the output path is a local I/O-edge argument and authorises nothing.
 
 ## 15. Headless surface and writer design
@@ -948,7 +951,7 @@ diagnostic and are checked by the acceptance cases. Counts: 79 rules, 27 error, 
 | IFCX-DET-007 | info | - | Cross-platform byte identity is claimed only when no member has a nonzero roll; with a nonzero roll it depends on the unresolved sin/cos reproducibility question (F06 section 2). |
 | IFCX-ERR-001 | error | DEPENDENCY_UNAVAILABLE | The export result uses the F10 section 6.3 envelope precedence: an unavailable input makes the status incomplete and the primary code DEPENDENCY_UNAVAILABLE, before any other error. |
 | IFCX-ERR-002 | error | BACKEND_UNAVAILABLE | A failing output sink or file system gives no output file. The file is written to a temporary name and installed only after complete success. |
-| IFCX-ERR-003 | error | INVALID_ARGUMENT | An existing output file is not replaced unless overwrite is requested; a symbolic link or reparse point at the output name or its parent is refused. |
+| IFCX-ERR-003 | error | INVALID_ARGUMENT | An existing output file is not replaced unless overwrite is requested; a symbolic link or reparse point at the output name is refused; the destination directory is resolved to its canonical form first, so ordinary system links among its ancestors do not refuse an otherwise valid destination, while a missing directory or a parent that is not a directory is refused. |
 | IFCX-ERR-004 | error | CANCELLED | Cancellation before the install point discards all work and leaves no file. |
 | IFCX-ERR-005 | mapping | - | In strict mode only an element-level finding that carries an F04 code (IFC_GEOMETRY_ABSENT and IFC_PLACEMENT_ABSENT, code UNSUPPORTED_GEOMETRY) refuses the export, with the code of the first such finding in finding order (F10 section 6.4). Warnings and info without a code (proxies, quantity omissions, truncated names, deactivated elements) are never fatal. |
 | IFCX-EMIT-001 | mapping | - | An optional entity is written only when it has content, so no mandatory attribute or relationship is empty: IfcElementQuantity and its IfcRelDefinesByProperties only with at least one quantity; BeamCraft_Declared and its relationship only with a declared value; Pset_MaterialCommon only with a density; IfcMaterial and its IfcRelAssociatesMaterial only with at least one exported element using it; IfcRelContainedInSpatialStructure (of a storey or of the building) only with at least one exported element; the building-to-storeys IfcRelAggregates only with at least one storey; a representation only with a mesh. |

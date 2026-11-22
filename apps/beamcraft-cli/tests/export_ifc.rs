@@ -1691,6 +1691,48 @@ fn an_existing_output_is_kept_unless_overwrite_is_asked() {
     assert_eq!(rejected, "INVALID_ARGUMENT");
 }
 
+/// Issue #773: a directory reached through a symlink (what `/tmp` always is on macOS) is a
+/// valid destination for both sibling exporters; a genuinely missing directory is refused by
+/// both. Unix only: on Linux CI `/tmp` is a real directory and this case would assert nothing.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_output_directory_is_accepted_and_a_missing_one_refused_by_both_exporters() {
+    let f = Fixture::new();
+    f.exportable_plate();
+    let real = f.shared.root.join("real-dir");
+    fs::create_dir(&real).unwrap();
+    let alias = f.shared.root.join("tmp-alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let ifc_out = alias.join("model.ifc");
+    let report_out = alias.join("report.json");
+    f.export(
+        ifc_out.to_str().unwrap(),
+        &["--report", report_out.to_str().unwrap()],
+    );
+    assert!(
+        fs::read(&ifc_out).unwrap().starts_with(b"ISO-10303-21;"),
+        "export-ifc accepts a symlinked output directory"
+    );
+    assert!(fs::read(&report_out).is_ok(), "the report is written too");
+    let bom_out = alias.join("bom.json");
+    let bom = f.ok("export-bom", &["--out", bom_out.to_str().unwrap()]);
+    assert_eq!(text(&bom, "outcome"), "bom_exported");
+    assert!(
+        fs::read(&bom_out).is_ok(),
+        "export-bom accepts the same path"
+    );
+    // A genuinely missing directory is still refused by both, and nothing temporary remains.
+    let (code, rejected, _) = f.export_rejected(&["--out", &f.path("gone/a.ifc")]);
+    assert_eq!((code, rejected.as_str()), (2, "INVALID_ARGUMENT"));
+    let (code, body) = f.run("export-bom", &["--out", &f.path("gone/b.json")]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
+    assert!(fs::read_dir(&real).unwrap().all(|e| {
+        let name = e.unwrap().file_name().into_string().unwrap();
+        !name.contains(".tmp-")
+    }));
+}
+
 #[test]
 fn an_output_inside_the_source_store_is_refused() {
     let f = Fixture::new();
@@ -1773,15 +1815,19 @@ fn a_refused_report_leaves_the_ifc_destination_as_it_was() {
 
 #[cfg(unix)]
 #[test]
-fn a_link_above_the_output_directory_is_refused() {
+fn a_link_above_the_output_directory_is_resolved() {
     let f = Fixture::new();
     f.exportable_plate();
     fs::create_dir_all(f.path("real/child")).unwrap();
     std::os::unix::fs::symlink(f.path("real"), f.path("alias")).unwrap();
+    // A link above the output (what /tmp is on macOS) resolves: the export goes through and the
+    // file lands in the real directory the link points at.
     let through = f.path("alias/child/a.ifc");
-    let (_, rejected, _) = f.export_rejected(&["--out", &through]);
-    assert_eq!(rejected, "INVALID_ARGUMENT");
-    assert_eq!(fs::read_dir(f.path("real/child")).unwrap().count(), 0);
+    f.export(&through, &[]);
+    assert!(
+        fs::read(&through).unwrap().starts_with(b"ISO-10303-21;"),
+        "the file is written through the link"
+    );
 }
 
 #[test]
@@ -1808,7 +1854,7 @@ fn a_revision_is_found_by_id_among_many() {
 
 #[cfg(unix)]
 #[test]
-fn a_link_at_the_output_name_or_its_parent_is_refused() {
+fn a_link_at_the_output_name_is_refused_and_a_directory_link_parent_is_resolved() {
     let f = Fixture::new();
     f.exportable_plate();
     let real = f.path("real.ifc");
@@ -1823,12 +1869,12 @@ fn a_link_at_the_output_name_or_its_parent_is_refused() {
         assert_eq!(rejected, "INVALID_ARGUMENT");
     }
     assert_eq!(fs::read_to_string(&real).unwrap(), "keep");
+    // A directory link as the parent resolves to the real directory.
     fs::create_dir(f.path("dir")).unwrap();
     std::os::unix::fs::symlink(f.path("dir"), f.path("dirlink")).unwrap();
     let through = f.path("dirlink/a.ifc");
-    let (_, rejected, _) = f.export_rejected(&["--out", &through]);
-    assert_eq!(rejected, "INVALID_ARGUMENT");
-    assert_eq!(fs::read_dir(f.path("dir")).unwrap().count(), 0);
+    f.export(&through, &[]);
+    assert!(fs::read(f.path("dir/a.ifc")).is_ok());
 }
 
 #[test]
