@@ -59,6 +59,7 @@ impl Repo {
             rustc: "rustc 1.99.1".into(),
             cargo: "cargo 1.99.1".into(),
             nextest: "cargo-nextest 0.9.149".into(),
+            max_jobs: None,
             expected_tests: 2,
             executed_tests: 2,
             ignored_tests: Vec::new(),

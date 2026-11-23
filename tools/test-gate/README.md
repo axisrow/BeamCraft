@@ -38,7 +38,8 @@ leaves diagnostics; the lock is automatically released by the OS.
 The output path printed on success is the versioned report under `target/test-gate/`. Each run
 has a new directory with stdout/stderr logs and fresh JUnit evidence. `--report PATH` chooses
 a new output directory. Reports include the exact commit/tree/base, native OS/architecture,
-scope, tool versions, executed/expected test counts and individual stage statuses/times.
+scope, tool versions, executed/expected test counts, individual stage statuses/times and, when
+one was set, the job ceiling (see "Load on a shared machine").
 Explicitly ignored tests are listed as coverage limits, not represented as executed passes.
 Test builds omit debug symbols and incremental state, matching CI; debug assertions and
 overflow checks remain enabled.
@@ -116,3 +117,51 @@ On headless Linux, install Mesa software Vulkan. Missing prerequisites fail inst
 an apparently successful `SKIP`. Run fixtures under their own isolated cache/target directories;
 the tool's conformance tests verify real failures, doctests, timeouts, descendant cleanup,
 cross-worktree exclusion and a CLI-only workspace whose UI build intentionally refuses to run.
+
+## Load on a shared machine
+
+A full gate saturates a desktop for a few minutes. Two runner settings keep an interactive
+session responsive while the gate keeps every core; neither changes what a gate verifies, and
+no budget moves.
+
+- **Children run below interactive work.** Every command the runner starts (format, Clippy,
+  nextest, doctests, docs) and everything those commands start inherits it: on macOS the child
+  is clamped to utility QoS with `taskpolicy -c utility`, on other Unix systems it runs with
+  `nice -n 10`, on Windows with the below-normal priority class. Measured on the shared Mac
+  (Apple M5, 4 performance and 6 efficiency cores) with ten CPU-bound processes: a
+  normal-priority thread waking every 2 ms waited 3.2 ms at the median without the setting and
+  3.0 ms with `nice -n 10`, against 0.5 ms, the idle figure, with the utility clamp, which cost
+  ten CPU-bound processes 20% of their throughput in the same experiment. macOS schedules by QoS
+  class, so niceness alone is not enough there. `taskpolicy -b` gave the same latency at 28%
+  throughput (efficiency cores only) and would not fit the test budgets. The setting keeps the
+  owner's session responsive; it does not make a gate faster than a neighbour's build, because
+  a lowered gate yields to every normal-priority process, a colleague's build included. Beside a
+  saturating targeted test run, one cold gate took 80 s for Clippy instead of 22 s, was still
+  building its nextest inventory at 340 s instead of 62 s when it was stopped, and took 90 s for
+  documentation instead of 5 s; beside another gate's test stage this tool's own conformance
+  fixtures took 50 s and 76 s instead of 2.6 s and 7.7 s, against their 120-second budget. The
+  quiet-window discipline stays. The clamp also costs on an otherwise idle machine: there a cold
+  gate took 43 s for Clippy, 138 s for its nextest inventory, 323 s for its tests and 520 s in
+  total, against 25 s, 142 s, 257 s and 434 s unclamped on the same master, while a
+  normal-priority thread kept its idle wake-up latency of 0.5 ms instead of 2-5 ms.
+- **`BEAMCRAFT_GATE_MAX_JOBS=N` caps concurrency.** A `check` then limits Cargo's build jobs
+  (`CARGO_BUILD_JOBS`) and nextest's test threads (`-j N`) to N. Unset or empty keeps both
+  tools' defaults, so nothing changes for anyone who does not opt in. Any other value must be a
+  positive integer; a mistyped ceiling stops the gate before it builds anything instead of
+  silently lifting it. The report records the ceiling as `max_jobs` when it is set and omits
+  the field when it is not, so the receipt of an uncapped gate is unchanged.
+
+The ceiling trades wall time for headroom, and a capped run must still meet the same fixed
+budgets. Replaying the per-test times of one full local run (3,335 tests, 225 s with ten
+threads) gives about 285 s with eight threads, 365 s with six, 440 s with five and 550 s with
+four, against the 600-second budget: four leaves no margin on this machine. A cold run with six
+threads and the clamp then measured 386 s for the stage. Leave roughly a third of the logical
+cores free, for example `BEAMCRAFT_GATE_MAX_JOBS=6` on ten.
+
+```sh
+BEAMCRAFT_GATE_MAX_JOBS=6 cargo run --locked -p beamcraft-test-gate -- check --scope full
+```
+
+These settings cover the runner's children. `cargo run` builds the runner first, a short build
+outside them; to lower that build as well, start the runner under the same policy, for example
+`taskpolicy -c utility cargo run --locked -p beamcraft-test-gate -- check --scope full`.

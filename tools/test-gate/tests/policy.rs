@@ -27,6 +27,7 @@ fn success() -> Report {
         rustc: "rustc 1.99.1".into(),
         cargo: "cargo 1.99.1".into(),
         nextest: "cargo-nextest 0.9.149".into(),
+        max_jobs: None,
         expected_tests: 2,
         executed_tests: 2,
         ignored_tests: Vec::new(),
@@ -247,4 +248,70 @@ fn inventory_and_junit_are_structured_not_green_log_grep() {
             .unwrap()
             .passed
     );
+}
+
+#[test]
+fn the_job_ceiling_is_opt_in_validated_and_applied_to_every_child() {
+    use std::ffi::OsStr;
+    use std::path::Path;
+    use std::process::Command;
+    assert_eq!(local::max_jobs(None).unwrap(), None);
+    assert_eq!(local::max_jobs(Some(OsStr::new(""))).unwrap(), None);
+    assert_eq!(local::max_jobs(Some(OsStr::new("6"))).unwrap(), Some(6));
+    for bad in ["0", "-1", "4x", " 4", "99999999999"] {
+        assert!(local::max_jobs(Some(OsStr::new(bad))).is_err(), "{bad:?}");
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config = root.join("unused.toml");
+    let args = |command: &Command| -> Vec<String> {
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    };
+    let build_jobs = |command: &Command| {
+        command
+            .get_envs()
+            .find(|(key, _)| *key == "CARGO_BUILD_JOBS")
+            .and_then(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+    };
+    let plain = local::cargo(root, None);
+    assert_eq!(build_jobs(&plain), None);
+    assert_eq!(build_jobs(&local::cargo(root, Some(6))), Some("6".into()));
+    let run = args(&local::nextest(root, "run", "gate-full", &config, Some(6)));
+    assert_eq!(run[run.len() - 2..], ["-j", "6"]);
+    for uncapped in [
+        local::nextest(root, "run", "gate-full", &config, None),
+        local::nextest(root, "list", "gate-full", &config, Some(6)),
+    ] {
+        assert!(!args(&uncapped).iter().any(|arg| arg == "-j"));
+    }
+    // Every child starts below interactive work: clamped to utility QoS on macOS, niced on
+    // other Unix systems, a below-normal priority class on Windows.
+    let (launcher, policy): (&str, &[&str]) = match std::env::consts::OS {
+        "macos" => ("taskpolicy", &["-c", "utility"]),
+        "linux" => ("nice", &["-n", "10"]),
+        _ => ("cargo", &[]),
+    };
+    assert_eq!(plain.get_program(), launcher);
+    assert_eq!(args(&plain)[..policy.len()], policy[..]);
+
+    // The ceiling is receipt provenance: an unset one leaves the wire format unchanged.
+    let mut report = success();
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json.get("max_jobs").is_none());
+    assert_eq!(
+        serde_json::from_value::<Report>(json).unwrap().max_jobs,
+        None
+    );
+    report.max_jobs = Some(6);
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["max_jobs"], 6);
+    assert_eq!(
+        serde_json::from_value::<Report>(json).unwrap().max_jobs,
+        Some(6)
+    );
+    report.max_jobs = Some(0);
+    assert!(report.validate().is_err());
 }

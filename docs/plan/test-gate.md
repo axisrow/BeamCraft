@@ -75,6 +75,31 @@ an early successful `SKIP`. A software Vulkan adapter is sufficient on headless 
 Platform-conditional tests remain platform-conditional; other partitions' excluded tests do
 not count as missing coverage.
 
+## Shared-machine load
+
+A gate must not take the owner's session hostage while it runs ([issue
+#781](https://github.com/axisrow/BeamCraft/issues/781), owner order 2026-11-23). Two runner
+settings, neither of which changes what a gate verifies or moves a budget:
+
+- The runner starts its children below interactive work, and their own children inherit it:
+  clamped to utility QoS on macOS, niced on other Unix systems, in the below-normal priority
+  class on Windows. Priority is not a test input and is not recorded. It keeps the owner's
+  session responsive; it does not make a gate faster than a neighbour's build, because a gate
+  then yields to any normal-priority work, so the quiet-window discipline still applies to it.
+- `BEAMCRAFT_GATE_MAX_JOBS` caps Cargo build jobs and nextest test threads. It is environment
+  provenance, not policy: unset or empty keeps the tools' defaults and leaves the report
+  unchanged; a set value must be a positive integer, is recorded as `max_jobs`, and a capped
+  run must still meet the budgets in the table above. Choosing a ceiling is described in
+  `tools/test-gate/README.md`.
+
+Measurement came first, and it moved the blame. The freezes were a leaked system daemon: on
+the shared Mac `fseventsd` held 47 GB with 55 of 56 GB of swap in use, and the machine was
+paging at idle. After its restart the same cold gate took 319 s instead of 574-605 s, its tests
+stage 225 s instead of 353-378 s, and one cold gate (1.87 million disk writes) left the
+daemon's footprint unchanged. The settings above are the gate's own contribution to a
+responsive machine; a machine-level leak is fixed by restarting the daemon, not in the
+repository. Before blaming a gate, read memory by footprint (`top -o mem`), not resident size.
+
 ## CI selection and report transport
 
 After a successful committed-source check, an explicit publish command places the report in

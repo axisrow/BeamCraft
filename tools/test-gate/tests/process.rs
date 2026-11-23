@@ -506,6 +506,8 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
             "--report",
             "target/run/report.json",
         ])
+        // A ceiling set for an enclosing gate reaches this fixture gate through the environment.
+        .env_remove("BEAMCRAFT_GATE_MAX_JOBS")
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env("XDG_CACHE_HOME", temp.0.join("cache"));
     let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
@@ -520,6 +522,7 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     )
     .unwrap();
     report.validate().unwrap();
+    assert_eq!(report.max_jobs, None);
     assert!(!report.ui_tested);
     assert_eq!(report.executed_tests, 2);
     assert!(
@@ -556,6 +559,7 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
             "--report",
             "target/mutating/report.json",
         ])
+        .env("BEAMCRAFT_GATE_MAX_JOBS", "2")
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env("XDG_CACHE_HOME", temp.0.join("cache"));
     let failed = process::run("mutated-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
@@ -564,8 +568,40 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
         &std::fs::read_to_string(root.join("target/mutating/report.json")).unwrap(),
     )
     .unwrap();
+    // A set ceiling runs the real gate and is recorded as receipt provenance.
+    assert_eq!(changed.max_jobs, Some(2));
     assert!(!changed.source_unchanged);
     assert!(changed.validate().is_err());
+    // A mistyped ceiling stops the gate before it builds or runs anything.
+    let mut cmd = Command::new(&wrapper);
+    cmd.current_dir(&root)
+        .args([
+            "check",
+            "--scope",
+            "cli",
+            "--base",
+            &base,
+            "--ui-independent-reason",
+            "Only CLI tests changed; the ceiling itself must refuse to run.",
+            "--report",
+            "target/invalid/report.json",
+        ])
+        .env("BEAMCRAFT_GATE_MAX_JOBS", "0")
+        .env("XDG_CACHE_HOME", temp.0.join("cache"));
+    let refused = process::run(
+        "invalid-ceiling",
+        &mut cmd,
+        &temp.0,
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    assert_ne!(refused.exit_code, 0);
+    assert!(
+        std::fs::read_to_string(temp.0.join("invalid-ceiling.stderr.log"))
+            .unwrap()
+            .contains("BEAMCRAFT_GATE_MAX_JOBS")
+    );
+    assert!(!root.join("target/invalid").exists());
 }
 
 #[test]

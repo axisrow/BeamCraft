@@ -7,6 +7,7 @@ use crate::{
 };
 use quick_xml::{Reader, events::Event};
 use serde_json::Value;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -105,7 +106,41 @@ fn build_target(root: &Path) -> PathBuf {
     base.join("test-gate/target")
 }
 
-fn cargo(root: &Path) -> Command {
+/// Parses `BEAMCRAFT_GATE_MAX_JOBS`. An absent or empty value keeps Cargo's and nextest's own
+/// defaults; anything else must be a positive integer, so a mistyped ceiling stops the gate
+/// instead of silently lifting it.
+pub fn max_jobs(value: Option<&OsStr>) -> Result<Option<u32>> {
+    let Some(text) = value.filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    match text.to_string_lossy().parse::<u32>() {
+        Ok(jobs) if jobs > 0 => Ok(Some(jobs)),
+        _ => fail(format!(
+            "BEAMCRAFT_GATE_MAX_JOBS must be a positive integer, not {text:?}"
+        )),
+    }
+}
+
+/// Puts a child below interactive work while it keeps every core. macOS schedules by QoS class
+/// and barely reacts to `nice`, so there the child is clamped to utility QoS; children inherit
+/// the setting.
+#[cfg(target_os = "macos")]
+const SCHEDULER: (&str, &[&str]) = ("taskpolicy", &["-c", "utility"]);
+/// The counterpart on other Unix systems: niceness 10.
+#[cfg(all(unix, not(target_os = "macos")))]
+const SCHEDULER: (&str, &[&str]) = ("nice", &["-n", "10"]);
+
+/// Cargo for the selected checkout: below interactive priority, with the gate's fixed build
+/// settings and, when `jobs` is set, that ceiling on its build jobs.
+pub fn cargo(root: &Path, jobs: Option<u32>) -> Command {
+    #[cfg(unix)]
+    let mut command = {
+        let (launcher, policy) = SCHEDULER;
+        let mut command = Command::new(launcher);
+        command.args(policy).arg("cargo");
+        command
+    };
+    #[cfg(not(unix))]
     let mut command = Command::new("cargo");
     // Match CI's compact test artifacts without disabling runtime assertions.
     command
@@ -115,6 +150,15 @@ fn cargo(root: &Path) -> Command {
         .env("CARGO_PROFILE_TEST_DEBUG_ASSERTIONS", "true")
         .env("CARGO_PROFILE_TEST_OVERFLOW_CHECKS", "true")
         .env("CARGO_INCREMENTAL", "0");
+    if let Some(jobs) = jobs {
+        command.env("CARGO_BUILD_JOBS", jobs.to_string());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // BELOW_NORMAL_PRIORITY_CLASS, the Windows counterpart of the Unix settings above.
+        command.creation_flags(0x0000_4000);
+    }
     command
 }
 
@@ -132,8 +176,16 @@ fn config(root: &Path, output: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn nextest(root: &Path, action: &str, profile: &str, config: &Path) -> Command {
-    let mut command = cargo(root);
+/// nextest through [`cargo`]. Only `run` takes the test-thread ceiling: nextest keeps its own
+/// thread count, independent of Cargo's build jobs.
+pub fn nextest(
+    root: &Path,
+    action: &str,
+    profile: &str,
+    config: &Path,
+    jobs: Option<u32>,
+) -> Command {
+    let mut command = cargo(root, jobs);
     command
         .args([
             "nextest",
@@ -146,6 +198,9 @@ fn nextest(root: &Path, action: &str, profile: &str, config: &Path) -> Command {
         ])
         .arg(config)
         .arg("--ignore-default-filter");
+    if let (Some(jobs), "run") = (jobs, action) {
+        command.args(["-j", &jobs.to_string()]);
+    }
     command
 }
 
@@ -316,6 +371,7 @@ fn finish_tests(step: &mut Stage, output: &Path, expected: u64, budget_ms: u64) 
 
 /// Executes and records the full local gate, retaining failed reports for diagnosis.
 pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
+    let jobs = max_jobs(std::env::var_os("BEAMCRAFT_GATE_MAX_JOBS").as_deref())?;
     let _lock = process::lock()?;
     if options.scope == Scope::Full && std::env::var_os("BEAMCRAFT_THEME").is_some() {
         return fail("unset BEAMCRAFT_THEME for a full gate: it suppresses theme acceptance tests");
@@ -382,8 +438,8 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
     }
     std::fs::create_dir_all(output)?;
     let rustc = capture(Command::new("rustc").arg("--version"))?;
-    let cargo_version = capture(cargo(root).arg("--version"))?;
-    let nextest_version = capture(cargo(root).args(["nextest", "--version"]))?;
+    let cargo_version = capture(cargo(root, jobs).arg("--version"))?;
+    let nextest_version = capture(cargo(root, jobs).args(["nextest", "--version"]))?;
     if nextest_version.split_whitespace().nth(1) != Some(NEXTEST_VERSION) {
         return fail("install cargo-nextest 0.9.149 before running the gate");
     }
@@ -391,13 +447,13 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
     let selection = options.scope.cargo_args();
     let mut stages = vec![stage(
         "format",
-        cargo(root).args(["fmt", "--all", "--", "--check"]),
+        cargo(root, jobs).args(["fmt", "--all", "--", "--check"]),
         output,
         BUILD_LIMIT,
     )];
     stages.push(stage(
         "clippy",
-        cargo(root).arg("clippy").args(selection).args([
+        cargo(root, jobs).arg("clippy").args(selection).args([
             "--all-targets",
             "--locked",
             "--",
@@ -409,7 +465,7 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
     ));
     let prepare = stage(
         "prepare",
-        nextest(root, "list", options.scope.profile(), &cfg)
+        nextest(root, "list", options.scope.profile(), &cfg, jobs)
             .args(selection)
             .args(["--locked", "--message-format", "json"]),
         output,
@@ -430,7 +486,7 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
     let mut tests = if expected > 0 {
         stage(
             "tests",
-            nextest(root, "run", options.scope.profile(), &cfg)
+            nextest(root, "run", options.scope.profile(), &cfg, jobs)
                 .args(selection)
                 .args([
                     "--locked",
@@ -456,10 +512,11 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
     let mut docs = if prepared {
         stage(
             "doctests",
-            cargo(root)
-                .arg("test")
-                .args(selection)
-                .args(["--doc", "--locked", "--no-fail-fast"]),
+            cargo(root, jobs).arg("test").args(selection).args([
+                "--doc",
+                "--locked",
+                "--no-fail-fast",
+            ]),
             output,
             DOC_LIMIT,
         )
@@ -483,7 +540,7 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
     stages.push(docs);
     stages.push(stage(
         "docs",
-        cargo(root)
+        cargo(root, jobs)
             .arg("doc")
             .args(selection)
             .args(["--no-deps", "--locked"])
@@ -514,6 +571,7 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
         rustc,
         cargo: cargo_version,
         nextest: nextest_version,
+        max_jobs: jobs,
         expected_tests: expected,
         executed_tests: executed,
         ignored_tests,
@@ -531,7 +589,7 @@ pub fn ci_archive(root: &Path, output: &Path) -> Result<()> {
     std::fs::create_dir_all(output)?;
     let build = stage(
         "archive",
-        cargo(root)
+        cargo(root, None)
             .args([
                 "nextest",
                 "archive",
@@ -546,7 +604,7 @@ pub fn ci_archive(root: &Path, output: &Path) -> Result<()> {
     let docs = if build.exit_code == 0 {
         stage(
             "doctests",
-            cargo(root).args(["test", "--workspace", "--doc", "--locked", "--no-fail-fast"]),
+            cargo(root, None).args(["test", "--workspace", "--doc", "--locked", "--no-fail-fast"]),
             output,
             DOC_LIMIT,
         )
@@ -595,7 +653,7 @@ pub fn ci_test(root: &Path, output: &Path, archive: &Path, partition: &str) -> R
     let part = format!("hash:{index}/{total}");
     let prepare = stage(
         "prepare",
-        nextest(root, "list", "gate-ci", &cfg)
+        nextest(root, "list", "gate-ci", &cfg, None)
             .arg("--archive-file")
             .arg(archive)
             .args([
@@ -618,7 +676,7 @@ pub fn ci_test(root: &Path, output: &Path, archive: &Path, partition: &str) -> R
     let mut tests = if expected > 0 {
         stage(
             "tests",
-            nextest(root, "run", "gate-ci", &cfg)
+            nextest(root, "run", "gate-ci", &cfg, None)
                 .arg("--archive-file")
                 .arg(archive)
                 .args([
