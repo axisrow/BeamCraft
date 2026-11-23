@@ -1,0 +1,11 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "south-america"
+        string "bim:environment:version" = "1"
+        string "bim:environment:title" = "South America (Chile NCh203 material grades)"
+        string[] "bim:environment:material-libraries" = ["materials-nch203.usda"]
+    }
+)
