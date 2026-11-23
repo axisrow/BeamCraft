@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "south-africa"
+        string "bim:environment:version" = "1"
+        string "bim:environment:title" = "South Africa (EN 10365 IPE sections, SANS 50025 grades)"
+        string[] "bim:environment:libraries" = ["profiles-en-10365-ipe.usda"]
+        string[] "bim:environment:material-libraries" = ["materials-sans-50025.usda"]
+    }
+)
