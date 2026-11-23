@@ -527,7 +527,9 @@ fn list(
             ("shadowed_count".to_owned(), Json::uint(shadow_total)),
             ("shadowed_next_offset".to_owned(), shadow_next.clone()),
         ]);
-        if let [(None, lookup)] = resolvers
+        // One resolver of one library and no environment names it, whatever namespace was
+        // asked for: under --namespace the reply is the untagged one plus the namespace keys.
+        if let [(_, lookup)] = resolvers
             && let [only] = lookup.sources()
             && environment.is_none()
         {

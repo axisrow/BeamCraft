@@ -569,6 +569,9 @@ fn a_lost_environment_copy_is_reported_in_every_namespace() {
         0,
         "nothing shadows the firm bolts now"
     );
+    // The firm file is the one fastener library of the chain and no environment remains: the
+    // reply names it under --namespace too, as the reply of a single --library does.
+    assert_eq!(text(at(&bolts, &["library"]), "id"), "mine");
     assert!(text(at(&bolts, &["environment_lost"]), "message").contains(lost));
     for namespace in ["profile", "material", "all"] {
         let listed = f.listing(&store, &["--namespace", namespace]);
