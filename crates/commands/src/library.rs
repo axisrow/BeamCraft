@@ -3574,6 +3574,245 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_middle_east_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/middle-east/profiles-en-10365.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "middle-east-en-10365-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 55);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // The curated mix declares the edition the regional producer prints, on every row.
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("EN 10365:2017"),
+                "{}",
+                entry.designation
+            );
+            // The D3 declared-area check stays silent (the declared areas are the standard's
+            // published values, the exact-filleted convention by default) and the declared mass
+            // is that area at 7850 kg/m3 within the published rounding.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() <= 0.55,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            designations.push(entry.designation.clone());
+        }
+        // The IPE, HEA and HEB rows of the `europe` pack, sizes 100 to 600, in the loader's
+        // designation order: HEA and HEB share one size ladder (no 250 or 270) and IPE has its
+        // own (no 250 or 280; 270 and 330 included).
+        let he = [
+            100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 340, 360, 400, 450, 500,
+            550, 600,
+        ];
+        let ipe = [
+            100, 120, 140, 160, 180, 200, 220, 240, 270, 300, 330, 360, 400, 450, 500, 550, 600,
+        ];
+        let mut expected: Vec<String> = he.iter().map(|h| format!("HEA{h}")).collect();
+        expected.extend(he.iter().map(|h| format!("HEB{h}")));
+        expected.extend(ipe.iter().map(|h| format!("IPE{h}")));
+        assert_eq!(designations, expected);
+        // Spot checks against the standard's published values.
+        for (designation, values, area, mass) in [
+            ("IPE300", [300.0, 150.0, 7.1, 10.7, 15.0], 5381.0, 42.2),
+            ("HEA340", [330.0, 300.0, 9.5, 16.5, 27.0], 13350.0, 105.0),
+            ("HEB100", [100.0, 100.0, 6.0, 10.0, 12.0], 2600.0, 20.4),
+        ] {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &library.entry(designation).unwrap().record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        }
+        // NOT_FOUND, never a near match: designations the series does not publish (no IPE 250 or
+        // 280, no HEA 250), sizes beyond the shipped range (IPE 650, HEA 700, HEB 1000), the HL,
+        // HD and HP series the region rolls but the pack holds no re-entered tables for, and the
+        // channel series the curated mix leaves to the `europe` pack.
+        for absent in [
+            "IPE250",
+            "IPE280",
+            "HEA250",
+            "IPE650",
+            "HEA700",
+            "HEB1000",
+            "HL920x491",
+            "HD260x172",
+            "HP305x95",
+            "UPE100",
+            "UPN100",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the pack"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_middle_east_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/middle-east/materials-astm.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "middle-east-astm-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 7);
+        // The grades of the three standards in the loader's designation order: the single A36,
+        // the five A572 strength grades (42 to 65, the grade number the minimum yield strength
+        // in ksi) with the Grade word the standard designates with, and the W-shape grade A992.
+        // Each row declares the edition the regional producer prints on its grade rows (owner
+        // decision of 2026-11-23); the density is the metric 7850 kg/m3 of every shipped pack.
+        let a36 = "ASTM A36/A36M-19";
+        let a572 = "ASTM A572/A572M-21";
+        let a992 = "ASTM A992/A992M-20";
+        let expected: [(&str, &str); 7] = [
+            ("A36", a36),
+            ("A572 Grade 42", a572),
+            ("A572 Grade 50", a572),
+            ("A572 Grade 55", a572),
+            ("A572 Grade 60", a572),
+            ("A572 Grade 65", a572),
+            ("A992", a992),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_middle_east_environment_admits_its_libraries() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/middle-east/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "middle-east");
+        assert_eq!(environment.info.version.as_deref(), Some("1"));
+        assert_eq!(environment.info.libraries, ["profiles-en-10365.usda"]);
+        assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
+        // The curated mix: one EN 10365 profile library and one ASTM material library. The
+        // environment lists no fastener library; the regional fastener set waits on #708.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        let profiles = &environment.sources[0];
+        assert_eq!(profiles.library.info.id, "middle-east-en-10365-profiles");
+        assert_eq!(profiles.library.entries.len(), 55);
+        assert!(profiles.library.rejected.is_empty());
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "middle-east-astm-materials");
+        assert_eq!(materials.library.entries.len(), 7);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, a992) = lookup.find("A992").unwrap();
+        assert_eq!(source.library.info.id, "middle-east-astm-materials");
+        assert!(matches!(
+            &a992.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("ASTM A992/A992M-20")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare spec
+        // number, no hyphenated or compact industry shorthand (the shipped A572 form is the
+        // standard's own Grade form), no lowercase, no grade outside the standard's set, no
+        // grade of another ASTM specification and no EN 10025 grade (the curated mix ships the
+        // ASTM grades alone).
+        for absent in [
+            "A572",
+            "A572-50",
+            "A572Gr50",
+            "A36M",
+            "a992",
+            "A572 Grade 70",
+            "A709",
+            "S355J2",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));

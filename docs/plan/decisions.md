@@ -6,6 +6,27 @@ Open questions are at the end.
 
 ## 2026-11-23
 
+- **The Middle East pack is a curated EN+ASTM mix, re-entered from the declared standards.**
+  Owner decision of 2026-11-23, resolving the content question of the Middle East regional pack
+  (#712, part of #649) in the direction of upstream #877 (comment 7087135753): the `middle-east`
+  environment ships the EN 10365:2017 sections — the IPE, HEA and HEB rows of the `europe` pack,
+  carried over unchanged and declared `EN 10365:2017` on every entry — beside the ASTM grades
+  A36, A572 and A992, and none of the BS, American or Australian series. The data route is own
+  re-entry from the declared standards: the EN rows are the same facts the `europe` pack already
+  re-entered and verified, and the grade rows are the designations the `usa` pack ships, each
+  declared with the edition the regional producer prints on its grade rows (ASTM A36/A36M-19,
+  A572/A572M-21 and A992/A992M-20). The EMSTEEL Heavy Sections catalogue
+  (emsteel.com/pdf/2025/05/heavy-section.pdf, retrieved 2026-11-23) is admitted as a cross-check
+  source only: it confirms the shipped rows and the editions, and no table is copied from it.
+  A family the pack holds no re-entered table for is not invented: the HL, HD and HP series and
+  the HEA/HEB sizes above 600 stay `NOT_FOUND` until a slice re-enters them under the standing
+  pack discipline. The edition stance follows the GOST 26020-83 row of 2026-11-16: the declared
+  edition is the one whose public tables the rows were verified against and the one the
+  producer declares, so the pack stays on EN 10365:2017. EN 10365:2026 supersedes that edition
+  (approved by CEN on 2026-04-27, national implementation due by 2027-01); moving the EN series
+  to it is a separate owner decision, taken under the standing pack discipline, and never edits
+  the existing rows in place. Fasteners are not part of the pack (#708 carries the fastener set).
+
 - **The South America pack starts as a grades-only `south-america` environment with the national
   grades of NCh203.Of2006.** Owner decision of 2026-11-23 on the South America pack (#711): act
   and document in detail, from open online sources only — nothing is purchased, and every source
