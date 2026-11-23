@@ -102,6 +102,19 @@ impl App {
         self.grid_note = None;
     }
 
+    pub(super) fn grid_line_start_point(&self) -> Option<[f64; 3]> {
+        (self.grid_line.click == Some(true))
+            .then(|| self.grid_line.points.first())
+            .flatten()
+            .and_then(|[x, y]| {
+                Some([
+                    x.trim().parse().ok()?,
+                    y.trim().parse().ok()?,
+                    self.tools.plane.map_or(0.0, |p| p.origin()[2]),
+                ])
+            })
+    }
+
     /// Where a grid-line pick lands: the ground point under `ray`, snapped like placement, and
     /// the snap kind it took. `Err` names why there is no point.
     pub(super) fn grid_line_hit(
@@ -111,19 +124,17 @@ impl App {
         use beamcraft_engine::query::pick::SnapKind;
         let point = super::ground_point(&ray).ok_or("Aim at the horizontal grid plane.")?;
         let kinds = self.selection.snap_kinds();
+        let from = self.grid_line_start_point().map(|p| [p[0], p[1], point[2]]);
         let Some(loaded) = self.loaded.as_ref().filter(|_| !kinds.is_empty()) else {
-            return Ok((point, None));
+            return self
+                .constrain_creation(point, None, ray, false)
+                .map_err(|e| e.to_string());
         };
         let grids = if self.grids_shown() {
             self.grid_scene.query_grids.as_slice()
         } else {
             &[]
         };
-        // The second end of a line starts from the first: the start of a perpendicular snap.
-        let from = (self.grid_line.click == Some(true))
-            .then(|| self.grid_line.points.first())
-            .flatten()
-            .and_then(|[x, y]| Some([x.trim().parse().ok()?, y.trim().parse().ok()?, point[2]]));
         let context = beamcraft_engine::query::pick::SnapContext {
             grids,
             member_axes: &self.grid_scene.member_axes,
@@ -156,10 +167,22 @@ impl App {
             )
             .map_err(|error| error.to_string())?;
             if let Some(hit) = result.candidates.first() {
-                return Ok((hit.point_world_mm, Some(hit.kind)));
+                return self
+                    .constrain_creation(hit.point_world_mm, Some(hit.kind), ray, false)
+                    .map_err(|e| e.to_string());
             }
         }
-        Ok((point, None))
+        self.constrain_creation(point, None, ray, false)
+            .map_err(|e| e.to_string())
+    }
+
+    pub(super) fn accept_grid_point(&mut self, point: [f64; 3]) {
+        // A grid line is plan-only. Snap supplies XY; height never becomes grid data.
+        let index = usize::from(self.grid_line.click == Some(true));
+        if let Some(endpoint) = self.grid_line.points.get_mut(index) {
+            *endpoint = [point[0].to_string(), point[1].to_string()];
+        }
+        self.grid_line.click = if index == 0 { Some(true) } else { None };
     }
 
     pub(super) fn place_grid_line(&mut self, ray: crate::edit::Ray) {
@@ -173,12 +196,7 @@ impl App {
                 return;
             }
         };
-        // A grid line is plan-only. Snap supplies XY; height never becomes grid data.
-        let index = usize::from(self.grid_line.click == Some(true));
-        if let Some(endpoint) = self.grid_line.points.get_mut(index) {
-            *endpoint = [point[0].to_string(), point[1].to_string()];
-        }
-        self.grid_line.click = if index == 0 { Some(true) } else { None };
+        self.accept_grid_point(point);
     }
 
     fn drawn_line_fields(&mut self, ui: &mut Ui, editing: bool) {

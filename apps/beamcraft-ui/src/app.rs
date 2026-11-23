@@ -9,6 +9,8 @@
 //! the cursor, F fits and R reloads.
 
 pub mod annotation_panel;
+mod array_panel;
+mod assembly_panel;
 mod bolt_panel;
 mod contour_grips;
 mod creation_panel;
@@ -17,6 +19,9 @@ mod fit_panel;
 mod grid_panel;
 mod level_panel;
 mod member_grips;
+mod numbering_panel;
+mod profile_catalog;
+mod reference_panel;
 mod switches;
 mod view_panel;
 mod weld_panel;
@@ -164,6 +169,8 @@ pub struct App {
     member_cursor: Option<[f64; 3]>,
     distance_input: String,
     distance_aim: Option<[f64; 3]>,
+    /// Temporary Tekla-style Ctrl+Click reference origin for relative offset placement.
+    pub(crate) ctrl_reference: Option<[f64; 3]>,
     plate_input: [String; 2],
     plane_form: crate::work_plane::Form,
     plane_pick: bool,
@@ -242,10 +249,20 @@ pub struct App {
     annotation: annotation_panel::Panel,
     /// The V10 Weld bench: the picked pair, the form and its commit job.
     weld: weld_panel::Panel,
-    /// The Fit end bench: the picked part and plate, and the running fit.
+    /// The Fit end, Cut and Hole benches: picked parts/points and running commit job.
     fit: fit_panel::Panel,
     /// The V19 Bolt bench: the picked parts and points, the form and its jobs.
     bolt: bolt_panel::Panel,
+    /// The Assemblies bench (#844).
+    assembly: assembly_panel::Panel,
+    /// The Numbering bench (#846).
+    numbering: numbering_panel::Panel,
+    /// The USD Reference Models bench (#850).
+    reference: reference_panel::Panel,
+    /// The Linear and Polar Array bench (#845).
+    array: array_panel::Panel,
+    /// Interactive Profile Catalogue and parametric section creator (#840).
+    pub(crate) profile_catalog: profile_catalog::State,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
     /// The selected plate's contour grips (V18): the drag in progress and the commit in flight.
@@ -602,6 +619,55 @@ fn choice_combo(
     });
 }
 
+/// Shared profile picker row: dropdown + `…` button that opens the Profile Catalogue (#840).
+pub(super) fn profile_row(
+    ui: &mut egui::Ui,
+    id: &str,
+    current: &mut Option<String>,
+    choices: &[Choice],
+    required: bool,
+) -> bool {
+    let mut open_catalog = false;
+    let selected = current
+        .as_ref()
+        .map(|digest| {
+            choices.iter().find(|c| &c.digest == digest).map_or_else(
+                || "Definition unavailable".to_owned(),
+                |c| definition_choice_label(c, choices),
+            )
+        })
+        .unwrap_or_else(|| if required { "choose…" } else { "none" }.to_owned());
+    crate::kit::prop_row(ui, "Profile", |ui| {
+        ui.horizontal(|ui| {
+            let btn_space = 32.0;
+            egui::ComboBox::from_id_salt(id)
+                .width((ui.available_width() - crate::kit::FIT - btn_space).max(60.0))
+                .truncate()
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if !required {
+                        ui.selectable_value(current, None, "none");
+                    }
+                    for choice in choices {
+                        ui.selectable_value(
+                            current,
+                            Some(choice.digest.clone()),
+                            definition_choice_label(choice, choices),
+                        );
+                    }
+                });
+            if ui
+                .button("…")
+                .on_hover_text("Open Profile Catalogue (browse, preview & create profiles)")
+                .clicked()
+            {
+                open_catalog = true;
+            }
+        });
+    });
+    open_catalog
+}
+
 fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
     ui.horizontal(|ui| {
         // A share of the row, not a fixed width: three fixed 64 pt fields plus their labels
@@ -728,6 +794,55 @@ fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
                 )
                 .char_limit(MAX_TEXT),
         );
+    });
+}
+
+/// Shared Class input + live USD/viewport class colour swatch (Tekla-style feedback).
+pub(super) fn class_field(ui: &mut egui::Ui, text: &mut String) {
+    crate::kit::prop_row(ui, "Class", |ui| {
+        let parsed = text.trim();
+        let class = if parsed.is_empty() {
+            Ok(0)
+        } else {
+            parsed.parse::<i32>()
+        };
+        let swatch = match class {
+            Ok(c) => {
+                let [r, g, b] = crate::colour_sets::class_rgb(c);
+                Some((c, egui::Color32::from_rgb(r, g, b)))
+            }
+            Err(_) => None,
+        };
+        ui.horizontal(|ui| {
+            let swatch_space = 24.0;
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .desired_width(
+                        (ui.available_width() - crate::kit::FIT - swatch_space).clamp(40.0, 140.0),
+                    )
+                    .char_limit(MAX_TEXT),
+            );
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+            if let Some((c, fill)) = swatch {
+                let slot = u64::from(c.unsigned_abs()) % 8;
+                ui.painter().rect_filled(rect, 3.0, fill);
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, crate::theme::Palette::current(ui).rule),
+                    egui::StrokeKind::Inside,
+                );
+                resp.on_hover_text(format!("Class {c} · USD PartClass{slot}"));
+            } else {
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, crate::theme::Palette::current(ui).error),
+                    egui::StrokeKind::Inside,
+                );
+                resp.on_hover_text("Enter an integer class");
+            }
+        });
     });
 }
 
@@ -1141,6 +1256,11 @@ impl App {
             weld: weld_panel::Panel::empty(),
             fit: fit_panel::Panel::empty(),
             bolt: bolt_panel::Panel::empty(),
+            assembly: assembly_panel::Panel::empty(),
+            numbering: numbering_panel::Panel::empty(),
+            reference: reference_panel::Panel::empty(),
+            profile_catalog: profile_catalog::State::default(),
+            array: array_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
             menu_new: crate::library::NewModelForm::new(),
@@ -1172,6 +1292,7 @@ impl App {
             member_cursor: None,
             distance_input: String::new(),
             distance_aim: None,
+            ctrl_reference: None,
             plate_input: ["0".into(), "0".into()],
             plane_form: crate::work_plane::Form::default(),
             plane_pick: false,
@@ -1408,6 +1529,17 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        if self.refresh_error.is_none()
+            && let Some(digest) = self.profile_catalog.pending_select_digest.take()
+            && self
+                .tools
+                .definitions
+                .profiles
+                .iter()
+                .any(|c| c.digest == digest)
+        {
+            self.apply_profile_selection(digest);
+        }
         // The body facts of a source file ride only a new snapshot: the same snapshot again
         // keeps the facts the window already holds, a failed read keeps the picture and says
         // why (issue 614).
@@ -1592,35 +1724,29 @@ impl App {
             }
             Err(e) => self.error = Some(e.to_string()),
         }
-        // The built-in catalogue set is kind-based: every delivery re-derives its overlay from
-        // the snapshot's own kinds, so elements another process added since the set was applied
-        // colour with this refresh like the rest (issue 562 item 20). Replacing the overlay
-        // makes the delivery stale below, so the scene is rebuilt with it exactly once.
+        // Built-in synchronous overlays (Catalogue by element kind, Part classes by `steel:class`
+        // matching USD `primvars:displayColor` and Tekla class colouring): every delivery
+        // re-derives the active overlay from the pinned inspection so created parts and `Class`
+        // edits change colour on the very next frame with zero CLI round trips.
         if self.colour_job.is_none()
-            && self
-                .colour
-                .as_ref()
-                .is_some_and(|(name, _)| name == crate::colour_sets::CATALOGUE_SET_NAME)
+            && let Some((active_name, _)) = self.colour.as_ref()
             && let Some(loaded) = self.loaded.as_ref()
         {
-            let derived = crate::colour_sets::catalogue_overlay(loaded.snapshot.elements());
-            let unchanged = self
-                .colour
-                .as_ref()
-                .is_some_and(|(_, overlay)| **overlay == derived);
-            if !unchanged {
-                self.colour = Some((
-                    crate::colour_sets::CATALOGUE_SET_NAME.to_owned(),
-                    Arc::new(derived),
-                ));
+            let rederived = self.derive_builtin_overlay(active_name, loaded);
+            if let Some(derived) = rederived {
+                let unchanged = self
+                    .colour
+                    .as_ref()
+                    .is_some_and(|(_, overlay)| **overlay == derived);
+                if !unchanged {
+                    let name = active_name.clone();
+                    self.colour = Some((name, Arc::new(derived)));
+                }
             }
         }
-        // The default catalogue colours ride the delivered scene (issue 526): while the user
-        // keeps no colour set of their own, the first shown model opens coloured, with no
-        // setup. An explicit Show or Hide (or a set in their colour-sets file) is a choice
-        // this default never overrides, so it runs only while nothing was touched yet — and
-        // never inside a perf run (issue 526 review): the perf driver reloads through this
-        // hook, and its query-elements processes would race the measured phases.
+        // First shown model opens coloured with no setup: store models with classed steel parts
+        // default to `Part classes` (so beams, columns and plates reflect their USD `Class` right
+        // away like Tekla Structures), while unclassed / IFC models fall back to `Catalogue`.
         if self.loaded.is_some()
             && self.perf.is_none()
             && !self.colour_touched
@@ -1628,7 +1754,13 @@ impl App {
             && self.colour.is_none()
             && self.colour_job.is_none()
         {
-            self.start_colour(crate::colour_sets::CATALOGUE_SET_NAME, true);
+            let default_set = if !self.grid_scene.part_classes.is_empty() {
+                crate::colour_sets::CLASS_SET_NAME
+            } else {
+                crate::colour_sets::CATALOGUE_SET_NAME
+            };
+            self.colour_pick = default_set.to_owned();
+            self.start_colour(default_set, true);
         }
         // The delivered scene was built with the overlay captured at spawn (V17): when the user
         // changed or cleared the set while the refresh ran, the delivery is recoloured once, so
@@ -1639,12 +1771,16 @@ impl App {
                 (Some(built), Some(active)) => !Arc::ptr_eq(built, active),
                 (Some(_), None) | (None, Some(_)) => true,
                 (None, None) => false,
-            } || self.views.active_hidden() != self.views.shown;
+            } || self.views.active_hidden() != self.views.shown
+                || self.views.active_representation() != self.views.shown_representation;
             if stale {
                 self.recolour();
             }
         }
         self.sync_grid_selection();
+        if !self.source.read_only() && self.loaded.is_some() && self.perf.is_none() {
+            self.assembly_load();
+        }
         if std::mem::take(&mut self.reload_queued) {
             self.reload();
         }
@@ -1718,7 +1854,13 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
-        let selection = self.selection.filter();
+        let selection = if self.selection.assembly_select_mode() {
+            self.selection
+                .filter()
+                .with(beamcraft_engine::query::pick::SelectionClass::Parts, true)
+        } else {
+            self.selection.filter()
+        };
         // With an active model view only what it shows can be picked (V12).
         let view = self.views.active_view().cloned();
         // What its filter overrides hide cannot be picked either.
@@ -1905,6 +2047,11 @@ impl App {
                     self.props_note = None;
                 }
                 self.props.load(&id, details);
+                if self.selection.assembly_select_mode()
+                    && let Some(row) = self.assembly_for_part(&id).cloned()
+                {
+                    self.apply_assembly_highlight(&row);
+                }
             }
             Err(e) => self.edit_note = Some(Err(e.to_string())),
         }
@@ -1997,8 +2144,72 @@ impl App {
         }
     }
 
-    /// Delete the current grid or part using the same engine command as the CLI.
+    /// Builds CLI steps to delete `ids`, automatically handling assembly rules:
+    /// - if an assembly keeps <= 1 part (e.g. deleting either part of a 2-part assembly, or
+    ///   deleting the entire assembly), dissolve it first via `explode-assembly`;
+    /// - if an assembly keeps >= 2 parts and its main part is deleted, reassign `set-main-part`
+    ///   to a remaining part first.
+    fn build_delete_commands(
+        &self,
+        ids: &[String],
+        target: crate::edit::Target<'_>,
+    ) -> Vec<Vec<String>> {
+        let mut commands = Vec::new();
+        let mut exploded_assemblies = std::collections::BTreeSet::new();
+        for asm in &self.assembly.list {
+            let touches_asm = ids.iter().any(|id| {
+                id == &asm.id
+                    || asm.main.as_deref() == Some(id.as_str())
+                    || asm.parts.iter().any(|p| p == id)
+            });
+            if !touches_asm {
+                continue;
+            }
+            let remaining: Vec<&String> = asm
+                .parts
+                .iter()
+                .filter(|p| !ids.iter().any(|id| id == *p))
+                .collect();
+            if ids.iter().any(|id| id == &asm.id) || remaining.len() <= 1 {
+                if let Ok(args) = assembly_panel::explode_args(
+                    target.store,
+                    self.source.actor.as_deref(),
+                    &asm.id,
+                ) {
+                    commands.push(args);
+                    exploded_assemblies.insert(asm.id.clone());
+                }
+            } else if let Some(main_id) = asm.main.as_deref()
+                && ids.iter().any(|id| id == main_id)
+                && let Some(next_main) = remaining.first()
+                && let Ok(args) = assembly_panel::set_main_args(
+                    target.store,
+                    self.source.actor.as_deref(),
+                    &asm.id,
+                    next_main,
+                )
+            {
+                commands.push(args);
+            }
+        }
+        for id in ids {
+            if exploded_assemblies.contains(id) {
+                continue;
+            }
+            commands.push(self.editor.delete_args(id.clone(), target));
+        }
+        commands
+    }
+
+    /// Delete the current grid, part, or assembly unit using the same engine commands as the CLI.
     fn delete_selection(&mut self) {
+        if self.source.read_only() {
+            self.edit_note = Some(Err(
+                "Read-only: this window shows a received IFC file, there is nothing to edit."
+                    .into(),
+            ));
+            return;
+        }
         if self.other_command_running() {
             return;
         }
@@ -2006,20 +2217,18 @@ impl App {
             self.editor.select_id(edit.id.clone());
         }
         let ids = self.selection_ids();
-        if ids.len() > 1 {
-            let target = crate::edit::Target {
-                store: &self.source.store,
-                workspace: self.source.workspace.as_deref(),
-            };
-            let commands = ids
-                .into_iter()
-                .map(|id| self.editor.delete_args(id, target))
-                .collect();
-            self.spawn_batch(EditKind::Delete, commands);
+        if ids.is_empty() {
             return;
         }
-        if self.editor.selected().is_some() {
+        let target = crate::edit::Target {
+            store: &self.source.store,
+            workspace: self.source.workspace.as_deref(),
+        };
+        let commands = self.build_delete_commands(&ids, target);
+        if commands.len() == 1 && ids.len() == 1 && self.editor.selected().is_some() {
             self.start_edit(Some(EditKind::Delete));
+        } else if !commands.is_empty() {
+            self.spawn_batch(EditKind::Delete, commands);
         }
     }
 
@@ -2043,7 +2252,9 @@ impl App {
     /// A click while a copy or move by two points is armed: the first is the origin, the second
     /// the destination, which runs the command.
     pub(super) fn two_point_click(&mut self, ray: crate::edit::Ray) {
-        let Some(armed) = self.two_point else { return };
+        if self.two_point.is_none() {
+            return;
+        }
         let point = match self.creation_point(ray, false) {
             Ok(point) => point,
             Err(error) => {
@@ -2051,15 +2262,29 @@ impl App {
                 return;
             }
         };
+        self.accept_two_point(point);
+    }
+
+    /// Accepts a resolved world point for a two-point move or copy (from click or distance+Enter).
+    pub(super) fn accept_two_point(&mut self, point: [f64; 3]) {
+        let Some(armed) = self.two_point else { return };
         let Some(from) = armed.from else {
             self.two_point = Some(TwoPoint {
                 from: Some(point),
                 ..armed
             });
-            self.edit_note = Some(Ok("Pick the destination point (Esc cancels).".into()));
+            self.distance_input.clear();
+            self.distance_aim = None;
+            self.edit_note = Some(Ok(
+                "Pick destination point in view, or aim, type offset mm + Enter (Esc cancels)."
+                    .into(),
+            ));
             return;
         };
         self.two_point = None;
+        self.distance_input.clear();
+        self.distance_aim = None;
+        self.ctrl_reference = None;
         if self.other_command_running() {
             self.edit_note = Some(Err(
                 "another command is running; wait for it to finish.".into()
@@ -2207,7 +2432,12 @@ impl App {
                         self.set_bench(workbench::Bench::Select);
                     }
                     // The element may have moved, or the undo may have removed it: ask again.
-                    _ => self.refresh_selection(),
+                    _ => {
+                        self.refresh_selection();
+                        if matches!(self.bench, workbench::Bench::Move | workbench::Bench::Copy) {
+                            self.set_bench(workbench::Bench::Select);
+                        }
+                    }
                 }
                 self.refresh_status();
             }
@@ -2278,6 +2508,10 @@ impl App {
             || self.bolt.entries_job.is_some()
             || self.bolt.groups_job.is_some()
             || self.bolt.spec_job.is_some()
+            || self.assembly.commit_job.is_some()
+            || self.numbering.approve_job.is_some()
+            || self.reference.commit_job.is_some()
+            || self.array.commit_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -2552,6 +2786,37 @@ impl App {
         );
     }
 
+    /// Finds the assembly that contains `part_id` (either as main part or member part).
+    pub(crate) fn assembly_for_part(&self, part_id: &str) -> Option<&assembly_panel::AssemblyRow> {
+        self.assembly
+            .list
+            .iter()
+            .find(|a| a.main.as_deref() == Some(part_id) || a.parts.iter().any(|p| p == part_id))
+    }
+
+    /// Highlights every part belonging to `row` in the 3D viewport without changing the active
+    /// primary selection if it already belongs to the assembly.
+    fn apply_assembly_highlight(&mut self, row: &assembly_panel::AssemblyRow) {
+        let mut members = row.parts.clone();
+        if let Some(main) = &row.main
+            && !members.contains(main)
+        {
+            members.insert(0, main.clone());
+        }
+        self.selected_many = members;
+        self.assembly.selected_assembly = Some(row.id.clone());
+    }
+
+    /// Selects an assembly from the list or properties panel and highlights all its parts in 3D.
+    pub(crate) fn select_assembly_row(&mut self, row: &assembly_panel::AssemblyRow) {
+        self.drop_grid_edit();
+        self.apply_assembly_highlight(row);
+        if let Some(primary) = row.main.as_ref().or_else(|| row.parts.first()).cloned() {
+            self.editor.select_id(primary);
+            self.refresh_selection();
+        }
+    }
+
     /// The neutral note shown instead of an error for a selected kind the properties editor
     /// reads nothing from, or `None` when the selection is not such a kind.
     fn unsupported_kind_note(&self) -> Option<String> {
@@ -2578,6 +2843,17 @@ impl App {
                 .size(12.0)
                 .color(palette.muted),
             );
+            if let Some(loaded) = &self.loaded {
+                ui.add_space(crate::kit::SPACE_S);
+                crate::kit::section(ui, "model", "Model overview", true, |ui| {
+                    let elems = loaded.snapshot.elements().len().to_string();
+                    let asms = self.assembly.list.len().to_string();
+                    let lvls = self.tools.definitions.levels.len().to_string();
+                    crate::kit::prop_info(ui, "Elements", Some(&elems), "0");
+                    crate::kit::prop_info(ui, "Assemblies", Some(&asms), "0");
+                    crate::kit::prop_info(ui, "Levels", Some(&lvls), "0");
+                });
+            }
             return;
         };
         let state = self.props.state();
@@ -2585,6 +2861,17 @@ impl App {
             let palette = crate::theme::Palette::current(ui);
             ui.add_space(crate::kit::SPACE_S);
             ui.label(egui::RichText::new(note).color(palette.muted));
+            ui.add_space(crate::kit::SPACE_S);
+            if crate::theme::button(
+                ui,
+                crate::theme::Kind::Secondary,
+                "Edit in Bolt tool",
+                !self.other_command_running(),
+            )
+            .clicked()
+            {
+                self.set_bench(workbench::Bench::Bolt);
+            }
             return;
         }
         match &state {
@@ -2624,9 +2911,34 @@ impl App {
                 first.make_ascii_uppercase();
             }
             crate::kit::type_box(ui, icon, &kind);
+            if let Some(asm) = self.assembly_for_part(&details.id).cloned() {
+                crate::kit::section(ui, "part", "Assembly", true, |ui| {
+                    crate::kit::prop_info(ui, "Assembly", Some(&asm.name), "—");
+                    let role = if asm.main.as_deref() == Some(details.id.as_str()) {
+                        "Main part"
+                    } else {
+                        "Secondary part"
+                    };
+                    crate::kit::prop_info(ui, "Role", Some(role), "—");
+                    let count = format!("{} part(s)", asm.parts.len());
+                    crate::kit::prop_info(ui, "Members", Some(&count), "—");
+                    crate::kit::prop_row(ui, "", |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("Select assembly").clicked() {
+                                self.select_assembly_row(&asm);
+                            }
+                            if ui.button("Open Assemblies").clicked() {
+                                self.assembly.selected_assembly = Some(asm.id.clone());
+                                self.set_bench(workbench::Bench::Assembly);
+                            }
+                        });
+                    });
+                });
+            }
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
+            let mut open_profile = false;
             ui.add_enabled_ui(editable && !busy, |ui| {
                 let base = self.props.baseline().clone();
                 let mark =
@@ -2635,7 +2947,23 @@ impl App {
                     mark(ui, self.props.form.name != base.name);
                     field(ui, "Name", &mut self.props.form.name, 170.0);
                     mark(ui, self.props.form.class != base.class);
-                    field(ui, "Class", &mut self.props.form.class, 80.0);
+                    class_field(ui, &mut self.props.form.class);
+                });
+                crate::kit::section(ui, "part", "Numbering series", false, |ui| {
+                    match details.kind.as_str() {
+                        "plate" => {
+                            field(ui, "Part prefix", &mut self.numbering.plate_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.plate_start, 80.0);
+                        }
+                        "column" => {
+                            field(ui, "Part prefix", &mut self.numbering.column_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.column_start, 80.0);
+                        }
+                        _ => {
+                            field(ui, "Part prefix", &mut self.numbering.beam_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.beam_start, 80.0);
+                        }
+                    }
                 });
                 crate::kit::section(ui, "part", "Section and material", true, |ui| {
                     if !details.is_plate() {
@@ -2643,14 +2971,15 @@ impl App {
                         // environment's profiles; the engine rebuilds the body and the mass
                         // (`update-element`).
                         mark(ui, self.props.form.profile != base.profile);
-                        choice_combo(
+                        if profile_row(
                             ui,
                             "props-profile",
-                            "Profile",
                             &mut self.props.form.profile,
                             &self.tools.definitions.profiles,
                             false,
-                        );
+                        ) {
+                            open_profile = true;
+                        }
                     }
                     mark(ui, self.props.form.material != base.material);
                     choice_combo(
@@ -2767,6 +3096,9 @@ impl App {
                     }
                 });
             });
+            if open_profile {
+                self.open_profile_catalog(profile_catalog::ProfileTarget::Properties);
+            }
             crate::kit::section(ui, "part", "Quantities", true, |ui| {
                 let quantities = &details.quantities;
                 // The volume is a raw float and keeps the panel's display rounding. The mass
@@ -2934,6 +3266,56 @@ impl App {
         }
     }
 
+    /// Bottom action bar for `Bench::Colour`.
+    fn colour_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.colour_job.is_some();
+        let pick = self.colour_pick.clone();
+        let has_applied = self.colour.is_some();
+        let mut show = false;
+        let mut hide = false;
+        ui.add_space(crate::kit::SPACE_S);
+        ui.separator();
+        ui.add_space(crate::kit::SPACE_XS);
+        ui.columns(2, |columns| {
+            if let [left, right] = columns {
+                show = left
+                    .with_layout(
+                        egui::Layout::top_down_justified(egui::Align::Center),
+                        |ui| {
+                            crate::theme::button(
+                                ui,
+                                crate::theme::Kind::Primary,
+                                "Show colours",
+                                !busy && !pick.is_empty(),
+                            )
+                            .clicked()
+                        },
+                    )
+                    .inner;
+                hide = right
+                    .with_layout(
+                        egui::Layout::top_down_justified(egui::Align::Center),
+                        |ui| {
+                            crate::theme::button(
+                                ui,
+                                crate::theme::Kind::Secondary,
+                                "Hide colours",
+                                !busy && has_applied,
+                            )
+                            .clicked()
+                        },
+                    )
+                    .inner;
+            }
+        });
+        if show {
+            self.apply_colour(&pick);
+        }
+        if hide {
+            self.clear_colour();
+        }
+    }
+
     /// The V17 colour inspector: pick a saved representation set, apply or clear the overlay.
     /// Everything here is display state: the overlay is never written to the model, and a set
     /// lives in the user's colour-sets file, not in the store.
@@ -2975,20 +3357,6 @@ impl App {
                         ui.selectable_value(&mut self.colour_pick, set.name.clone(), &set.name);
                     }
                 });
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(!pick.is_empty(), egui::Button::new("Show colours"))
-                    .clicked()
-                {
-                    self.apply_colour(&pick);
-                }
-                if ui
-                    .add_enabled(applied.is_some(), egui::Button::new("Hide colours"))
-                    .clicked()
-                {
-                    self.clear_colour();
-                }
-            });
         });
         if busy {
             // The colours on screen and the legend below are still the previous set while the
@@ -3070,6 +3438,28 @@ impl App {
         }
     }
 
+    fn derive_builtin_overlay(
+        &self,
+        name: &str,
+        loaded: &Loaded,
+    ) -> Option<crate::colour_sets::Overlay> {
+        if name == crate::colour_sets::CATALOGUE_SET_NAME {
+            Some(crate::colour_sets::catalogue_overlay(
+                loaded.snapshot.elements(),
+            ))
+        } else if name == crate::colour_sets::CLASS_SET_NAME
+            && !self.source.read_only()
+            && !self.grid_scene.part_classes.is_empty()
+        {
+            Some(crate::colour_sets::class_overlay(
+                loaded.snapshot.elements(),
+                &self.grid_scene.part_classes,
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Evaluates the named set on a worker (one paged `query-elements` per rule) and applies
     /// the resulting overlay when it answers. The model is never written: the queries are the
     /// CLI's own read-only command.
@@ -3087,19 +3477,21 @@ impl App {
             }
             return;
         }
-        // The built-in catalogue set is the snapshot's own kinds (issue 562 items 20 and 34):
-        // derived where the kinds already are, so it applies at once — the model opens
-        // coloured on its first frame, with no CLI round trip to wait for.
-        if name == crate::colour_sets::CATALOGUE_SET_NAME {
+        // Built-in synchronous overlays (`Catalogue` from element kinds and `Part classes` from
+        // the inspection's `steel:class` map) apply on the spot with no CLI round trip.
+        let instant = name == crate::colour_sets::CATALOGUE_SET_NAME
+            || (name == crate::colour_sets::CLASS_SET_NAME
+                && !self.source.read_only()
+                && !self.grid_scene.part_classes.is_empty());
+        if instant {
             self.colour_touched = true;
             let Some(loaded) = self.loaded.as_ref() else {
                 return;
             };
-            let derived = crate::colour_sets::catalogue_overlay(loaded.snapshot.elements());
+            let derived = self
+                .derive_builtin_overlay(name, loaded)
+                .unwrap_or_default();
             if derived.is_empty() {
-                // The automatic default matching nothing stays quiet (issue 526 review); an
-                // explicit Show of an empty set says so and colours nothing, as the evaluated
-                // path does.
                 if !auto {
                     self.colour_note = Some(Err(format!(
                         "no element in `{name}` matches: nothing to colour"
@@ -3110,14 +3502,10 @@ impl App {
                 return;
             }
             self.colour_note = Some(Ok(format!(
-                "`{}` colours {} element(s).",
-                crate::colour_sets::CATALOGUE_SET_NAME,
+                "`{name}` colours {} element(s).",
                 derived.len()
             )));
-            self.colour = Some((
-                crate::colour_sets::CATALOGUE_SET_NAME.to_owned(),
-                Arc::new(derived),
-            ));
+            self.colour = Some((name.to_owned(), Arc::new(derived)));
             self.recolour();
             return;
         }
@@ -3176,6 +3564,7 @@ impl App {
             || self.grid_job.is_some()
             || self.level_panel.running()
             || self.contour.running()
+            || self.profile_catalog.running()
     }
 
     /// True while a command that writes to the model is running: the header's Saving state.
@@ -3188,6 +3577,10 @@ impl App {
             || self.weld.commit_job.is_some()
             || self.fit.commit_job.is_some()
             || self.bolt.commit_job.is_some()
+            || self.assembly.commit_job.is_some()
+            || self.numbering.approve_job.is_some()
+            || self.reference.commit_job.is_some()
+            || self.array.commit_job.is_some()
     }
 
     /// Clears the overlay and colours nothing again. The Hide is a colour choice: the
@@ -3253,11 +3646,12 @@ impl App {
             return;
         };
         let overlay = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
-        // The active view hides its kinds from the main scene (V12).
+        // The active view hides its kinds and chooses its geometry representation (V12 / U12).
         let shown = self.views.active_hidden();
+        let representation = self.views.active_representation();
         let scene = crate::scene::Scene::from_snapshot_showing(
             &loaded.snapshot,
-            beamcraft_engine::Representation::Full,
+            representation,
             &loaded.uploaded.resident(),
             overlay.as_deref(),
             shown,
@@ -3278,6 +3672,7 @@ impl App {
                 loaded.summary = summary;
                 loaded.uploaded = uploaded;
                 self.views.shown = shown;
+                self.views.shown_representation = representation;
             }
             Err(error) => {
                 // The device keeps the previous scene; the overlay is reported as refused.
@@ -3285,6 +3680,40 @@ impl App {
             }
         }
         self.loaded = Some(loaded);
+    }
+
+    /// Bottom action bar for `Bench::Move | Bench::Copy | Bench::Delete`.
+    fn edit_actions(&mut self, ui: &mut egui::Ui) {
+        let selected = self.editor.selected().is_some();
+        let action = self.editor.action();
+        let busy = self.editor.busy() || self.other_command_running();
+        let primary = match action {
+            EditKind::Move => "Move",
+            EditKind::Copy => "Copy",
+            _ => "Delete",
+        };
+        let done = crate::kit::actions(ui, primary, selected && !busy, "Cancel", busy);
+        if done.primary {
+            if action == EditKind::Delete {
+                self.delete_selection();
+                return;
+            }
+            let target = Target {
+                store: &self.source.store,
+                workspace: self.source.workspace.as_deref(),
+            };
+            match self.editor.preview(action, target) {
+                Ok(_) => self.start_edit(None),
+                Err(error) => {
+                    self.editor.cancel();
+                    self.edit_note = Some(Err(error.to_string()));
+                }
+            }
+        }
+        if done.cancel {
+            self.editor.cancel();
+            self.set_bench(workbench::Bench::Select);
+        }
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
@@ -3307,6 +3736,19 @@ impl App {
         let action = self.editor.action();
         ui.add_enabled_ui(selected, |ui| match action {
             EditKind::Move => {
+                if let Some(two) = self.two_point.filter(|t| t.kind == EditKind::Move) {
+                    ui.label(if let Some(from) = two.from {
+                        format!(
+                            "Origin: {} — pick destination point in 3D view (snap, O, or distance + Enter).",
+                            PointText(from)
+                        )
+                    } else {
+                        "Pick origin point in 3D view (snap & Ctrl+click active, or enter position below)."
+                            .into()
+                    });
+                } else if ui.button("Pick two points in view").clicked() {
+                    self.arm_two_point(EditKind::Move);
+                }
                 match self.editor.axis_point() {
                     Some((_, end)) => {
                         ui.label(format!("New {} point in mm (absolute):", end.label()))
@@ -3316,6 +3758,19 @@ impl App {
                 point_fields(ui, &mut self.editor.move_to);
             }
             EditKind::Copy => {
+                if let Some(two) = self.two_point.filter(|t| t.kind == EditKind::Copy) {
+                    ui.label(if let Some(from) = two.from {
+                        format!(
+                            "Origin: {} — pick destination point in 3D view (snap, O, or distance + Enter).",
+                            PointText(from)
+                        )
+                    } else {
+                        "Pick origin point in 3D view (snap & Ctrl+click active, or enter offset below)."
+                            .into()
+                    });
+                } else if ui.button("Pick two points in view").clicked() {
+                    self.arm_two_point(EditKind::Copy);
+                }
                 ui.checkbox(
                     &mut self.editor.copy_instance,
                     "Instance: share shape and material edits",
@@ -3327,40 +3782,7 @@ impl App {
                 ui.label("Deletes the element (refused while another element links to it).");
             }
         });
-        let busy = self.editor.busy();
-        let busy = busy || self.other_command_running();
-        let mut apply = false;
-        let mut cancel = false;
-        ui.horizontal(|ui| {
-            apply = ui
-                .add_enabled(
-                    selected && !busy,
-                    egui::Button::new(match action {
-                        EditKind::Move => "Move",
-                        EditKind::Copy => "Copy",
-                        _ => "Delete",
-                    }),
-                )
-                .clicked();
-            cancel = ui.add_enabled(!busy, egui::Button::new("Cancel")).clicked();
-        });
-        if apply {
-            let target = Target {
-                store: &self.source.store,
-                workspace: self.source.workspace.as_deref(),
-            };
-            match self.editor.preview(action, target) {
-                Ok(_) => self.start_edit(None),
-                Err(error) => {
-                    self.editor.cancel();
-                    self.edit_note = Some(Err(error.to_string()));
-                }
-            }
-        }
-        if cancel {
-            self.editor.cancel();
-            self.set_bench(workbench::Bench::Select);
-        }
+        let busy = self.editor.busy() || self.other_command_running();
         if busy {
             ui.label("Running…");
         }
@@ -3434,11 +3856,15 @@ impl App {
                     self.tools.plate_plane = None;
                     self.distance_input.clear();
                     self.distance_aim = None;
+                    self.ctrl_reference = None;
                     self.plate_mode = self.bench == workbench::Bench::Plate;
                 } else {
+                    self.distance_input.clear();
+                    self.distance_aim = None;
+                    self.ctrl_reference = None;
                     self.beam_mode = matches!(
                         self.bench,
-                        workbench::Bench::Beam | workbench::Bench::Column
+                        workbench::Bench::Beam | workbench::Bench::Column | workbench::Bench::Brace
                     );
                 }
                 self.tool_note = Some(Ok(format!(
@@ -3583,13 +4009,14 @@ impl App {
         self.tools.plate_plane = None;
         self.distance_input.clear();
         self.distance_aim = None;
+        self.ctrl_reference = None;
         self.plate_draft.clear();
         self.plate_hover = None;
         self.tools.plate.contour.clear();
         self.plane_pick = false;
         self.beam_mode = matches!(
             self.bench,
-            workbench::Bench::Beam | workbench::Bench::Column
+            workbench::Bench::Beam | workbench::Bench::Column | workbench::Bench::Brace
         );
         self.beam.reset();
         self.beam_hover = None;
@@ -3785,7 +4212,16 @@ impl App {
             class: 0,
             axis_points_mm: vec![start, end],
             follow: None,
-            profile: self.tools.member.profile.as_deref()?.parse().ok()?,
+            // A profile the environment offers is named, not yet defined: the model has no digest
+            // for it until the first member defines it (#840). The ghost is built from the
+            // profile's extent alone, so a fixed stand-in identity draws it the same way.
+            profile: self
+                .tools
+                .member
+                .profile
+                .as_deref()?
+                .parse()
+                .unwrap_or(beamcraft_model::digest::ContentDigest::from_bytes([0; 32])),
             roll_rad: self.tools.member.roll_radians().ok().flatten(),
             section_placement: self.tools.member.section_placement().ok()?,
             placement: Placement {
@@ -3909,6 +4345,27 @@ impl App {
             self.error = Some(why);
         }
     }
+
+    pub(super) fn handle_escape(&mut self) {
+        self.grid_line.click = None;
+        self.plane_pick = false;
+        // Esc closes the publish dialog or clears the Ctrl reference point first;
+        // it clears the selection only when none is open.
+        if self.publisher.phase() == Phase::Confirming {
+            self.publisher.cancel();
+        } else if self.ctrl_reference.is_some() {
+            self.ctrl_reference = None;
+            self.distance_input.clear();
+            self.distance_aim = None;
+            self.tool_note = Some(Ok("Reference point cleared.".into()));
+        } else {
+            self.invalidate_select();
+            self.editor.deselect();
+            self.props.clear();
+            self.set_bench(workbench::Bench::Select);
+            self.drop_grid_edit();
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -3932,6 +4389,7 @@ impl eframe::App for App {
                 !wants_text
                     && (!self.plate_mode || self.plate_draft.points().is_empty())
                     && (!self.beam_mode || self.beam.start().is_none())
+                    && self.two_point.is_none()
                     && i.key_pressed(egui::Key::Minus),
             )
         });
@@ -3942,6 +4400,11 @@ impl eframe::App for App {
         self.poll_weld();
         self.poll_fit();
         self.poll_bolt();
+        self.poll_assembly();
+        self.poll_numbering();
+        self.poll_reference();
+        self.poll_array();
+        self.poll_profile_catalog();
         self.poll_contour();
         self.poll_edit();
         self.poll_props();
@@ -3963,18 +4426,7 @@ impl eframe::App for App {
             && !self.other_command_running()
             && ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
-            self.grid_line.click = None;
-            self.plane_pick = false;
-            // Esc closes the publish dialog first; it clears the selection only when none is open.
-            if self.publisher.phase() == Phase::Confirming {
-                self.publisher.cancel();
-            } else {
-                self.invalidate_select();
-                self.editor.deselect();
-                self.props.clear();
-                self.set_bench(workbench::Bench::Select);
-                self.drop_grid_edit();
-            }
+            self.handle_escape();
         }
         // Another process committed to the store: refresh, exactly as the `R` key does.
         let store_changed = self
@@ -4012,6 +4464,8 @@ impl eframe::App for App {
             self.inspector(ui);
             self.project_browser(ui);
             self.details_window(&ctx);
+            self.numbering_preview_window(&ctx);
+            self.show_profile_catalog(&ctx);
             self.publish_dialog(&ctx);
             self.sheet_editor.window(
                 &ctx,
@@ -5760,7 +6214,7 @@ pub(crate) mod tests {
     }
 
     /// A refresh whose scene is `plates` synthetic kernel plates.
-    fn refreshed(plates: u32) -> Reloaded {
+    pub(super) fn refreshed(plates: u32) -> Reloaded {
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot =
             ViewSnapshot::build(pin, plate_scene(plates, false).unwrap(), &Limits::default())
@@ -5770,7 +6224,7 @@ pub(crate) mod tests {
     }
 
     /// Hands `reloaded` to the window as the result of the refresh in flight.
-    fn deliver(app: &mut App, reloaded: Reloaded) {
+    pub(super) fn deliver(app: &mut App, reloaded: Reloaded) {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
@@ -6437,10 +6891,11 @@ pub(crate) mod tests {
         };
         refresh(&mut app);
         {
-            let (_, overlay) = app.colour.as_ref().expect("the default rode the delivery");
+            let (name, overlay) = app.colour.as_ref().expect("the default rode the delivery");
+            assert_eq!(name, crate::colour_sets::CLASS_SET_NAME);
             assert_eq!(overlay.len(), 1, "{:?}", app.colour_note);
         }
-        // Another process adds a plate while the window shows the model.
+        // Another process adds a plate with class 2 while the window shows the model.
         let second = run(&[
             "create-plate",
             "--store",
@@ -6453,11 +6908,13 @@ pub(crate) mod tests {
             "10",
             "--name",
             "P2",
+            "--class",
+            "2",
             "--translation",
             "6000,2000,0",
         ]);
         refresh(&mut app);
-        let (_, overlay) = app.colour.as_ref().expect("still coloured");
+        let (_, overlay) = app.colour.as_ref().expect("still coloured by class");
         assert_eq!(overlay.len(), 2, "the added plate must colour too");
         let added = second
             .get("plate")
@@ -6466,9 +6923,37 @@ pub(crate) mod tests {
             .and_then(|j| j.string().ok())
             .and_then(|s| beamcraft_model::id::ElementId::parse(s).ok())
             .expect("the added plate's id");
+        let class_tint = |class: i32| {
+            let [r, g, b] = crate::colour_sets::class_rgb(class);
+            [
+                f32::from(r) / 255.0,
+                f32::from(g) / 255.0,
+                f32::from(b) / 255.0,
+                1.0,
+            ]
+        };
+        assert_eq!(overlay.tint_of(added), class_tint(2));
+
+        // Changing the element's class (e.g. from Properties) immediately changes its viewport
+        // colour on refresh, matching the USD class palette.
+        run(&[
+            "update-element",
+            "--store",
+            store.to_str().unwrap(),
+            "--id",
+            &added.to_string(),
+            "--class",
+            "6",
+        ]);
+        refresh(&mut app);
+        let (_, updated_overlay) = app.colour.as_ref().expect("still coloured by class");
+        assert_eq!(updated_overlay.tint_of(added), class_tint(6));
+
+        // Explicit Catalogue mode still overrides with kind colours cleanly.
+        app.apply_colour(crate::colour_sets::CATALOGUE_SET_NAME);
         let plate_tint =
             crate::colour_sets::Set::tint(&crate::colour_sets::catalogue_set().rules[1]);
-        assert_eq!(overlay.tint_of(added), plate_tint);
+        assert_eq!(app.colour.as_ref().unwrap().1.tint_of(added), plate_tint);
         let _ = first;
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
@@ -8456,6 +8941,26 @@ pub(crate) mod tests {
         assert_eq!(
             super::definition_choice_label(&choices[0], &choices[..1]),
             "Steel"
+        );
+    }
+
+    #[test]
+    fn an_environment_profile_draws_the_ghost_before_the_first_member() {
+        // #840: a new project offers its environment's profiles by name; none is defined in
+        // the model until the first member is created. The column must still preview at once.
+        let mut app = headless().expect("a native or software wgpu adapter is required");
+        let digest = format!("{}H-200x200", crate::tools::BY_NAME);
+        app.tools.definitions.profiles = vec![crate::tools::Choice {
+            digest: digest.clone(),
+            label: "H-200x200".into(),
+            rect_mm: Some([200.0, 200.0]),
+        }];
+        app.tools.member.kind = crate::tools::MemberKind::Column;
+        app.tools.member.profile = Some(digest);
+        assert!(
+            app.build_ghost([0.0; 3], [0.0, 0.0, 3000.0], [0.0; 3])
+                .is_some(),
+            "a profile the environment offers by name draws no ghost"
         );
     }
 
@@ -12949,5 +13454,400 @@ mod navigation_tests {
             PointText([0.0, 0.0, -0.06]).to_string(),
             "(0.0, 0.0, -0.1) mm"
         );
+    }
+
+    #[test]
+    fn deleting_assembly_parts_dissolves_two_part_or_reassigns_main_of_three_part() {
+        let Some(mut app) = headless() else { return };
+        let target = crate::edit::Target {
+            store: &app.source.store,
+            workspace: None,
+        };
+        app.assembly.list = vec![
+            super::assembly_panel::AssemblyRow {
+                id: "asm-2".into(),
+                name: "Two".into(),
+                parent: None,
+                main: Some("p1".into()),
+                parts: vec!["p1".into(), "p2".into()],
+            },
+            super::assembly_panel::AssemblyRow {
+                id: "asm-3".into(),
+                name: "Three".into(),
+                parent: None,
+                main: Some("q1".into()),
+                parts: vec!["q1".into(), "q2".into(), "q3".into()],
+            },
+        ];
+
+        // 2-part assembly: deleting either part dissolves the assembly first.
+        let cmds_two = app.build_delete_commands(&["p1".into()], target);
+        assert_eq!(cmds_two.len(), 2);
+        assert_eq!(cmds_two[0][0], "explode-assembly");
+        assert_eq!(cmds_two[0][4], "asm-2");
+        assert_eq!(cmds_two[1][0], "delete-element");
+        assert_eq!(cmds_two[1][4], "p1");
+
+        // 3-part assembly: deleting main part reassigns main part to q2, then deletes q1.
+        let cmds_three_main = app.build_delete_commands(&["q1".into()], target);
+        assert_eq!(cmds_three_main.len(), 2);
+        assert_eq!(cmds_three_main[0][0], "set-main-part");
+        assert!(cmds_three_main[0].contains(&"q2".to_owned()));
+        assert_eq!(cmds_three_main[1][0], "delete-element");
+        assert_eq!(cmds_three_main[1][4], "q1");
+
+        // 3-part assembly: deleting secondary part keeps the assembly and main part.
+        let cmds_three_sec = app.build_delete_commands(&["q3".into()], target);
+        assert_eq!(cmds_three_sec.len(), 1);
+        assert_eq!(cmds_three_sec[0][0], "delete-element");
+        assert_eq!(cmds_three_sec[0][4], "q3");
+
+        // Whole-assembly deletion (e.g. from Assemblies selection mode): explodes then deletes all.
+        let cmds_whole =
+            app.build_delete_commands(&["q1".into(), "q2".into(), "q3".into()], target);
+        assert_eq!(cmds_whole[0][0], "explode-assembly");
+        assert_eq!(cmds_whole[0][4], "asm-3");
+        assert_eq!(cmds_whole.len(), 4);
+    }
+
+    #[test]
+    fn ctrl_reference_anchors_offset_creation_without_placing_first() {
+        let Some(mut app) = headless() else { return };
+        app.set_bench(super::workbench::Bench::Column);
+        assert!(app.beam_mode);
+        let ray = crate::edit::Ray {
+            origin: [1000.0, 2000.0, 1000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.set_ctrl_reference(ray, false);
+        assert_eq!(app.ctrl_reference, Some([1000.0, 2000.0, 0.0]));
+        assert!(
+            app.job.is_none(),
+            "Ctrl+click sets ref without placing column"
+        );
+
+        // Aim +500 mm along +X with typed distance 500 mm: resolves at (1500, 2000, 0).
+        app.distance_input = "500".into();
+        app.distance_aim = Some([2500.0, 2000.0, 0.0]);
+        let (pt, _) = app.creation_hit(ray, false).unwrap();
+        assert!((pt[0] - 1500.0).abs() < 1e-6);
+        assert!((pt[1] - 2000.0).abs() < 1e-6);
+        assert!(pt[2].abs() < 1e-6);
+    }
+
+    #[test]
+    fn move_and_copy_arm_snapping_for_first_and_second_points() {
+        let Some(mut app) = headless() else { return };
+        app.editor
+            .select_id("019a7bf0-0000-7000-8000-000000000001".into());
+        app.set_bench(super::workbench::Bench::Move);
+        assert_eq!(
+            app.two_point.map(|t| t.kind),
+            Some(crate::edit::EditKind::Move)
+        );
+        assert_eq!(app.two_point.and_then(|t| t.from), None);
+        assert!(
+            app.picking_point(),
+            "Move arms snap picking for the 1st point"
+        );
+
+        app.accept_two_point([100.0, 200.0, 0.0]);
+        assert_eq!(
+            app.two_point.and_then(|t| t.from),
+            Some([100.0, 200.0, 0.0])
+        );
+        assert!(
+            app.picking_point(),
+            "Move keeps snap picking active for the 2nd point"
+        );
+
+        app.set_bench(super::workbench::Bench::Copy);
+        assert_eq!(
+            app.two_point.map(|t| t.kind),
+            Some(crate::edit::EditKind::Copy)
+        );
+        assert!(
+            app.picking_point(),
+            "Copy arms snap picking for the 1st point"
+        );
+
+        app.set_bench(super::workbench::Bench::Select);
+        assert_eq!(app.two_point, None);
+    }
+
+    #[test]
+    fn ortho_key_and_ctrl_enter_chain_place_column_at_exact_offset_and_esc_clears() {
+        let Some(mut app) = headless() else { return };
+        app.set_bench(super::workbench::Bench::Column);
+        assert!(app.beam_mode);
+        let ctx = egui::Context::default();
+
+        // `O` toggles orthogonal mode in construction keyboard handling.
+        assert!(!app.selection.orthogonal);
+        let send_events = |app: &mut App, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let output = ctx.run_ui(raw, |ui| {
+                app.construction_keyboard(ui.ctx());
+            });
+            output.drop_without_applying_deltas();
+        };
+        send_events(
+            &mut app,
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::O,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Key {
+                    key: egui::Key::O,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(app.selection.orthogonal, "`O` toggles Ortho ON");
+
+        // Ortho constrains cursor aim to dominant +X axis from a reference point.
+        app.set_ctrl_reference(
+            crate::edit::Ray {
+                origin: [1000.0, 2000.0, 1000.0],
+                direction: [0.0, 0.0, -1.0],
+            },
+            false,
+        );
+        assert_eq!(app.ctrl_reference, Some([1000.0, 2000.0, 0.0]));
+        let (ortho_pt, _) = app
+            .creation_hit(
+                crate::edit::Ray {
+                    origin: [2000.0, 2120.0, 1000.0],
+                    direction: [0.0, 0.0, -1.0],
+                },
+                false,
+            )
+            .unwrap();
+        assert!((ortho_pt[0] - 2000.0).abs() < 1e-6);
+        assert!((ortho_pt[1] - 2000.0).abs() < 1e-6);
+
+        // Chained offset: aim +X, type 500, Ctrl+Enter -> ctrl_reference advances to (1500, 2000, 0) without placing.
+        app.beam_hover = Some([2000.0, 2000.0, 0.0]);
+        send_events(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::CTRL,
+                },
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::CTRL,
+                },
+            ],
+        );
+        assert_eq!(app.ctrl_reference, Some([1500.0, 2000.0, 0.0]));
+        assert!(app.distance_input.is_empty());
+        assert!(app.job.is_none(), "Ctrl+Enter chains without placing");
+
+        // Second leg: aim +Y, type 400, Enter -> places column start at (1500, 2400, 0) and clears ref.
+        app.beam_hover = Some([1500.0, 3000.0, 0.0]);
+        send_events(
+            &mut app,
+            vec![
+                egui::Event::Text("400".into()),
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert_eq!(app.ctrl_reference, None);
+        assert_eq!(app.tools.member.start, ["1500", "2400", "0"]);
+
+        // Esc drops a pending temporary reference without placing anything.
+        app.ctrl_reference = Some([1000.0, 2000.0, 0.0]);
+        app.distance_input = "250".into();
+        app.distance_aim = Some([2000.0, 2000.0, 0.0]);
+        app.handle_escape();
+        assert_eq!(app.ctrl_reference, None);
+        assert!(app.distance_input.is_empty());
+        assert_eq!(app.distance_aim, None);
+        assert!(app.job.is_none());
+    }
+
+    #[test]
+    fn grid_line_supports_ctrl_reference_and_typed_offsets() {
+        let Some(mut app) = headless() else { return };
+        app.set_bench(super::workbench::Bench::Grid);
+        app.grid_line.click = Some(false);
+        app.set_ctrl_reference(
+            crate::edit::Ray {
+                origin: [1000.0, 2000.0, 1000.0],
+                direction: [0.0, 0.0, -1.0],
+            },
+            false,
+        );
+        assert_eq!(app.ctrl_reference, Some([1000.0, 2000.0, 0.0]));
+        app.member_cursor = Some([2500.0, 2000.0, 0.0]);
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![
+                egui::Event::Text("500".into()),
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        };
+        let output = ctx.run_ui(raw, |ui| {
+            app.construction_keyboard(ui.ctx());
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(app.grid_line.points[0], ["1500", "2000"]);
+        assert_eq!(app.grid_line.click, Some(true));
+        assert_eq!(app.ctrl_reference, None);
+    }
+
+    #[test]
+    fn profile_catalogue_defines_reads_metadata_and_selects_profile() {
+        let Some(mut app) = headless() else { return };
+        let cli = super::tests::workspace_cli();
+        if !cli.is_file() {
+            return;
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-profcat-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let run = |args: &[String]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            output.stdout
+        };
+        run(&[
+            "create-project".into(),
+            "--parent".into(),
+            root.to_str().unwrap().into(),
+            "--name".into(),
+            "model".into(),
+        ]);
+
+        let args = super::profile_catalog::build_define_profile_args(
+            &store,
+            super::profile_catalog::CreatorFamily::IShape,
+            &super::profile_catalog::CreatorFamily::IShape.defaults(),
+        )
+        .unwrap();
+        let defined_out = run(&args);
+        let digest = super::profile_catalog::parse_defined_digest(&defined_out).unwrap();
+
+        let defs_out = run(&[
+            "definitions".into(),
+            "--store".into(),
+            store.to_str().unwrap().into(),
+        ]);
+        let defs = crate::tools::parse_definitions(Some(0), &defs_out).unwrap();
+        let meta = defs
+            .profile_meta
+            .get(&digest)
+            .expect("profile metadata populated");
+        assert_eq!(meta.designation, "I-300x150");
+        assert_eq!(meta.family, "i_shape");
+        assert!(!meta.from_environment);
+        assert!(
+            meta.parameters_mm
+                .iter()
+                .any(|(k, v)| k == "h" && (*v - 300.0).abs() < 1e-6)
+        );
+
+        app.tools.apply_definitions(Ok(defs));
+        app.open_profile_catalog(super::profile_catalog::ProfileTarget::MemberTool);
+        assert!(app.profile_catalog.open);
+        app.apply_profile_selection(digest.clone());
+        assert_eq!(app.tools.member.profile.as_deref(), Some(digest.as_str()));
+
+        app.open_profile_catalog(super::profile_catalog::ProfileTarget::Properties);
+        app.apply_profile_selection(digest.clone());
+        assert_eq!(app.props.form.profile.as_deref(), Some(digest.as_str()));
+
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn view_representation_toggles_between_full_and_simplified_in_form_and_scene() {
+        let Some(mut app) = headless() else { return };
+        super::tests::deliver(&mut app, super::tests::refreshed(2));
+        let mut view = beamcraft_engine::views::ModelView::new(
+            beamcraft_model::id::Uuid7::from_bytes([
+                0, 0, 0, 0, 0, 0, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, 1,
+            ])
+            .unwrap(),
+            "Fast 3D",
+            beamcraft_engine::work_plane::WorkPlane::default(),
+            beamcraft_engine::views::DEFAULT_SPAN_MM,
+        );
+        let view_id = view.id;
+        app.views.book.insert(view.clone()).unwrap();
+        if let Some(pane) = app.views.active_pane_mut() {
+            pane.set_view(Some(&view));
+        }
+        assert_eq!(
+            app.views.active_representation(),
+            beamcraft_engine::Representation::Full
+        );
+
+        let mut form = crate::views::Form::from_view(&view);
+        assert_eq!(form.representation, beamcraft_engine::Representation::Full);
+        form.representation = beamcraft_engine::Representation::Simplified;
+        app.write_view(view_id, &form).unwrap();
+
+        assert_eq!(
+            app.views.book.get(&view_id).unwrap().representation,
+            beamcraft_engine::Representation::Simplified
+        );
+        assert_eq!(
+            app.views.active_representation(),
+            beamcraft_engine::Representation::Simplified
+        );
+        assert_eq!(
+            app.views.shown_representation,
+            beamcraft_engine::Representation::Simplified
+        );
+        view = app.views.book.get(&view_id).unwrap().clone();
+        let snap = &app.loaded.as_ref().unwrap().snapshot;
+        let simplified_scene =
+            crate::scene::Scene::from_snapshot(snap, view.representation).unwrap();
+        assert_eq!(simplified_scene.counts().1, 2);
     }
 }

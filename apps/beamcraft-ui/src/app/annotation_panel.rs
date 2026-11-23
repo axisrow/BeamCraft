@@ -481,11 +481,16 @@ impl App {
             return;
         }
         if tool == Tool::Leader && self.annotation.leader_end.is_none() {
-            // First click: the leader's free end, wherever the click lands.
-            let point = pick_point_in(&snapshot, &ray)
+            // First click: the leader's free end, using the shared snap pipeline.
+            let point = self
+                .creation_point(ray, false)
                 .ok()
-                .flatten()
-                .map(|(point, _)| point)
+                .or_else(|| {
+                    pick_point_in(&snapshot, &ray)
+                        .ok()
+                        .flatten()
+                        .map(|(point, _)| point)
+                })
                 .or_else(|| ground_point(&ray));
             match point {
                 Some(point) => self.annotation.leader_end = Some(point),

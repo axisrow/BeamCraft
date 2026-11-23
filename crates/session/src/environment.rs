@@ -66,6 +66,9 @@ pub struct EnvironmentInfo {
     pub material_libraries: Vec<String>,
     /// `bim:environment:presets`, the contained relative path of the part presets, when declared.
     pub presets: Option<String>,
+    /// `bim:environment:template`, the contained relative path of the starter content (grids and
+    /// levels) a new project of this environment is seeded with, when declared.
+    pub template: Option<String>,
 }
 
 const fn refuse(code: ErrorCode, message: &'static str) -> Refusal {
@@ -212,6 +215,17 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
         }
         Some(_) => return Err(invalid("the environment presets are not a string")),
     };
+    let template = match data.get("bim:environment:template") {
+        None => None,
+        Some(Value::Text(reference)) if contained_reference(reference) => Some(reference.clone()),
+        Some(Value::Text(_)) => {
+            return Err(refuse(
+                ErrorCode::PermissionDenied,
+                "the environment template is not a relative path inside the environment directory",
+            ));
+        }
+        Some(_) => return Err(invalid("the environment template is not a string")),
+    };
     Ok(EnvironmentInfo {
         id,
         title,
@@ -222,6 +236,7 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
         fastener_libraries,
         material_libraries,
         presets,
+        template,
     })
 }
 
@@ -652,6 +667,21 @@ mod tests {
         let none = parse_environment(layer("e", "[\"a.usda\"]").into_bytes()).unwrap();
         assert_eq!(none.presets, None);
         let escaped = parse_environment(declared("../presets.usda").into_bytes()).unwrap_err();
+        assert_eq!(escaped.code, ErrorCode::PermissionDenied);
+    }
+
+    #[test]
+    fn an_environment_may_declare_a_contained_template() {
+        let declared = |reference: &str| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"a.usda\"]\n        string \"bim:environment:template\" = \"{reference}\"\n    }}\n)\n"
+            )
+        };
+        let info = parse_environment(declared("template.usda").into_bytes()).unwrap();
+        assert_eq!(info.template.as_deref(), Some("template.usda"));
+        let none = parse_environment(layer("e", "[\"a.usda\"]").into_bytes()).unwrap();
+        assert_eq!(none.template, None);
+        let escaped = parse_environment(declared("../template.usda").into_bytes()).unwrap_err();
         assert_eq!(escaped.code, ErrorCode::PermissionDenied);
     }
 

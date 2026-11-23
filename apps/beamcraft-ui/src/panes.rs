@@ -169,9 +169,15 @@ pub struct ViewPane {
     pub(crate) maximized: bool,
     /// Whether the pane is the tab its group shows; a tab behind it is not drawn.
     pub(crate) shown: bool,
-    /// The scene of this pane's hidden kinds when they differ from the loaded scene's, keyed by
-    /// the snapshot token, the kinds and the filter overlay (its key) it was built for.
-    pub(crate) filtered: Option<(String, KindFilter, u64, crate::render::Uploaded)>,
+    /// The scene of this pane's hidden kinds, representation, or filter overrides when they differ
+    /// from the loaded scene's, keyed by the snapshot token, kinds, representation and overlay key.
+    pub(crate) filtered: Option<(
+        String,
+        KindFilter,
+        beamcraft_engine::Representation,
+        u64,
+        crate::render::Uploaded,
+    )>,
 }
 
 impl ViewPane {

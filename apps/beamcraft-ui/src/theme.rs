@@ -249,8 +249,8 @@ pub fn button(ui: &mut Ui, kind: Kind, text: &str, enabled: bool) -> Response {
         egui::Button::new(RichText::new(text).size(12.0).color(ink))
             .fill(fill)
             .stroke(Stroke::new(1.0, palette.rule))
-            .corner_radius(5)
-            .min_size(vec2(64.0, 36.0)),
+            .corner_radius(4)
+            .min_size(vec2(60.0, 28.0)),
     )
 }
 
@@ -268,8 +268,8 @@ pub fn icon_text_button(
         egui::Button::new("")
             .fill(palette.surface)
             .stroke(Stroke::new(1.0, palette.rule))
-            .corner_radius(5)
-            .min_size(vec2(width, 36.0)),
+            .corner_radius(4)
+            .min_size(vec2(width, 28.0)),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let mut painter = ui.painter().clone();
@@ -511,6 +511,18 @@ pub enum Icon {
     Close,
     /// A tick: confirm.
     Check,
+    /// Grouped parts with a highlighted main member: an assembly.
+    Assembly,
+    /// A plate with a circular through-hole and centre crosshairs.
+    Hole,
+    /// A member sliced by an angled cutting plane.
+    Cut,
+    /// A sharp engineering hash mark: numbering and position marks.
+    Numbering,
+    /// An external linked model cube with a reference arrow.
+    Reference,
+    /// A repeated 2x2 grid of parts: linear and polar arrays.
+    Array,
 }
 
 #[derive(Clone, Copy)]
@@ -1116,6 +1128,78 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             polyline(&[[18.0, 6.0], [6.0, 18.0]]);
         }
         Icon::Check => polyline(&[[5.0, 12.5], [10.0, 17.5], [19.0, 7.0]]),
+        Icon::Assembly => {
+            // Main upright column + attached horizontal beam and gusset plate.
+            shade(&[[5.0, 4.0], [9.5, 4.0], [9.5, 20.0], [5.0, 20.0]], 0.45);
+            shade(&[[9.5, 8.0], [20.0, 8.0], [20.0, 12.5], [9.5, 12.5]], 0.2);
+            shade(&[[9.5, 12.5], [14.5, 12.5], [9.5, 17.5]], 0.65);
+        }
+        Icon::Hole => {
+            // Plate frame with a circular through-hole and crosshairs.
+            shade(&[[4.0, 4.0], [20.0, 4.0], [20.0, 20.0], [4.0, 20.0]], 0.12);
+            painter.circle_stroke(at([12.0, 12.0]), 4.5 * scale, stroke);
+            polyline(&[[12.0, 5.5], [12.0, 8.5]]);
+            polyline(&[[12.0, 15.5], [12.0, 18.5]]);
+            polyline(&[[5.5, 12.0], [8.5, 12.0]]);
+            polyline(&[[15.5, 12.0], [18.5, 12.0]]);
+        }
+        Icon::Cut => {
+            // A beam cut by an inclined plane, with the trimmed stub dashed.
+            shade(&[[3.0, 8.0], [14.0, 8.0], [11.0, 16.0], [3.0, 16.0]], 0.35);
+            polyline(&[[15.5, 5.0], [9.5, 19.0]]);
+            painter.extend(egui::Shape::dashed_line(
+                &[
+                    at([14.0, 8.0]),
+                    at([21.0, 8.0]),
+                    at([21.0, 16.0]),
+                    at([11.0, 16.0]),
+                ],
+                Stroke::new(stroke.width * 0.85, stroke.color),
+                2.0 * scale,
+                2.0 * scale,
+            ));
+        }
+        Icon::Numbering => {
+            // Engineering hash mark (#) for part and assembly numbering.
+            polyline(&[[9.0, 4.0], [7.0, 20.0]]);
+            polyline(&[[17.0, 4.0], [15.0, 20.0]]);
+            polyline(&[[4.0, 9.5], [20.0, 9.5]]);
+            polyline(&[[4.0, 15.0], [20.0, 15.0]]);
+        }
+        Icon::Reference => {
+            // External reference cube with an incoming link arrow at the corner.
+            painter.add(egui::Shape::closed_line(
+                [
+                    [13.0, 3.5],
+                    [20.5, 7.5],
+                    [20.5, 15.5],
+                    [13.0, 19.5],
+                    [5.5, 15.5],
+                    [5.5, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            polyline(&[[5.5, 7.5], [13.0, 11.5], [20.5, 7.5]]);
+            polyline(&[[13.0, 11.5], [13.0, 19.5]]);
+            polyline(&[[3.0, 21.0], [9.0, 15.0]]);
+            polyline(&[[5.0, 15.0], [9.0, 15.0], [9.0, 19.0]]);
+        }
+        Icon::Array => {
+            // 2x2 grid of repeated elements.
+            for (x, y, tone) in [
+                (4.0, 4.0, 0.45),
+                (13.5, 4.0, 0.2),
+                (4.0, 13.5, 0.2),
+                (13.5, 13.5, 0.2),
+            ] {
+                shade(
+                    &[[x, y], [x + 6.5, y], [x + 6.5, y + 6.5], [x, y + 6.5]],
+                    tone,
+                );
+            }
+        }
         Icon::Block => faces(BLOCK),
         Icon::Plate => {
             shade(

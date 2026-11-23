@@ -7,7 +7,7 @@ pub(super) const PREVIEW: &str = concat!(
     "Numbering (A08, read-only preview; approving numbers is A09 below): preview-numbering ",
     "--store ROOT [--plate-series PREFIX:START] [--beam-series PREFIX:START] [--column-series ",
     "PREFIX:START] [--assembly-series PREFIX:START] [--tolerance MM] [--compare-name ",
-    "true|false] [--previous TOKEN] [--offset N] [--limit 1..256] (groups plates, beams and ",
+    "true|false] [--compare-holes true|false] [--previous TOKEN] [--offset N] [--limit 1..256] (groups plates, beams and ",
     "columns of the verified head that have the same kind, pinned profile, pinned material, ",
     "lengths within the tolerance (default 0.001 mm), roll and holes; the oldest part is the ",
     "reference and groups are numbered in the order of their references; defaults PL:1, B:1, ",

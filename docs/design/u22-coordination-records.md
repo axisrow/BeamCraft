@@ -1,7 +1,8 @@
 # U22: vocabulary 0.2.0 coordination record schema
 
-Date: 2026-11-01. Status: **delivered slice; store commands and scope authorization remain
-U19/U20** (upstream #228, parent epic #189).
+Date: 2026-11-01. **U22 delivered** in [PR #830](https://github.com/Apibim-com/BeamCraft/pull/830).
+The delivery covers the coordination record schema and its validation. Store commands and scope
+authorization are tracked under U19 and U20.
 
 ## What this changes
 

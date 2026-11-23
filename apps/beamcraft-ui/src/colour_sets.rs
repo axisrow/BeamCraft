@@ -211,6 +211,42 @@ pub fn catalogue_overlay(entries: &[beamcraft_engine::ElementEntry]) -> Overlay 
     Overlay(map, BTreeSet::new())
 }
 
+/// Maps an integer part class through the P15 palette, matching the USD `primvars:displayColor`
+/// and `/World/Looks/PartClass*` convention (`unsigned |class| mod 8`).
+pub fn class_rgb(class: i32) -> [u8; 3] {
+    beamcraft_engine::class_palette::class_colour(
+        class,
+        &beamcraft_engine::class_palette::DEFAULT_CLASS_PALETTE,
+    )
+    .unwrap_or([126, 143, 159])
+}
+
+/// The class-based overlay of a snapshot using each element's authored `steel:class` read
+/// from the same verified inspection. Mirrors U08 USD `primvars:displayColor` and Tekla-style
+/// part class colouring without running eight `query-elements` subprocesses.
+pub fn class_overlay(
+    entries: &[beamcraft_engine::ElementEntry],
+    classes: &BTreeMap<ElementId, i32>,
+) -> Overlay {
+    let mut map = BTreeMap::new();
+    for entry in entries {
+        let Some(&class) = classes.get(&entry.id) else {
+            continue;
+        };
+        let [r, g, b] = class_rgb(class);
+        map.insert(
+            entry.id,
+            [
+                f32::from(r) / 255.0,
+                f32::from(g) / 255.0,
+                f32::from(b) / 255.0,
+                1.0,
+            ],
+        );
+    }
+    Overlay(map, BTreeSet::new())
+}
+
 impl Default for Sets {
     fn default() -> Self {
         Self(presets())

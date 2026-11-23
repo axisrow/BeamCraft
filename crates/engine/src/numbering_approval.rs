@@ -110,7 +110,7 @@ impl Basis {
     pub fn to_text(&self) -> String {
         let s = &self.settings;
         format!(
-            "{BASIS_VERSION} plate={}:{} beam={}:{} column={}:{} assembly={}:{} tol={} name={} token={}",
+            "{BASIS_VERSION} plate={}:{} beam={}:{} column={}:{} assembly={}:{} tol={} name={} holes={} token={}",
             s.plate.prefix,
             s.plate.start,
             s.beam.prefix,
@@ -121,6 +121,7 @@ impl Basis {
             s.assembly.start,
             float_key(s.tolerance_mm),
             u8::from(s.compare_name),
+            u8::from(s.compare_holes),
             self.token,
         )
     }
@@ -128,7 +129,7 @@ impl Basis {
     /// Reads a record back. Anything that is not exactly the canonical text of a record is
     /// `None`; the values are checked again when the preview is evaluated.
     pub fn parse(text: &str) -> Option<Self> {
-        if text.len() > MAX_BASIS_BYTES || !text.is_ascii() {
+        if text.len() > MAX_BASIS_BYTES || text.chars().any(char::is_control) {
             return None;
         }
         let mut words = text.split(' ');
@@ -155,6 +156,11 @@ impl Basis {
             "1" => true,
             _ => return None,
         };
+        let compare_holes = match field(&mut words, "holes")? {
+            "0" => false,
+            "1" => true,
+            _ => return None,
+        };
         let token = field(&mut words, "token")?.parse::<ContentDigest>().ok()?;
         if words.next().is_some() || tolerance.len() != 16 {
             return None;
@@ -167,6 +173,7 @@ impl Basis {
                 assembly,
                 tolerance_mm: f64::from_bits(u64::from_str_radix(tolerance, 16).ok()?),
                 compare_name,
+                compare_holes,
             },
             token,
         };
@@ -712,13 +719,25 @@ mod tests {
                 },
                 tolerance_mm: 0.25,
                 compare_name: true,
+                compare_holes: false,
                 ..Settings::default()
             },
             token: digest("t"),
         };
         let text = basis.to_text();
-        assert!(text.len() < MAX_BASIS_BYTES && text.is_ascii());
+        assert!(text.len() < MAX_BASIS_BYTES);
         assert_eq!(Basis::parse(&text), Some(basis.clone()));
+        let cyrillic = Basis {
+            settings: Settings {
+                beam: Series {
+                    prefix: "Б".into(),
+                    start: 1,
+                },
+                ..Settings::default()
+            },
+            token: digest("cyr"),
+        };
+        assert_eq!(Basis::parse(&cyrillic.to_text()), Some(cyrillic));
         for broken in [
             "",
             "BCA1",

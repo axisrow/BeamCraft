@@ -138,6 +138,8 @@ pub struct Settings {
     pub tolerance_mm: f64,
     /// Compare the names of parts and assemblies.
     pub compare_name: bool,
+    /// Compare through-holes on parts (when false, parts with different holes share a number).
+    pub compare_holes: bool,
 }
 
 impl Default for Settings {
@@ -155,6 +157,7 @@ impl Default for Settings {
             // floating-point noise, not different parts (the F04 length floor is 0.001 mm).
             tolerance_mm: 0.001,
             compare_name: false,
+            compare_holes: true,
         }
     }
 }
@@ -288,11 +291,12 @@ fn same_part(
     a.kind == b.kind
         && a.profile == b.profile
         && a.material == b.material
-        && match (&a.geometry, &b.geometry) {
-            (Some(a), Some(b)) => a.equivalent(b, s.tolerance_mm),
-            (None, None) => true,
-            _ => false,
-        }
+        && (!s.compare_holes
+            || match (&a.geometry, &b.geometry) {
+                (Some(a), Some(b)) => a.equivalent(b, s.tolerance_mm),
+                (None, None) => true,
+                _ => false,
+            })
         && (!s.compare_name || a.name == b.name)
         && a.dimensions.len() == b.dimensions.len()
         && a.dimensions
@@ -319,7 +323,7 @@ fn same_part(
 }
 
 fn check_series(series: &Series, assembly: bool) -> Result<(), NumberingError> {
-    let allowed = |c: char| c.is_ascii_alphanumeric() || c == '_' || (assembly && c == '-');
+    let allowed = |c: char| c.is_alphanumeric() || c == '_' || (assembly && c == '-');
     if series.prefix.chars().count() > MAX_PREFIX || !series.prefix.chars().all(allowed) {
         return Err(NumberingError(
             "a series prefix is too long or has a character outside letters, digits and underscore",
@@ -400,7 +404,11 @@ pub fn preview(
     let mut comparisons: u64 = 0;
     let mut group_of: BTreeMap<ElementId, usize> = BTreeMap::new();
     for part in &ordered {
-        let holes = canonical_holes(&part.holes);
+        let holes = if settings.compare_holes {
+            canonical_holes(&part.holes)
+        } else {
+            Vec::new()
+        };
         let coarse: Coarse = (
             part.kind,
             part.profile,
@@ -603,7 +611,7 @@ fn describe(part: &PartFact, s: &Settings) -> String {
     if !part.outline.is_empty() {
         text.push_str(&format!(", contour of {} points", part.outline.len()));
     }
-    if !part.holes.is_empty() {
+    if s.compare_holes && !part.holes.is_empty() {
         text.push_str(&format!(", {} holes", part.holes.len()));
     }
     if s.compare_name {
@@ -626,9 +634,10 @@ fn token_of(groups: &[Group], s: &Settings, parts: &[&PartFact]) -> ContentDiges
         ));
     }
     text.push_str(&format!(
-        "tolerance {} name {}\n",
+        "tolerance {} name {} holes {}\n",
         float_key(s.tolerance_mm),
-        s.compare_name
+        s.compare_name,
+        s.compare_holes
     ));
     for group in groups {
         text.push_str(&format!(
@@ -655,11 +664,12 @@ fn token_of(groups: &[Group], s: &Settings, parts: &[&PartFact]) -> ContentDiges
         for value in part.dimensions.iter().chain(&part.angles_rad) {
             text.push_str(&format!(" {}", float_key(*value)));
         }
-        text.push_str(&format!(
-            " outline {:?} holes {:?}\n",
-            part.outline,
+        let holes = if s.compare_holes {
             canonical_holes(&part.holes)
-        ));
+        } else {
+            Vec::new()
+        };
+        text.push_str(&format!(" outline {:?} holes {:?}\n", part.outline, holes));
         if s.compare_name {
             text.push_str(&format!("name {:?}\n", part.name));
         }
@@ -1196,5 +1206,35 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn cyrillic_series_prefixes_are_accepted_and_ignore_holes_merges_holed_parts() {
+        let square = |x: f64| vec![[x, 0.0], [x + 10.0, 0.0], [x + 10.0, 10.0], [x, 10.0]];
+        let a = plate(1, 400.0, 300.0, 20.0);
+        let mut b = plate(2, 400.0, 300.0, 20.0);
+        b.holes = vec![square(100.0)];
+        let settings = Settings {
+            plate: Series {
+                prefix: "П".into(),
+                start: 1,
+            },
+            beam: Series {
+                prefix: "Б".into(),
+                start: 1,
+            },
+            column: Series {
+                prefix: "К".into(),
+                start: 1,
+            },
+            assembly: Series {
+                prefix: "Ф".into(),
+                start: 1,
+            },
+            compare_holes: false,
+            ..Settings::default()
+        };
+        let p = preview(&[a, b], &[], &settings).unwrap();
+        assert_eq!(positions(&p), [("П1".into(), 2)]);
     }
 }

@@ -507,12 +507,38 @@ fn run(args: &[OsString]) -> Run<Json> {
     if *command != "create-grid" {
         return line_command(&store, &options, command, &context, &mut fresh);
     }
+    let grid = author_grid(&options, &mut fresh)?;
+    let id = grid.id;
+    let change = create_grid(&store, &context, &CreateGrid { grid }, &mut NoFault)?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if change.replayed {
+                "grid_created_replayed"
+            } else {
+                "grid_created"
+            }),
+        ),
+        ("op_id", Json::text(context.op_id.to_string())),
+        ("element_id", Json::text(id.to_string())),
+        ("revision", revision_json(&change.revision)),
+        ("footprint", footprint_json(change.footprint.as_ref())),
+        ("grids", views_json(&change.grids)?),
+    ]))
+}
+/// The grid a `create-grid` request describes, from its `--new-id`, `--name`, `--origin`,
+/// `--rotation` and `--u-*`/`--v-*` options: the one parser shared by the command and by the
+/// starter grids an environment template seeds into a new project.
+pub(crate) fn author_grid(
+    options: &BTreeMap<&str, &str>,
+    fresh: &mut dyn FnMut() -> Run<Uuid7>,
+) -> Run<Grid> {
     let id = match options.get("--new-id") {
         Some(s) => ElementId::parse(s).map_err(id_error)?,
         None => ElementId::from_uuid(crate::command_context::default_id(
             options.get("--op-id").copied(),
             "new_id/0",
-            &mut fresh,
+            fresh,
         )?),
     };
     let rotation_rad = options
@@ -542,31 +568,17 @@ fn run(args: &[OsString]) -> Run<Json> {
         u: GridFamily::Drawn(Vec::new()),
         v: GridFamily::Drawn(Vec::new()),
     };
-    grid.u = family(&options, true, &grid, &mut fresh)?;
-    grid.v = family(&options, false, &grid, &mut fresh)?;
+    grid.u = family(options, true, &grid, fresh)?;
+    grid.v = family(options, false, &grid, fresh)?;
     if !options.contains_key("--u-span") {
         set_default_span(&mut grid.u, &grid.v)
     }
     if !options.contains_key("--v-span") {
         set_default_span(&mut grid.v, &grid.u)
     }
-    let change = create_grid(&store, &context, &CreateGrid { grid }, &mut NoFault)?;
-    Ok(Json::object([
-        (
-            "outcome",
-            Json::text(if change.replayed {
-                "grid_created_replayed"
-            } else {
-                "grid_created"
-            }),
-        ),
-        ("op_id", Json::text(context.op_id.to_string())),
-        ("element_id", Json::text(id.to_string())),
-        ("revision", revision_json(&change.revision)),
-        ("footprint", footprint_json(change.footprint.as_ref())),
-        ("grids", views_json(&change.grids)?),
-    ]))
+    Ok(grid)
 }
+
 pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
     Ok(Json::Array(
         grids.iter().map(grid_entry).collect::<Run<Vec<_>>>()?,

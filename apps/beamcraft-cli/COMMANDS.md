@@ -1146,7 +1146,8 @@ read.
 ```text
 preview-numbering --store ROOT [--plate-series PREFIX:START] [--beam-series PREFIX:START]
     [--column-series PREFIX:START] [--assembly-series PREFIX:START] [--tolerance MM]
-    [--compare-name true|false] [--previous SHA256] [--offset N] [--limit N]
+    [--compare-name true|false] [--compare-holes true|false] [--previous SHA256] [--offset N]
+    [--limit N]
 ```
 
 ### approve-numbering
@@ -1156,8 +1157,8 @@ write.
 ```text
 approve-numbering --store ROOT --preview-token SHA256 [--plate-series PREFIX:START]
     [--beam-series PREFIX:START] [--column-series PREFIX:START] [--assembly-series PREFIX:START]
-    [--tolerance MM] [--compare-name true|false] [--op-id UUID] [--revision-id UUID]
-    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+    [--tolerance MM] [--compare-name true|false] [--compare-holes true|false] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### inspect-numbering
@@ -1710,7 +1711,7 @@ print-drawing --document-dir DIR --version-id UUID [--sheet a4|a3|a2|a1|a0] [--p
 write.
 
 ```text
-create-project --parent DIR --name TEXT [--unique-name true|false] [--config-dir DIR]
+create-project [--parent DIR] [--name TEXT] [--unique-name true|false] [--here] [--config-dir DIR]
     [--environment ID] [--code CODE] [--sections LIST] [--op-id UUID] [--revision-id UUID]
     [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```

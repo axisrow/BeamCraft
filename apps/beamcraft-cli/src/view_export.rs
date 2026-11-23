@@ -250,10 +250,26 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
                             ]))
                         })
                         .collect::<Result<Vec<_>, Refusal>>()?;
+                    let part_classes = inspection
+                        .elements
+                        .iter()
+                        .filter_map(|(id, meta)| {
+                            (!meta.deactivated)
+                                .then_some(meta.class)
+                                .flatten()
+                                .map(|class| {
+                                    Json::object([
+                                        ("element_id", Json::text(id.to_string())),
+                                        ("class", Json::Number(class.to_string())),
+                                    ])
+                                })
+                        })
+                        .collect::<Vec<_>>();
                     Ok(Json::object([
                         ("outcome", Json::text("grids")),
                         ("grids", grids),
                         ("member_axes", Json::Array(axes)),
+                        ("part_classes", Json::Array(part_classes)),
                     ]))
                 }),
             );

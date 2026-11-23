@@ -864,6 +864,8 @@ pub struct GridScene {
     pub query_grids: Vec<beamcraft_model::grid::Grid>,
     /// Authored member axes from the same inspection, including offset and non-box sections.
     pub member_axes: Vec<beamcraft_engine::query::pick::MemberSnapAxis>,
+    /// Authored part class (`steel:class`) per classed element from the same inspection.
+    pub part_classes: std::collections::BTreeMap<ElementId, i32>,
 }
 
 /// Properties read from the same engine inspection as the displayed guides.
@@ -949,6 +951,27 @@ impl GridScene {
                     element_id: id,
                     points_mm,
                 });
+            }
+        }
+        let mut part_classes = std::collections::BTreeMap::new();
+        if let Ok(classes) = json.get("part_classes") {
+            let classes = classes.array().map_err(|_| bad())?;
+            if classes.len() > beamcraft_engine::query::pick::MAX_SCANNED_ELEMENTS {
+                return Err(bad());
+            }
+            for item in classes {
+                let id = text(item, "element_id")
+                    .and_then(|s| ElementId::parse(&s).ok())
+                    .ok_or_else(bad)?;
+                let value = item.get("class").and_then(Json::float).map_err(|_| bad())?;
+                if !value.is_finite()
+                    || value.fract() != 0.0
+                    || value < f64::from(i32::MIN)
+                    || value > f64::from(i32::MAX)
+                {
+                    return Err(bad());
+                }
+                part_classes.insert(id, value as i32);
             }
         }
         let mut identities = std::collections::BTreeSet::new();
@@ -1098,6 +1121,7 @@ impl GridScene {
             grids: properties,
             query_grids,
             member_axes,
+            part_classes,
         })
     }
 

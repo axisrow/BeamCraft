@@ -35,6 +35,8 @@ pub struct Selection {
     pub snap_construction: bool,
     /// Point-kind gate for arbitrary positions on every eligible line family.
     pub snap_nearest: bool,
+    /// When true, clicking a part in the viewport selects its entire assembly.
+    pub assembly_mode: bool,
 }
 
 impl Default for Selection {
@@ -50,11 +52,17 @@ impl Default for Selection {
             snap_grids: true,
             snap_construction: true,
             snap_nearest: true,
+            assembly_mode: false,
         }
     }
 }
 
 impl Selection {
+    /// Whether clicking a part should select its whole assembly.
+    pub fn assembly_select_mode(&self) -> bool {
+        self.assembly_mode
+    }
+
     /// Whether the `class` switch is on.
     pub fn is_on(&self, class: SelectionClass) -> bool {
         self.switches.allows_class(class)

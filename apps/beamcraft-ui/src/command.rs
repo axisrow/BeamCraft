@@ -221,7 +221,31 @@ pub fn commit_many(
     let mut last = Err(ToolError::local("INVALID_ARGUMENT", "nothing is selected"));
     for args in commands {
         let output = run(cli, args, DEADLINE, stats)?;
-        last = Ok(parse_edited(kind, output.code, &output.stdout)?);
+        if matches!(
+            args.first().map(String::as_str),
+            Some("explode-assembly" | "set-main-part")
+        ) {
+            let reply = crate::tools::decode(&output.stdout)?;
+            if let Some(err) = crate::tools::rejection(&reply, output.code) {
+                return Err(err);
+            }
+            if let Ok(revision) = reply.get("revision")
+                && let (Some(manifest_digest), Some(sequence)) = (
+                    crate::tools::text(revision, "manifest_digest"),
+                    revision.get("sequence").and_then(|s| s.unsigned()).ok(),
+                )
+            {
+                last = Ok(Edited {
+                    kind,
+                    element_id: None,
+                    manifest_digest,
+                    sequence,
+                    replayed: false,
+                });
+            }
+        } else {
+            last = Ok(parse_edited(kind, output.code, &output.stdout)?);
+        }
     }
     last
 }

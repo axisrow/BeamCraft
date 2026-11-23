@@ -26,12 +26,16 @@ pub(crate) enum Bench {
     Beam,
     /// Create a column.
     Column,
+    /// Create a diagonal brace member between two 3D points.
+    Brace,
     /// Create a rectangular project grid.
     Grid,
     /// Move the selected element.
     Move,
     /// Copy the selected element.
     Copy,
+    /// Linear or polar array of the selected element (#845).
+    Array,
     /// Delete the selected element.
     Delete,
     /// The window's display cut plane (V15); a view filter, never a model change.
@@ -42,9 +46,19 @@ pub(crate) enum Bench {
     Weld,
     /// Trim a part's end flush with a plate (A13); the fit-end-to-part command.
     Fit,
+    /// Cut or split a part by another part or by a plane (#851).
+    Cut,
+    /// Add or remove a round or rectangular hole in a part (#851).
+    Hole,
     /// Place a bolt group of a library fastener between picked parts (V19); the A14.3
     /// create-bolt-group command.
     Bolt,
+    /// Combine parts into an assembly, set main part, attach/detach or explode (#844).
+    Assembly,
+    /// Preview and approve part and assembly numbering (#846).
+    Numbering,
+    /// Attach, move and configure read-only USD reference models (#850).
+    Reference,
     /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
     Annotations,
     /// A view's properties, or a new view.
@@ -76,12 +90,19 @@ impl Bench {
             | Self::Plate
             | Self::Beam
             | Self::Column
+            | Self::Brace
             | Self::Grid
+            | Self::Array
             | Self::CutPlane
             | Self::Colour
             | Self::Weld
             | Self::Fit
+            | Self::Cut
+            | Self::Hole
             | Self::Bolt
+            | Self::Assembly
+            | Self::Numbering
+            | Self::Reference
             | Self::Annotations
             | Self::View
             | Self::Levels => None,
@@ -320,7 +341,7 @@ fn tool_button_inner(
     let response = ui.add_enabled(
         enabled,
         egui::Button::new("")
-            .min_size(vec2((label_width + 12.0).max(54.0) + extra, 64.0))
+            .min_size(vec2((label_width + 10.0).max(46.0) + extra, 42.0))
             .fill(if active {
                 palette.select
             } else {
@@ -337,20 +358,29 @@ fn tool_button_inner(
         painter.rect_stroke(
             rect,
             radius,
-            Stroke::new(1.0, palette.rule),
+            Stroke::new(1.0, theme::BRAND),
             StrokeKind::Inside,
         );
+        painter.line_segment(
+            [
+                egui::pos2(rect.left() + 4.0, rect.top() + 1.0),
+                egui::pos2(rect.right() - 4.0, rect.top() + 1.0),
+            ],
+            Stroke::new(2.0, theme::BRAND),
+        );
+    } else if enabled && response.hovered() {
+        painter.rect_filled(rect, radius, palette.head);
     }
     let alpha = if enabled { 1.0 } else { 0.35 };
-    let line = palette.line;
-    let icon_rect = Rect::from_center_size(rect.center() - vec2(0.0, 10.0), vec2(24.0, 24.0));
+    let line = if active { theme::BRAND } else { palette.line };
+    let icon_rect = Rect::from_center_size(rect.center() - vec2(0.0, 6.5), vec2(18.0, 18.0));
     // A disabled icon is painted faint on a separate layer of the same painter.
     let mut faint = painter.clone();
     faint.multiply_opacity(alpha);
     theme::paint_icon(&faint, icon_rect, icon, line);
     let text = palette.text;
     // With a chevron the caption shifts left by half its width, so the two stay centred.
-    let caption_at = rect.center_bottom() - vec2(extra / 2.0, 13.0);
+    let caption_at = rect.center_bottom() - vec2(extra / 2.0, 8.5);
     faint.text(
         caption_at,
         egui::Align2::CENTER_CENTER,
@@ -380,7 +410,7 @@ fn tool_button_inner(
 /// A small group caption under ribbon buttons.
 fn caption(ui: &mut Ui, text: &str) {
     let palette = Palette::current(ui);
-    ui.label(RichText::new(text).size(10.0).color(palette.muted));
+    ui.label(RichText::new(text).size(9.5).color(palette.muted));
 }
 
 impl App {
@@ -414,6 +444,7 @@ impl App {
         self.tools.plate_plane = None;
         self.distance_input.clear();
         self.distance_aim = None;
+        self.ctrl_reference = None;
         self.plate_hover = None;
         self.tools.plate.contour.clear();
         if self.tools.plate.thickness.is_empty() {
@@ -422,8 +453,9 @@ impl App {
         if self.tools.plate.thickness_side.is_empty() {
             self.tools.plate.thickness_side = "top".into();
         }
-        self.beam_mode = matches!(bench, Bench::Beam | Bench::Column);
+        self.beam_mode = matches!(bench, Bench::Beam | Bench::Column | Bench::Brace);
         self.beam.reset();
+        self.two_point = None;
         self.ghost_end = None;
         self.beam_hover = None;
         self.clear_ghost();
@@ -439,11 +471,14 @@ impl App {
                 self.tools.active = ToolKind::Plate;
                 self.tools.use_preset("plate", None);
             }
-            Bench::Beam => {
+            Bench::Beam | Bench::Brace => {
                 self.tools.active = ToolKind::Member;
                 self.tools.member.kind = MemberKind::Beam;
                 self.tools.member.default_end_for_kind();
                 self.tools.use_preset("beam", None);
+                if bench == Bench::Brace && self.tools.member.name.is_empty() {
+                    self.tools.member.name = "Brace".into();
+                }
             }
             Bench::Column => {
                 self.tools.active = ToolKind::Member;
@@ -454,14 +489,27 @@ impl App {
             Bench::Move | Bench::Copy | Bench::Delete => {
                 if let Some(kind) = bench.edit() {
                     self.editor.set_action(kind);
+                    if matches!(kind, EditKind::Move | EditKind::Copy)
+                        && self.editor.selected().is_some()
+                    {
+                        self.arm_two_point(kind);
+                    }
                 }
             }
+            Bench::Array => {}
             Bench::Select => {}
             Bench::CutPlane => {}
             Bench::Colour => {}
             Bench::Weld => {}
-            Bench::Fit => self.fit.clear_placement(),
+            Bench::Fit | Bench::Cut | Bench::Hole => self.fit.clear_placement(),
             Bench::Bolt => self.bolt_load(),
+            Bench::Assembly => self.assembly_load(),
+            Bench::Numbering => {
+                if self.numbering.report.is_none() {
+                    self.numbering_preview();
+                }
+            }
+            Bench::Reference => self.reference_load(),
             Bench::Annotations => {}
             Bench::View => {}
             Bench::Grid | Bench::Levels => {
@@ -480,7 +528,7 @@ impl App {
     pub(crate) fn header(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::top("model-header")
-            .exact_size(36.0)
+            .exact_size(30.0)
             .frame(
                 egui::Frame::new()
                     .fill(palette.head)
@@ -494,7 +542,7 @@ impl App {
                         self.logo_tried = true;
                         self.logo = theme::load_logo(ui.ctx(), 96);
                     }
-                    theme::logo(ui, self.logo.as_ref(), 20.0);
+                    theme::logo(ui, self.logo.as_ref(), 18.0);
                     let free = !self.other_command_running() && !self.editor.busy();
                     if !self.menu_open {
                         if theme::icon_button(ui, Icon::Undo, "Undo", free).clicked() {
@@ -572,7 +620,7 @@ impl App {
     pub(crate) fn ribbon(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::top("ribbon-families")
-            .exact_size(36.0)
+            .exact_size(28.0)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
@@ -584,7 +632,7 @@ impl App {
                         .add(
                             egui::Button::new("Menu")
                                 .frame(false)
-                                .min_size(vec2(64.0, 32.0)),
+                                .min_size(vec2(56.0, 26.0)),
                         )
                         .clicked()
                     {
@@ -599,12 +647,12 @@ impl App {
                         let response = ui.add(
                             egui::Button::new(label)
                                 .frame(false)
-                                .min_size(vec2(56.0, 32.0)),
+                                .min_size(vec2(52.0, 26.0)),
                         );
                         if self.ribbon_tab == tab {
                             ui.painter().line_segment(
                                 [response.rect.left_bottom(), response.rect.right_bottom()],
-                                Stroke::new(2.0, palette.text),
+                                Stroke::new(2.0, theme::BRAND),
                             );
                         }
                         if response.clicked() {
@@ -619,7 +667,7 @@ impl App {
                             egui::Key::K,
                         ));
                         let (rect, response) =
-                            ui.allocate_exact_size(vec2(220.0, 24.0), Sense::click());
+                            ui.allocate_exact_size(vec2(210.0, 22.0), Sense::click());
                         let painter = ui.painter();
                         let hovered = response.hovered();
                         painter.rect(
@@ -637,13 +685,13 @@ impl App {
                             painter,
                             Rect::from_center_size(
                                 rect.left_center() + vec2(14.0, 0.0),
-                                vec2(14.0, 14.0),
+                                vec2(13.0, 13.0),
                             ),
                             Icon::Search,
                             palette.muted,
                         );
                         painter.text(
-                            rect.left_center() + vec2(28.0, 0.0),
+                            rect.left_center() + vec2(26.0, 0.0),
                             egui::Align2::LEFT_CENTER,
                             "Find a command",
                             egui::FontId::proportional(11.0),
@@ -671,14 +719,14 @@ impl App {
                 });
             });
         egui::Panel::top("model-ribbon")
-            .exact_size(106.0)
+            .exact_size(64.0)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::symmetric(14, 8)),
+                    .inner_margin(egui::Margin::symmetric(12, 4)),
             )
             .show(ui, |ui| {
-                let bottom = ui.max_rect().bottom() + 4.0;
+                let bottom = ui.max_rect().bottom() + 2.0;
                 let grid_selected = self.grid_edit.is_some();
                 let selected = self.editor.selected().is_some() && !grid_selected;
                 let edits_free =
@@ -711,15 +759,15 @@ impl App {
                 ui.horizontal(|ui| {
                     let group = |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
                         ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(4.0, 14.0);
+                            ui.spacing_mut().item_spacing = vec2(3.0, 2.0);
                             let row = ui.horizontal(|ui| add(ui));
-                            ui.allocate_ui_with_layout(vec2(row.response.rect.width(), 12.0),
+                            ui.allocate_ui_with_layout(vec2(row.response.rect.width(), 11.0),
                                 egui::Layout::top_down(egui::Align::Center), |ui| caption(ui, name));
                         });
                         ui.separator();
                     };
                     let bench = self.bench;
-                                        // Select opens the first group of the Steel and Edit tabs rather than a
+                    // Select opens the first group of the Steel and Edit tabs rather than a
                     // group of one button.
                     let select = |ui: &mut Ui, pick: &mut Option<Bench>| {
                         if tool_button(ui, Icon::Select, "Select", matches!(bench, Bench::Select | Bench::View), edits_free)
@@ -729,18 +777,32 @@ impl App {
                         }
                     };
                     if self.ribbon_tab == RibbonTab::Steel {
-                                        group(ui, "Members", &mut |ui| {
+                    group(ui, "Members", &mut |ui| {
                         select(ui, &mut pick);
                         for (b, icon, label) in [
                             (Bench::Column, Icon::Column, "Column"),
                             (Bench::Beam, Icon::Beam, "Beam"),
                             (Bench::Plate, Icon::Plate, "Plate"),
+                            (Bench::Brace, Icon::Brace, "Brace"),
                         ] {
                             if tool_button(ui, icon, label, bench == b, edits_free).clicked() {
                                 pick = Some(b);
                             }
                         }
-                        tool_button(ui, Icon::Brace, "Brace", false, false);
+                        if tool_button(
+                            ui,
+                            Icon::Table,
+                            "Profiles",
+                            self.profile_catalog.open,
+                            edits_free,
+                        )
+                        .on_hover_text("Browse Profile Catalogue or add parametric profiles")
+                        .clicked()
+                        {
+                            self.open_profile_catalog(
+                                super::profile_catalog::ProfileTarget::MemberTool,
+                            );
+                        }
                     });
                     group(ui, "Connect", &mut |ui| {
                         if tool_button(ui, Icon::Bolt, "Bolts", bench == Bench::Bolt, store_free)
@@ -753,24 +815,56 @@ impl App {
                         {
                             pick = Some(Bench::Weld);
                         }
+                        if tool_button(ui, Icon::Assembly, "Assemblies", bench == Bench::Assembly, store_free)
+                            .on_hover_text("Create, edit and explode steel assemblies")
+                            .clicked()
+                        {
+                            pick = Some(Bench::Assembly);
+                        }
+                    });
+                    group(ui, "Detailing", &mut |ui| {
                         if tool_button(ui, Icon::End, "Fit end", bench == Bench::Fit, store_free)
                             .on_hover_text("Trim a beam, column or plate end flush with a plate")
                             .clicked()
                         {
                             pick = Some(Bench::Fit);
                         }
+                        if tool_button(ui, Icon::Cut, "Cut part", bench == Bench::Cut, store_free)
+                            .on_hover_text("Cut or split a part by another part or by a plane")
+                            .clicked()
+                        {
+                            pick = Some(Bench::Cut);
+                        }
+                        if tool_button(ui, Icon::Hole, "Hole", bench == Bench::Hole, store_free)
+                            .on_hover_text("Add or remove round and rectangular holes")
+                            .clicked()
+                        {
+                            pick = Some(Bench::Hole);
+                        }
                     });
                     }
                     if self.ribbon_tab == RibbonTab::Edit {
-                                        group(ui, "Modify", &mut |ui| {
+                    group(ui, "Modify", &mut |ui| {
                         select(ui, &mut pick);
                         for (b, icon, label) in [
                             (Bench::Move, Icon::Move, "Move"),
                             (Bench::Copy, Icon::Copy, "Copy"),
+                            (Bench::Array, Icon::Array, "Array"),
                             (Bench::Delete, Icon::Delete, "Delete"),
                         ] {
                             let response = tool_button(ui, icon, label, bench == b, (selected || b == Bench::Delete && grid_selected) && edits_free);
                             if response.clicked() {
+                                pick = Some(b);
+                            }
+                        }
+                    });
+                    group(ui, "Detailing", &mut |ui| {
+                        for (b, icon, label) in [
+                            (Bench::Fit, Icon::End, "Fit end"),
+                            (Bench::Cut, Icon::Cut, "Cut part"),
+                            (Bench::Hole, Icon::Hole, "Hole"),
+                        ] {
+                            if tool_button(ui, icon, label, bench == b, store_free).clicked() {
                                 pick = Some(b);
                             }
                         }
@@ -809,7 +903,7 @@ impl App {
                         {
                             self.toggle_view_plane();
                         }
-                                                let mut direction = None;
+                        let mut direction = None;
                         dropdown_button(ui, Icon::ElevationView, "Direction", has_pane, |ui| {
                             for (towards, label) in crate::views::Direction::ALL {
                                 if ui.button(label).clicked() {
@@ -854,7 +948,7 @@ impl App {
                             }
                         });
                     });
-                                        group(ui, "Display", &mut |ui| {
+                    group(ui, "Display", &mut |ui| {
                         // The display modes in one dropdown, as a CAD view control shows the
                         // visual style: its icon is the active pane's mode.
                         let modes = [
@@ -921,6 +1015,13 @@ impl App {
                     }
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
                         group(ui, "Inspect", &mut |ui| {
+                            if self.ribbon_tab == RibbonTab::Steel
+                                && tool_button(ui, Icon::Numbering, "Numbering", bench == Bench::Numbering, store_free)
+                                    .on_hover_text("Preview and approve part and assembly numbering")
+                                    .clicked()
+                            {
+                                pick = Some(Bench::Numbering);
+                            }
                             if tool_button(ui, Icon::Fit, "Fit model", false, has_pane).clicked() {
                                 self.pending_fit = true;
                             }
@@ -944,6 +1045,26 @@ impl App {
                                 pick = Some(Bench::Annotations);
                             }
                         });
+                        group(ui, "Coordination", &mut |ui| {
+                            if tool_button(ui, Icon::Numbering, "Numbering", bench == Bench::Numbering, store_free)
+                                .on_hover_text("Preview and approve part and assembly numbering")
+                                .clicked()
+                            {
+                                pick = Some(Bench::Numbering);
+                            }
+                            if tool_button(ui, Icon::Reference, "References", bench == Bench::Reference, store_free)
+                                .on_hover_text("Attach and manage read-only USD reference models")
+                                .clicked()
+                            {
+                                pick = Some(Bench::Reference);
+                            }
+                            if tool_button(ui, Icon::Assembly, "Assemblies", bench == Bench::Assembly, store_free)
+                                .on_hover_text("Create, edit and explode steel assemblies")
+                                .clicked()
+                            {
+                                pick = Some(Bench::Assembly);
+                            }
+                        });
                         group(ui, "Drawings", &mut |ui| {
                             if tool_button(ui, Icon::Sheet, "Sheet editor", self.sheet_editor.open, store_free)
                                 .clicked()
@@ -956,7 +1077,7 @@ impl App {
                                 self.drawing_manager.open = true;
                             }
                         });
-                                                group(ui, "Workspace", &mut |ui| {
+                        group(ui, "Workspace", &mut |ui| {
                             if tool_button(ui, Icon::Recent, "Details", self.details, true)
                                 .on_hover_text("Revision, navigation and display settings; publish from the header")
                                 .clicked()
@@ -1109,19 +1230,48 @@ impl App {
                     return;
                 }
                 // The tools' action bars stay pinned under their forms, like the properties'.
-                if matches!(self.bench, Bench::Bolt | Bench::Weld) {
+                if matches!(
+                    self.bench,
+                    Bench::Bolt
+                        | Bench::Weld
+                        | Bench::Assembly
+                        | Bench::Numbering
+                        | Bench::Reference
+                        | Bench::Array
+                        | Bench::Fit
+                        | Bench::Cut
+                        | Bench::Hole
+                        | Bench::Move
+                        | Bench::Copy
+                        | Bench::Delete
+                        | Bench::Plate
+                        | Bench::Beam
+                        | Bench::Column
+                        | Bench::Brace
+                        | Bench::Colour
+                ) {
                     egui::Panel::bottom("tool-actions")
                         .frame(
                             egui::Frame::new()
                                 .fill(palette.surface)
                                 .inner_margin(egui::Margin::symmetric(0, 4)),
                         )
-                        .show(ui, |ui| {
-                            if self.bench == Bench::Bolt {
-                                self.bolt_actions(ui);
-                            } else {
-                                self.weld_actions(ui);
+                        .show(ui, |ui| match self.bench {
+                            Bench::Bolt => self.bolt_actions(ui),
+                            Bench::Weld => self.weld_actions(ui),
+                            Bench::Assembly => self.assembly_actions(ui),
+                            Bench::Numbering => self.numbering_actions(ui),
+                            Bench::Reference => self.reference_actions(ui),
+                            Bench::Array => self.array_actions(ui),
+                            Bench::Fit => self.fit_actions(ui),
+                            Bench::Cut => self.cut_part_actions(ui),
+                            Bench::Hole => self.hole_actions(ui),
+                            Bench::Move | Bench::Copy | Bench::Delete => self.edit_actions(ui),
+                            Bench::Plate | Bench::Beam | Bench::Column | Bench::Brace => {
+                                self.creation_actions(ui)
                             }
+                            Bench::Colour => self.colour_actions(ui),
+                            _ => {}
                         });
                 }
                 // A kind with no editable properties (a bolt group) offers no Apply or Reset:
@@ -1131,11 +1281,11 @@ impl App {
                     && self.unsupported_kind_note().is_none()
                 {
                     egui::Panel::bottom("property-actions")
-                        .exact_size(54.0)
+                        .exact_size(44.0)
                         .frame(
                             egui::Frame::new()
                                 .fill(palette.surface)
-                                .inner_margin(egui::Margin::symmetric(0, 8)),
+                                .inner_margin(egui::Margin::symmetric(0, 6)),
                         )
                         .show(ui, |ui| self.property_actions(ui));
                 }
@@ -1147,15 +1297,23 @@ impl App {
                         ui.set_max_width(ui.available_width());
                         match self.bench {
                             Bench::Select => self.props_panel(ui),
-                            Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
+                            Bench::Plate | Bench::Beam | Bench::Column | Bench::Brace => {
+                                self.tools_panel(ui)
+                            }
                             Bench::Grid => self.grid_panel(ui),
                             Bench::Levels => self.level_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
+                            Bench::Array => self.array_panel(ui),
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
                             Bench::Weld => self.weld_panel(ui),
                             Bench::Fit => self.fit_panel(ui),
+                            Bench::Cut => self.cut_part_panel(ui),
+                            Bench::Hole => self.hole_panel(ui),
                             Bench::Bolt => self.bolt_panel(ui),
+                            Bench::Assembly => self.assembly_panel(ui),
+                            Bench::Numbering => self.numbering_panel(ui),
+                            Bench::Reference => self.reference_panel(ui),
                             Bench::Annotations => self.annotation_panel(ui),
                             Bench::View => self.view_panel(ui),
                         }
@@ -1172,10 +1330,14 @@ impl App {
             Bench::View => self.views.note.as_ref(),
             Bench::Bolt => self.bolt.note.as_ref(),
             Bench::Weld => self.weld.note.as_ref(),
-            Bench::Fit => self.fit.note.as_ref(),
+            Bench::Fit | Bench::Cut | Bench::Hole => self.fit.note.as_ref(),
+            Bench::Assembly => self.assembly.note.as_ref(),
+            Bench::Numbering => self.numbering.note.as_ref(),
+            Bench::Reference => self.reference.note.as_ref(),
+            Bench::Array => self.array.note.as_ref(),
             Bench::Grid => self.grid_note.as_ref(),
             Bench::Levels => self.level_panel.note.as_ref(),
-            Bench::Plate | Bench::Beam | Bench::Column => self.tool_note.as_ref(),
+            Bench::Plate | Bench::Beam | Bench::Column | Bench::Brace => self.tool_note.as_ref(),
             Bench::Annotations => self.annotation.note.as_ref(),
             Bench::Move | Bench::Copy | Bench::Delete => self.edit_note.as_ref(),
             Bench::Select => self.props_note.as_ref().or(self.grid_note.as_ref()),
@@ -1341,12 +1503,53 @@ impl App {
                     });
                 });
                 ui.horizontal(|ui| {
+                    // Tekla-style Part vs. Assembly selection mode toggle.
+                    let asm_mode = self.selection.assembly_select_mode();
+                    if ui
+                        .selectable_label(!asm_mode, RichText::new("Parts").size(10.0))
+                        .on_hover_text("Select individual parts")
+                        .clicked()
+                    {
+                        self.selection.assembly_mode = false;
+                        self.selection.set(
+                            beamcraft_engine::query::pick::SelectionClass::Parts,
+                            true,
+                        );
+                    }
+                    if ui
+                        .selectable_label(asm_mode, RichText::new("Assemblies").size(10.0))
+                        .on_hover_text("Select whole assemblies (highlights all member parts)")
+                        .clicked()
+                    {
+                        self.selection.assembly_mode = true;
+                        self.selection.set(
+                            beamcraft_engine::query::pick::SelectionClass::Assemblies,
+                            true,
+                        );
+                        if let Some(sel) = self.editor.selected().map(|s| s.id.clone())
+                            && let Some(row) = self.assembly_for_part(&sel).cloned()
+                        {
+                            self.select_assembly_row(&row);
+                        }
+                    }
+                    ui.separator();
                     let selection = if let Some(grid) = self
                         .grid_edit
                         .as_ref()
                         .and_then(|edit| self.grid_scene.get(&edit.id))
                     {
                         format!("1 selected · Grid {}", grid.form.name)
+                    } else if asm_mode
+                        && let Some(sel) = self.editor.selected()
+                        && let Some(row) = self.assembly_for_part(&sel.id)
+                    {
+                        format!(
+                            "Assembly {} · {} part(s)",
+                            row.name,
+                            row.parts.len().max(1)
+                        )
+                    } else if self.selected_many.len() > 1 {
+                        format!("{} selected", self.selected_many.len())
                     } else {
                         match self.editor.selected() {
                             Some(info) => format!("1 selected · {} {}", info.kind, info.name),
@@ -1426,22 +1629,29 @@ impl App {
             ("Levels", Bench::Levels),
             ("Beam", Bench::Beam),
             ("Plate", Bench::Plate),
+            ("Brace", Bench::Brace),
             ("Weld", Bench::Weld),
+            ("Assemblies", Bench::Assembly),
             ("Fit end", Bench::Fit),
+            ("Cut part", Bench::Cut),
+            ("Hole", Bench::Hole),
             ("Bolts", Bench::Bolt),
+            ("Numbering", Bench::Numbering),
+            ("References", Bench::Reference),
             ("Move", Bench::Move),
             ("Copy", Bench::Copy),
+            ("Array", Bench::Array),
             ("Delete", Bench::Delete),
         ] {
             if label.to_lowercase().contains(&query)
                 && ui
                     .add_enabled(
-                        bench.edit().is_none()
+                        (bench.edit().is_none() && bench != Bench::Array)
                             || editable
                             || bench == Bench::Delete
                                 && self.grid_edit.is_some()
                                 && !self.other_command_running(),
-                        egui::Button::new(label).min_size(vec2(ui.available_width(), 34.0)),
+                        egui::Button::new(label).min_size(vec2(ui.available_width(), 30.0)),
                     )
                     .clicked()
             {
@@ -2114,8 +2324,10 @@ impl App {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
-    use super::Bench;
+    use super::{Bench, RibbonTab};
+    use crate::app::tests::headless;
     use crate::edit::EditKind;
 
     #[test]
@@ -2123,9 +2335,69 @@ mod tests {
         assert_eq!(Bench::Move.edit(), Some(EditKind::Move));
         assert_eq!(Bench::Copy.edit(), Some(EditKind::Copy));
         assert_eq!(Bench::Delete.edit(), Some(EditKind::Delete));
-        for bench in [Bench::Select, Bench::Plate, Bench::Beam, Bench::Column] {
+        for bench in [
+            Bench::Select,
+            Bench::Plate,
+            Bench::Beam,
+            Bench::Column,
+            Bench::Brace,
+            Bench::Assembly,
+            Bench::Cut,
+            Bench::Hole,
+            Bench::Array,
+            Bench::Numbering,
+            Bench::Reference,
+        ] {
             assert_eq!(bench.edit(), None);
         }
         assert_eq!(Bench::default(), Bench::Select);
+    }
+
+    #[test]
+    fn compact_ribbon_wires_milestone_7_engineering_benches() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        for (tab, bench, expected_heading) in [
+            (RibbonTab::Steel, Bench::Brace, "Brace"),
+            (RibbonTab::Steel, Bench::Assembly, "Assemblies"),
+            (RibbonTab::Steel, Bench::Cut, "Cut & split part"),
+            (RibbonTab::Steel, Bench::Hole, "Bolt / part holes"),
+            (RibbonTab::Manage, Bench::Numbering, "Numbering"),
+            (RibbonTab::Manage, Bench::Reference, "USD references"),
+            (RibbonTab::Edit, Bench::Array, "Array copies"),
+        ] {
+            app.ribbon_tab = tab;
+            app.set_bench(bench);
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                },
+            );
+            let labels: Vec<String> = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            assert!(
+                labels.iter().any(|l| l == expected_heading),
+                "expected inspector heading {expected_heading:?} for {bench:?}, got {labels:?}"
+            );
+        }
     }
 }

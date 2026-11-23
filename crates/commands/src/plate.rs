@@ -174,6 +174,8 @@ pub struct ElementMeta {
     pub placement: PlacementRead,
     /// The assembly this element is a part of (`bim:partOf`).
     pub part_of: Option<ElementId>,
+    /// Authored integer part class (`steel:class`) on classed steel elements.
+    pub class: Option<i32>,
     /// The published mesh of an element whose kind the kernel does not know, when it has a usable
     /// one. Plates, beams and columns carry `None`: their mesh is the kernel's.
     pub mesh: Option<PublishedMesh>,
@@ -220,6 +222,17 @@ fn element_meta(
             [target] => by_path.get(target.as_str()).copied(),
             _ => None,
         });
+    let class = match property(prim, "steel:class") {
+        Some(Value::Int(value)) => i32::try_from(*value).ok(),
+        None if matches!(
+            kind,
+            "plate" | "beam" | "column" | "lofted_plate" | "part_instance"
+        ) =>
+        {
+            Some(0)
+        }
+        _ => None,
+    };
     ElementMeta {
         kind: kind.to_owned(),
         name: property(prim, "bim:name").and_then(text).map(str::to_owned),
@@ -233,6 +246,7 @@ fn element_meta(
             || property(prim, "bim:isDeactivated") == Some(&Value::Bool(true)),
         placement: placement_read(prim),
         part_of,
+        class,
         mesh,
     }
 }

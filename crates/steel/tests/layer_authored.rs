@@ -4066,14 +4066,29 @@ fn a_mark_is_three_properties_of_the_element_replaced_whole_and_writes_only_the_
             .iter()
             .any(|p| p.path == format!("{}/Geometry", path(PLATE)))
     );
-    // A second mark replaces the first as a whole; the stage stays valid.
-    let (_, o) = installed(&mut a, &o, vec![marked(PLATE, "P", 8)]);
+    // A Unicode mark replaces the first as a whole and can be read back from the stage.
+    let basis = "BCNUM1 plate=ПЛ:8 token=def";
+    let (_, o) = installed(
+        &mut a,
+        &o,
+        vec![Change::Mark {
+            id: PLATE.into(),
+            mark: Mark {
+                basis: basis.into(),
+                ..mark("ПЛ", 8)
+            },
+        }],
+    );
     let prims = snapshot(&a, &o.context);
     assert_eq!(
         value(&prims, PLATE, MARK_SERIES),
-        Some(&Value::Text("P".into()))
+        Some(&Value::Text("ПЛ".into()))
     );
     assert_eq!(value(&prims, PLATE, MARK_NUMBER), Some(&Value::Int(8)));
+    assert_eq!(
+        value(&prims, PLATE, MARK_BASIS),
+        Some(&Value::Text(basis.into()))
+    );
     validate_layers(
         export_request(&a, &o.context),
         schema_identity().unwrap(),
@@ -4098,7 +4113,7 @@ fn wrong_marks_targets_and_loaded_mark_records_are_refused_with_nothing_written(
     for (change, code) in [
         (marked(PLATE, &too_long, 1), ErrorCode::InvalidArgument),
         (marked(PLATE, "a b", 1), ErrorCode::InvalidArgument),
-        (marked(PLATE, "Ω", 1), ErrorCode::InvalidArgument),
+        (marked(PLATE, "ПЛ/С", 1), ErrorCode::InvalidArgument),
         (
             marked(PLATE, "PL", 2_147_483_648),
             ErrorCode::InvalidArgument,

@@ -931,15 +931,19 @@ impl App {
         let tint = crate::views::tint_of(shown);
         // The view adds its depth slab and work area to the display cut (V12).
         let cut = crate::views::display_clip(self.cut.as_ref(), shown);
-        // The loaded scene follows the active pane's hidden kinds; another pane whose view hides
-        // other kinds draws its own filtered upload.
+        // The loaded scene follows the active pane's hidden kinds and representation; another pane
+        // whose view differs draws its own filtered upload.
         let hidden = shown.map_or(beamcraft_engine::KindFilter::SHOW_ALL, |v| v.hidden_kinds);
+        let representation =
+            shown.map_or(beamcraft_engine::Representation::Full, |v| v.representation);
         // A view with filter overrides draws its own scene with their colours and hidden elements.
         let view_overlay = shown
             .and_then(|v| self.views.overlays.get(&v.id))
             .map(|o| (o.key, std::sync::Arc::clone(&o.overlay)));
         let overlay_key = view_overlay.as_ref().map_or(0, |(k, _)| *k);
-        let own_scene = hidden != self.views.shown || view_overlay.is_some();
+        let own_scene = hidden != self.views.shown
+            || representation != self.views.shown_representation
+            || view_overlay.is_some();
         let scale = ui.ctx().pixels_per_point();
         let [width, height] = target_size([body.width(), body.height()], scale);
         let dark = ui.ctx().theme() == egui::Theme::Dark;
@@ -1135,10 +1139,9 @@ impl App {
         if let Some(l) = &self.loaded {
             if own_scene {
                 let token = l.snapshot.token().as_str().to_owned();
-                let stale = pane
-                    .filtered
-                    .as_ref()
-                    .is_none_or(|(t, h, k, _)| *t != token || *h != hidden || *k != overlay_key);
+                let stale = pane.filtered.as_ref().is_none_or(|(t, h, r, k, _)| {
+                    *t != token || *h != hidden || *r != representation || *k != overlay_key
+                });
                 if stale {
                     let overlay = view_overlay
                         .as_ref()
@@ -1146,7 +1149,7 @@ impl App {
                         .or_else(|| self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o)));
                     let built = crate::scene::Scene::from_snapshot_showing(
                         &l.snapshot,
-                        beamcraft_engine::Representation::Full,
+                        representation,
                         &l.uploaded.resident(),
                         overlay.as_deref(),
                         hidden,
@@ -1161,14 +1164,17 @@ impl App {
                     });
                     match built {
                         Ok(uploaded) => {
-                            pane.filtered = Some((token, hidden, overlay_key, uploaded))
+                            pane.filtered =
+                                Some((token, hidden, representation, overlay_key, uploaded))
                         }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 }
             }
             let uploaded = match &pane.filtered {
-                Some((_, h, k, uploaded)) if own_scene && *h == hidden && *k == overlay_key => {
+                Some((_, h, r, k, uploaded))
+                    if own_scene && *h == hidden && *r == representation && *k == overlay_key =>
+                {
                     uploaded
                 }
                 _ => &l.uploaded,
@@ -1372,6 +1378,37 @@ impl App {
                 self.paint_member_grips(&painter, response.rect, &view, l.summary.origin_mm);
             } else {
                 self.selection_edges = Default::default();
+            }
+            // Draw the assembly MAIN badge last (after all selection edges and grips) offset
+            // cleanly with a leader line so wireframe lines never cross through the label.
+            if ids.len() > 1
+                && let Some(selected) = self.editor.selected()
+                && let Some(asm) = self.assembly_for_part(&selected.id)
+                && let Some(main_id) = asm.main.as_deref()
+                && let Some(centre) = element_centre(&l.snapshot, main_id)
+                && let Some(at) =
+                    crate::grid::project(centre, response.rect, &view, l.summary.origin_mm)
+            {
+                let painter = ui.painter_at(response.rect);
+                let palette = crate::theme::Palette::current(ui);
+                let galley = painter.layout_no_wrap(
+                    format!("MAIN · {}", asm.name),
+                    egui::FontId::proportional(10.5),
+                    palette.text,
+                );
+                let size = galley.size() + vec2(10.0, 5.0);
+                let safe = response.rect.shrink2(size * 0.5 + vec2(6.0, 6.0));
+                let badge_center = if safe.is_positive() {
+                    (at + vec2(44.0, -26.0)).clamp(safe.min, safe.max)
+                } else {
+                    at + vec2(44.0, -26.0)
+                };
+                let badge = egui::Rect::from_center_size(badge_center, size);
+                painter.circle_filled(at, 3.0, theme::BRAND);
+                painter.line_segment([at, badge.left_center()], Stroke::new(1.2, theme::BRAND));
+                painter.rect_filled(badge, 3, palette.head);
+                painter.rect_stroke(badge, 3, Stroke::new(1.5, theme::BRAND), StrokeKind::Inside);
+                painter.galley(badge.min + vec2(5.0, 2.5), galley, palette.text);
             }
         }
         Some(PaneDraw {
@@ -1583,65 +1620,110 @@ impl App {
                 &draft,
             );
         }
-        // Copy or move by two points: a rubber line from the origin to the pointer.
-        if let Some(from) = self.two_point.and_then(|t| t.from)
-            && let Some(loaded) = self.loaded.as_ref()
-            && let Some(pos) = response.hover_pos()
-            && let Some(start) =
-                crate::grid::project(from, response.rect, view, loaded.summary.origin_mm)
-        {
-            let painter = ui.painter_at(response.rect);
-            painter.add(egui::Shape::dashed_line(
-                &[start, pos],
-                Stroke::new(1.5, theme::BRAND),
-                6.0,
-                4.0,
-            ));
-            painter.circle_filled(start, 3.5, theme::BRAND);
-        }
-        // Copy, move and bolt points snap like placement does, and show the same marker.
+        // Copy, move, bolt, hole, cut-plane and leader points snap with the same engine snap
+        // pipeline as creation and show the snapped marker and live distance.
         if self.picking_point()
-            && let Some(loaded) = self.loaded.as_ref()
-            && let Some(ray) = response.hover_pos().and_then(|pos| {
-                ndc_of(
-                    [pos.x, pos.y],
-                    [response.rect.min.x, response.rect.min.y],
-                    [response.rect.width(), response.rect.height()],
-                )
-                .and_then(|ndc| ray_through(view, ndc, loaded.summary.origin_mm))
-            })
-            && let Ok((point, Some(kind))) = self.creation_hit(ray, false)
-            && let Some(at) =
-                crate::grid::project(point, response.rect, view, loaded.summary.origin_mm)
+            && let Some(origin_mm) = self.loaded.as_ref().map(|l| l.summary.origin_mm)
         {
-            super::creation_panel::paint_snap_marker(
-                &ui.painter_at(response.rect),
-                at,
-                kind,
-                theme::BRAND,
-            );
+            self.paint_distance_entry(ui, response.rect);
+            let hover_hit = response
+                .hover_pos()
+                .and_then(|pos| {
+                    ndc_of(
+                        [pos.x, pos.y],
+                        [response.rect.min.x, response.rect.min.y],
+                        [response.rect.width(), response.rect.height()],
+                    )
+                    .and_then(|ndc| ray_through(view, ndc, origin_mm))
+                })
+                .and_then(|ray| self.creation_hit(ray, false).ok());
+            if let Some((point, _)) = hover_hit {
+                self.member_cursor = Some(point);
+            } else {
+                self.member_cursor = None;
+            }
+            self.paint_ctrl_reference(ui, response.rect, view, hover_hit.map(|(p, _)| p));
+            if let Some(from) = self.two_point.and_then(|t| t.from)
+                && let Some(start) = crate::grid::project(from, response.rect, view, origin_mm)
+            {
+                let target_px = hover_hit
+                    .and_then(|(pt, _)| crate::grid::project(pt, response.rect, view, origin_mm))
+                    .or_else(|| response.hover_pos());
+                let painter = ui.painter_at(response.rect);
+                painter.circle_filled(start, 4.0, theme::BRAND);
+                if let Some(end_px) = target_px {
+                    painter.add(egui::Shape::dashed_line(
+                        &[start, end_px],
+                        Stroke::new(1.5, theme::BRAND),
+                        6.0,
+                        4.0,
+                    ));
+                    if let Some((pt, _)) = hover_hit {
+                        let [dx, dy, dz] = [pt[0] - from[0], pt[1] - from[1], pt[2] - from[2]];
+                        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+                        if dist > 1e-3 {
+                            let mid = egui::pos2(
+                                (start.x + end_px.x) * 0.5,
+                                (start.y + end_px.y) * 0.5 - 10.0,
+                            );
+                            painter.text(
+                                mid,
+                                egui::Align2::CENTER_BOTTOM,
+                                format!("{dist:.0} mm"),
+                                egui::FontId::proportional(11.5),
+                                theme::BRAND,
+                            );
+                        }
+                    }
+                }
+            }
+            if let Some((point, snap_kind)) = hover_hit
+                && let Some(at) = crate::grid::project(point, response.rect, view, origin_mm)
+            {
+                if let Some(kind) = snap_kind {
+                    super::creation_panel::paint_snap_marker(
+                        &ui.painter_at(response.rect),
+                        at,
+                        kind,
+                        theme::BRAND,
+                    );
+                } else {
+                    let painter = ui.painter_at(response.rect);
+                    let stroke = Stroke::new(1.5, theme::BRAND);
+                    painter.circle_stroke(at, 5.0, stroke);
+                    painter.line_segment([at - vec2(8.0, 0.0), at + vec2(8.0, 0.0)], stroke);
+                    painter.line_segment([at - vec2(0.0, 8.0), at + vec2(0.0, 8.0)], stroke);
+                }
+            }
         }
         // A grid line being drawn shows where its next end snaps.
         if self.grid_line.click.is_some()
             && let Some(loaded) = self.loaded.as_ref()
-            && let Some(ray) = response.hover_pos().and_then(|pos| {
-                ndc_of(
-                    [pos.x, pos.y],
-                    [response.rect.min.x, response.rect.min.y],
-                    [response.rect.width(), response.rect.height()],
-                )
-                .and_then(|ndc| ray_through(view, ndc, loaded.summary.origin_mm))
-            })
-            && let Ok((point, Some(kind))) = self.grid_line_hit(ray)
-            && let Some(at) =
-                crate::grid::project(point, response.rect, view, loaded.summary.origin_mm)
         {
-            super::creation_panel::paint_snap_marker(
-                &ui.painter_at(response.rect),
-                at,
-                kind,
-                theme::BRAND,
-            );
+            let hover_hit = response
+                .hover_pos()
+                .and_then(|pos| {
+                    ndc_of(
+                        [pos.x, pos.y],
+                        [response.rect.min.x, response.rect.min.y],
+                        [response.rect.width(), response.rect.height()],
+                    )
+                    .and_then(|ndc| ray_through(view, ndc, loaded.summary.origin_mm))
+                })
+                .and_then(|ray| self.grid_line_hit(ray).ok());
+            self.member_cursor = hover_hit.map(|(p, _)| p);
+            self.paint_ctrl_reference(ui, response.rect, view, hover_hit.map(|(p, _)| p));
+            if let Some((point, Some(kind))) = hover_hit
+                && let Some(at) =
+                    crate::grid::project(point, response.rect, view, loaded.summary.origin_mm)
+            {
+                super::creation_panel::paint_snap_marker(
+                    &ui.painter_at(response.rect),
+                    at,
+                    kind,
+                    theme::BRAND,
+                );
+            }
         }
         if self.views.picking.is_some() {
             let hover = response.hover_pos().and_then(|pos| {
@@ -1666,7 +1748,12 @@ impl App {
             if self.views.picking.is_some() {
                 self.view_click(ray);
             } else if self.two_point.is_some() {
-                self.two_point_click(ray);
+                if ui.input(|i| i.modifiers.ctrl) {
+                    self.set_ctrl_reference(ray, false);
+                } else {
+                    self.two_point_click(ray);
+                    self.ctrl_reference = None;
+                }
             } else if self.plane_pick {
                 if let Some(loaded) = &self.loaded {
                     match beamcraft_engine::work_plane::pick_work_plane(
@@ -1685,17 +1772,37 @@ impl App {
                     }
                 }
             } else if self.grid_line.click.is_some() {
-                self.place_grid_line(ray);
+                if ui.input(|i| i.modifiers.ctrl) {
+                    self.set_ctrl_reference(ray, false);
+                } else {
+                    self.place_grid_line(ray);
+                    self.ctrl_reference = None;
+                }
             } else if self.plate_mode {
-                self.place_plate(ray);
+                if ui.input(|i| i.modifiers.ctrl) {
+                    self.set_ctrl_reference(ray, true);
+                } else {
+                    self.place_plate(ray);
+                    self.ctrl_reference = None;
+                }
             } else if self.beam_mode {
-                self.place_beam(ray);
+                if ui.input(|i| i.modifiers.ctrl) {
+                    self.set_ctrl_reference(ray, false);
+                } else {
+                    self.place_beam(ray);
+                    self.ctrl_reference = None;
+                }
             } else if self.bench == workbench::Bench::Annotations {
                 self.annotation_click(ray);
             } else if self.bench == workbench::Bench::Weld {
                 self.weld_click(ray);
-            } else if self.bench == workbench::Bench::Fit {
+            } else if matches!(
+                self.bench,
+                workbench::Bench::Fit | workbench::Bench::Cut | workbench::Bench::Hole
+            ) {
                 self.fit_click(ray);
+            } else if self.bench == workbench::Bench::Assembly {
+                self.assembly_click(ray);
             } else if self.bench == workbench::Bench::Bolt {
                 self.bolt_click(ray);
             } else if !self.other_command_running() {

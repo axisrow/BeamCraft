@@ -15,15 +15,21 @@
 
 use crate::plate_cmd::revision_json;
 use beamcraft_commands::definition::{DefineRequest, DefinitionRecord, define};
+use beamcraft_commands::grid::{GridContext, create_grid};
+use beamcraft_commands::level::{LevelContext, create_level};
 use beamcraft_commands::project::{
-    ProjectContext, ProjectEnvironmentChoice, ProjectLayout, create_project, create_project_scoped,
-    create_project_unique, install_environment,
+    ProjectContext, ProjectEnvironmentChoice, ProjectLayout, create_project,
+    create_project_in_place, create_project_scoped, create_project_unique, install_environment,
 };
+use beamcraft_commands::template::TemplateEntry;
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::{NoFault, RevisionStore, Uuid7 as HostUuid7};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
+use beamcraft_model::command::CreateLevel;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::grid::CreateGrid;
+use beamcraft_model::id::ElementId;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use session::Refusal;
 use session::environment::{environment_folders, find_environment, read_environment_file};
@@ -88,15 +94,24 @@ fn run(args: &[OsString]) -> Run<Json> {
         "list-project" => &["--dir"],
         _ => return Err(invalid("unknown command")),
     };
-    if !tail.len().is_multiple_of(2) || tail.len() > 32 {
+    if tail.len() > 32 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
-    for pair in tail.as_chunks::<2>().0 {
-        let [key, value] = pair;
-        if !own.contains(key) || options.insert(*key, *value).is_some() {
+    let mut here = false;
+    let mut tail = tail.iter().copied();
+    while let Some(key) = tail.next() {
+        if *command == "create-project" && key == "--here" && !here {
+            here = true;
+            continue;
+        }
+        if !own.contains(&key) || options.contains_key(key) {
             return Err(invalid("unknown or repeated option"));
         }
+        let value = tail
+            .next()
+            .ok_or_else(|| invalid("options are KEY VALUE pairs"))?;
+        options.insert(key, value);
     }
     let given = |key: &str| options.get(key).copied();
     let config_dir = || -> Run<PathBuf> {
@@ -111,8 +126,21 @@ fn run(args: &[OsString]) -> Run<Json> {
     };
     match *command {
         "create-project" => {
-            let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
-            let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
+            let named_folder = if here {
+                if ["--parent", "--name", "--unique-name"]
+                    .iter()
+                    .any(|key| given(key).is_some())
+                {
+                    return Err(invalid(
+                        "--here cannot be combined with --parent, --name or --unique-name",
+                    ));
+                }
+                None
+            } else {
+                let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
+                let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
+                Some((Path::new(parent), name))
+            };
             let dir = config_dir();
             // A sectioned project takes no environment yet, so it needs the settings only for
             // its author.
@@ -229,59 +257,57 @@ fn run(args: &[OsString]) -> Run<Json> {
                     ));
                 }
             };
-            let info = match &layout {
-                Some(layout) => create_project_scoped(
-                    Path::new(parent),
-                    name,
-                    unique,
-                    layout,
+            let prepare = |path: &Path| {
+                let Some((id, source)) = &chosen else {
+                    return Ok(None);
+                };
+                let Some((file, _)) = &chosen_file else {
+                    return Ok(None);
+                };
+                let seeded = seed_project(path, id, file, &context).map_err(|mut error| {
+                    // The person did not type a settings-chosen environment id, so the not-found
+                    // refusal of the search itself names where the choice came from. Deeper
+                    // not-found refusals (a listed library file that is gone, say) keep their own
+                    // text: only the exact search refusal is rewritten.
+                    if *source == "settings"
+                        && error.message
+                            == "the environment is not among the built-in or user environments"
+                    {
+                        error.message = "the active environment of the settings is not among the built-in or user environments";
+                    }
+                    error
+                })?;
+                Ok(Some((seeded, *source)))
+            };
+            let (info, seeded) = if let Some((parent, name)) = named_folder {
+                let info = match &layout {
+                    Some(layout) => {
+                        create_project_scoped(parent, name, unique, layout, &context, &mut NoFault)
+                    }
+                    None if unique => {
+                        create_project_unique(parent, name, choice.as_ref(), &context, &mut NoFault)
+                    }
+                    None => create_project(parent, name, choice.as_ref(), &context, &mut NoFault),
+                }?;
+                match prepare(&info.path) {
+                    Ok(seeded) => (info, seeded),
+                    Err(error) => {
+                        // This call created the named directory, so it owns the whole tree.
+                        let _ = std::fs::remove_dir_all(&info.path);
+                        return Err(error);
+                    }
+                }
+            } else {
+                let current = std::env::current_dir()
+                    .map_err(|_| invalid("the current directory is not usable"))?;
+                create_project_in_place(
+                    &current,
+                    layout.as_ref(),
                     &context,
                     &mut NoFault,
-                )?,
-                None => {
-                    if unique {
-                        create_project_unique(
-                            Path::new(parent),
-                            name,
-                            choice.as_ref(),
-                            &context,
-                            &mut NoFault,
-                        )?
-                    } else {
-                        create_project(
-                            Path::new(parent),
-                            name,
-                            choice.as_ref(),
-                            &context,
-                            &mut NoFault,
-                        )?
-                    }
-                }
-            };
-            let seeded = match (&chosen, &chosen_file) {
-                (Some((id, source)), Some((file, _))) => {
-                    match seed_project(&info.path, id, file, &context) {
-                        Ok(seeded) => Some((seeded, *source)),
-                        Err(mut error) => {
-                            // The person did not type a settings-chosen environment id, so the
-                            // not-found refusal of the search itself names where the choice came
-                            // from. Deeper not-found refusals (a listed library file that is
-                            // gone, say) keep their own text: only the exact search refusal is
-                            // rewritten.
-                            if *source == "settings"
-                                && error.message
-                                    == "the environment is not among the built-in or user environments"
-                            {
-                                error.message = "the active environment of the settings is not among the built-in or user environments";
-                            }
-                            // The folder was made by this call, so a failed seeding removes it
-                            // again and leaves nothing behind.
-                            let _ = std::fs::remove_dir_all(&info.path);
-                            return Err(error);
-                        }
-                    }
-                }
-                _ => None,
+                    choice.as_ref(),
+                    prepare,
+                )?
             };
             let recorded = dir.is_ok_and(|dir| remember(&dir, &info.path).is_ok());
             let mut reply = Json::object([
@@ -297,6 +323,8 @@ fn run(args: &[OsString]) -> Run<Json> {
                         ("environment", Json::text(seeded.environment)),
                         ("environment_source", Json::text(source)),
                         ("materials", Json::uint(seeded.materials)),
+                        ("grids", Json::uint(seeded.grids)),
+                        ("levels", Json::uint(seeded.levels)),
                     ]),
                 );
             }
@@ -415,6 +443,8 @@ const DEFAULT_MATERIALS: [(&str, f64); 2] = [("Steel_Undefined", 0.0), ("Steel",
 struct Seeded {
     environment: String,
     materials: u64,
+    grids: u64,
+    levels: u64,
 }
 
 /// Gives the new project at `dir` its environment and its default materials: the environment
@@ -450,6 +480,8 @@ fn seed_project(dir: &Path, id: &str, file: &Path, context: &ProjectContext) -> 
     let mut seeded = Seeded {
         environment: id.to_owned(),
         materials: 0,
+        grids: 0,
+        levels: 0,
     };
     for (name, density) in DEFAULT_MATERIALS {
         define_one(
@@ -462,6 +494,64 @@ fn seed_project(dir: &Path, id: &str, file: &Path, context: &ProjectContext) -> 
             .named(Some(name)),
         )?;
         seeded.materials += 1;
+    }
+    // The starter layout the environment declares (#840): its grids and levels, each through the
+    // same engine command as create-grid and create-level, one revision apiece.
+    let template = beamcraft_commands::template::load_environment(file)?;
+    let actor = HostUuid7::parse(&context.actor.to_string()).map_err(Refusal::from)?;
+    for entry in template.entries {
+        match entry {
+            TemplateEntry::Level { name, elevation_mm } => {
+                create_level(
+                    &store,
+                    &LevelContext {
+                        op_id: OpId::from_uuid(fresh_id()?),
+                        revision_id: RevisionId::from_uuid(fresh_id()?),
+                        actor: actor.clone(),
+                        project: context.project,
+                        workspace: context.workspace,
+                    },
+                    &CreateLevel {
+                        new_id: ElementId::from_uuid(fresh_id()?),
+                        name,
+                        elevation_mm,
+                    },
+                    &mut NoFault,
+                )?;
+                seeded.levels += 1;
+            }
+            TemplateEntry::Grid(grid) => {
+                let rotation = grid.rotation_deg.map(|r| r.to_string());
+                let mut options = BTreeMap::new();
+                options.insert("--name", grid.name.as_str());
+                for (key, value) in [
+                    ("--u-expression", &grid.u_expression),
+                    ("--u-labels", &grid.u_labels),
+                    ("--v-expression", &grid.v_expression),
+                    ("--v-labels", &grid.v_labels),
+                    ("--origin", &grid.origin),
+                    ("--rotation", &rotation),
+                ] {
+                    if let Some(value) = value {
+                        options.insert(key, value.as_str());
+                    }
+                }
+                let grid = crate::grid_cmd::author_grid(&options, &mut || fresh_id())?;
+                create_grid(
+                    &store,
+                    &GridContext {
+                        op_id: OpId::from_uuid(fresh_id()?),
+                        revision_id: RevisionId::from_uuid(fresh_id()?),
+                        actor: actor.clone(),
+                        project: context.project,
+                        workspace: context.workspace,
+                    },
+                    &CreateGrid { grid },
+                    &mut NoFault,
+                )?;
+                seeded.grids += 1;
+            }
+        }
     }
     Ok(seeded)
 }

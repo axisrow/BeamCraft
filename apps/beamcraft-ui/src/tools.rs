@@ -827,11 +827,34 @@ pub struct LevelChoice {
 /// The tallest column the form builds from a height, in millimetres.
 pub const MAX_COLUMN_HEIGHT_MM: f64 = 1_000_000.0;
 
+/// Rich section metadata of a profile in the model or environment catalogue.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProfileMeta {
+    /// Human-readable designation (`I-300x150`, `HEB200`, etc.).
+    pub designation: String,
+    /// Shape family token (`rectangle`, `i_shape`, `channel`, `angle`, `rhs`, `chs`, ...).
+    pub family: String,
+    /// Optional governing standard label.
+    pub standard: Option<String>,
+    /// Overall width and height in mm when known.
+    pub extent_mm: Option<[f64; 2]>,
+    /// Named parametric dimensions in mm (`h`, `b`, `tw`, `tf`, `r`, `t`, `c`, `d`).
+    pub parameters_mm: Vec<(String, f64)>,
+    /// Declared or kernel area in mm².
+    pub area_mm2: Option<f64>,
+    /// Linear mass in kg/m.
+    pub mass_per_meter_kg: Option<f64>,
+    /// `true` when offered from the environment library and not yet pinned into the model.
+    pub from_environment: bool,
+}
+
 /// The profile and material definitions of the accepted revision.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Definitions {
     /// Profiles, for `--profile-digest`.
     pub profiles: Vec<Choice>,
+    /// Section metadata keyed by [`Choice::digest`], for the Profile Catalogue UI.
+    pub profile_meta: std::collections::BTreeMap<String, ProfileMeta>,
     /// Materials, for `--material-digest`.
     pub materials: Vec<Choice>,
     /// The part presets of the project's environment, defaults first within a kind.
@@ -874,6 +897,44 @@ fn dimension(definition: &Json, key: &str) -> Option<String> {
         .map(|v| format!("{v}"))
 }
 
+fn extract_profile_meta(
+    entry: &Json,
+    designation: String,
+    family: String,
+    from_environment: bool,
+) -> (ProfileMeta, Option<[f64; 2]>) {
+    let w = entry.get("width_mm").ok().and_then(|v| v.float().ok());
+    let h = entry.get("height_mm").ok().and_then(|v| v.float().ok());
+    let extent_mm = w.zip(h).map(|(w, h)| [w, h]);
+    let mut parameters_mm = Vec::new();
+    if let Ok(Json::Object(map)) = entry.get("parameters_mm") {
+        for (k, v) in map {
+            if let Ok(val) = v.float() {
+                parameters_mm.push((k.clone(), val));
+            }
+        }
+    } else if let Some([w, h]) = extent_mm
+        && family == "rectangle"
+    {
+        parameters_mm.push(("b".into(), w));
+        parameters_mm.push(("h".into(), h));
+    }
+    let meta = ProfileMeta {
+        designation,
+        family,
+        standard: text(entry, "standard").filter(|s| !s.is_empty()),
+        extent_mm,
+        parameters_mm,
+        area_mm2: entry.get("area_mm2").ok().and_then(|v| v.float().ok()),
+        mass_per_meter_kg: entry
+            .get("mass_per_meter_kg")
+            .ok()
+            .and_then(|v| v.float().ok()),
+        from_environment,
+    };
+    (meta, extent_mm)
+}
+
 /// Reads the reply of `definitions`. Every definition that is not a material is offered as a
 /// profile; whether the engine accepts a kind for a member is the engine's decision.
 pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Definitions, ToolError> {
@@ -896,13 +957,20 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
         .and_then(Json::array)
         .map(|list| {
             list.iter()
-                .filter_map(|entry| text(entry, "designation"))
-                .take(MAX_CHOICES)
-                .map(|designation| Choice {
-                    label: designation.clone(),
-                    digest: format!("{BY_NAME}{designation}"),
-                    rect_mm: None,
+                .filter_map(|entry| {
+                    let designation = text(entry, "designation")?;
+                    let family = text(entry, "kind").unwrap_or_else(|| "i_shape".into());
+                    let digest = format!("{BY_NAME}{designation}");
+                    let (meta, extent) =
+                        extract_profile_meta(entry, designation.clone(), family, true);
+                    out.profile_meta.insert(digest.clone(), meta);
+                    Some(Choice {
+                        label: designation,
+                        digest,
+                        rect_mm: extent,
+                    })
                 })
+                .take(MAX_CHOICES)
                 .collect()
         })
         .unwrap_or_default();
@@ -1003,11 +1071,9 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                 (Some(w), Some(h)) => format!(" {w} x {h} mm"),
                 _ => String::new(),
             };
-            let rect_mm = width
-                .as_deref()
-                .and_then(|w| w.parse::<f64>().ok())
-                .zip(height.as_deref().and_then(|h| h.parse::<f64>().ok()))
-                .map(|(w, h)| [w, h]);
+            let (meta, rect_mm) =
+                extract_profile_meta(definition, name.clone(), kind.clone(), false);
+            out.profile_meta.insert(digest.clone(), meta);
             out.profiles.push(Choice {
                 label: format!("{name}{size} ({})", short(&digest)),
                 digest,

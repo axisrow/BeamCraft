@@ -642,7 +642,9 @@ impl App {
                 }
             }
         }
-        if self.views.shown != self.views.active_hidden() {
+        if self.views.shown != self.views.active_hidden()
+            || self.views.shown_representation != self.views.active_representation()
+        {
             self.recolour();
         }
     }
@@ -1070,7 +1072,7 @@ impl App {
     }
 
     /// Writes `form` into the view `id` and brings every pane on it up to date.
-    fn write_view(&mut self, id: Uuid7, form: &Form) -> Result<(), String> {
+    pub(super) fn write_view(&mut self, id: Uuid7, form: &Form) -> Result<(), String> {
         let mut view = self
             .views
             .book
@@ -1112,7 +1114,9 @@ impl App {
                 }
             }
             self.tool_note = None;
-            if self.views.shown != self.views.active_hidden() {
+            if self.views.shown != self.views.active_hidden()
+                || self.views.shown_representation != self.views.active_representation()
+            {
                 self.recolour();
             }
         }
@@ -2864,13 +2868,15 @@ impl App {
             .resize(&self.state, width, height, Some(1), &self.stats)
             .ok()?;
         let hidden = view.hidden_kinds;
-        let filtered = if hidden == self.views.shown {
+        let filtered = if hidden == self.views.shown
+            && view.representation == self.views.shown_representation
+        {
             None
         } else {
             let overlay = self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o));
             crate::scene::Scene::from_snapshot_showing(
                 &loaded.snapshot,
-                beamcraft_engine::Representation::Full,
+                view.representation,
                 &loaded.uploaded.resident(),
                 overlay.as_deref(),
                 hidden,
@@ -3443,12 +3449,20 @@ impl App {
                         if crate::kit::prop_button(ui, "Visibility/Graphics", &vg) {
                             vg_open = !vg_open;
                         }
-                        let display = format!("{} · Edit…", mode_name(form.mode));
+                        let display = if form.representation
+                            == beamcraft_engine::Representation::Simplified
+                        {
+                            format!("{} · Simplified · Edit…", mode_name(form.mode))
+                        } else {
+                            format!("{} · Edit…", mode_name(form.mode))
+                        };
                         crate::kit::mark_next_changed(
                             ui,
-                            saved
-                                .as_ref()
-                                .is_some_and(|o| o.mode != form.mode || o.grids != form.grids),
+                            saved.as_ref().is_some_and(|o| {
+                                o.mode != form.mode
+                                    || o.representation != form.representation
+                                    || o.grids != form.grids
+                            }),
                         );
                         if crate::kit::prop_button(ui, "Graphic Display", &display) {
                             display_open = !display_open;
@@ -3657,6 +3671,31 @@ impl App {
                                             );
                                         }
                                     });
+                            });
+                            row(ui, "Geometry", |ui| {
+                                let label = |rep| match rep {
+                                    beamcraft_engine::Representation::Full => "Full (exact)",
+                                    beamcraft_engine::Representation::Simplified => {
+                                        "Simplified (fast)"
+                                    }
+                                    _ => "Custom",
+                                };
+                                egui::ComboBox::from_id_salt("view-representation")
+                                    .selected_text(label(form.representation))
+                                    .width((ui.available_width() - FIT).max(40.0))
+                                    .show_ui(ui, |ui| {
+                                        for rep in beamcraft_engine::Representation::ALL {
+                                            ui.selectable_value(
+                                                &mut form.representation,
+                                                rep,
+                                                label(rep),
+                                            );
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text(
+                                        "Simplified skips holes and fine cuts in display geometry for faster rendering; snaps and quantities stay exact.",
+                                    );
                             });
                             row(ui, "Grids", |ui| {
                                 ui.checkbox(&mut form.grids, "Shown");
@@ -4015,7 +4054,9 @@ impl App {
         }
         self.clear_member_preview();
         self.plate_hover = None;
-        if self.views.shown != self.views.active_hidden() {
+        if self.views.shown != self.views.active_hidden()
+            || self.views.shown_representation != self.views.active_representation()
+        {
             self.recolour();
         }
         if self.bench == Bench::View && self.views.subject != Subject::NewView {

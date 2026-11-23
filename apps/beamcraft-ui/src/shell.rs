@@ -248,7 +248,7 @@ impl eframe::App for Shell {
             return;
         }
         if let Some(appearance) = &mut self.appearance {
-            appearance.titlebar(ui, !self.start.busy(), self.start.resizable());
+            appearance.titlebar(ui, !self.start.busy(), true);
         }
         if let Some(error) = &self.error {
             egui::Panel::bottom("start-error").show(ui, |ui| {

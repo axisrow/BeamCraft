@@ -37,6 +37,9 @@ use session::project::{check_project_name, numbered_name};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod in_place;
+pub use in_place::create_project_in_place;
+
 /// Folder of a project that holds the copy of its environment, made by `create-project`
 /// `--environment`: the project carries the libraries it was created with, so it opens the same
 /// on another machine and the next session needs no setting.
@@ -500,8 +503,8 @@ pub fn project_environment_file(dir: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Copies the environment `file`, the profile, fastener and material libraries it lists and its
-/// presets into the project at `dir` (`environment/`). The environment is read and admitted
+/// Copies the environment `file`, the profile, fastener and material libraries it lists, its
+/// presets and its starter template into the project at `dir` (`environment/`). The environment is read and admitted
 /// first, so a refused one writes nothing. Commands of the project then resolve profile, bolt
 /// and grade names against this copy.
 pub fn install_environment(dir: &Path, file: &Path) -> Result<(), Refusal> {
@@ -526,6 +529,7 @@ pub fn install_environment(dir: &Path, file: &Path) -> Result<(), Refusal> {
         .chain(&environment.info.fastener_libraries)
         .chain(&environment.info.material_libraries)
         .chain(&environment.info.presets)
+        .chain(&environment.info.template)
     {
         let to = target.join(reference);
         if let Some(parent) = to.parent() {

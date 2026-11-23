@@ -846,16 +846,16 @@ pub fn supported_kind(p: &Prim) -> Option<&str> {
 }
 
 /// The values of an A09 mark: a series of at most 16 letters, digits, `_` and `-`, a number in
-/// `0..=i32::MAX` and a non-empty printable-ASCII approval record of at most 512 bytes.
+/// `0..=i32::MAX` and a non-empty printable-UTF8 approval record of at most 512 bytes.
 fn mark_values(series: &str, number: i64, basis: &str) -> Result<(), Diagnostic> {
     if series.chars().count() > MARK_MAX_SERIES
         || !series
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
         || !(0..=i64::from(i32::MAX)).contains(&number)
         || basis.is_empty()
         || basis.len() > MARK_MAX_BASIS
-        || !basis.bytes().all(|b| (0x20..=0x7e).contains(&b))
+        || basis.chars().any(char::is_control)
     {
         return Err(invalid());
     }

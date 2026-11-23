@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! `beamcraft-ui [--cli PATH] [--config-dir DIR]` opens the window on the start page: the start
-//! window (environment and author), then the recent projects, the projects of a folder and
-//! Create; the chosen model opens in the same window (see `beamcraft_ui::start`).
+//! `beamcraft-ui [--cli PATH] [--config-dir DIR]` opens the model library. Its sidebar
+//! contains the local account and environment settings. The chosen model opens in the same
+//! window (see `beamcraft_ui::start`).
 //! `beamcraft-ui --store ROOT [--cli PATH]` opens the window on the published revision;
 //! `--actor-id UUID` records that author on its edits.
 //! `beamcraft-ui --workspace DIR [--cli PATH]` opens it on a personal workspace (a store made by
@@ -490,7 +490,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     };
     let perf_run = plan.is_some();
     window(
-        egui::vec2(1400.0, 900.0),
+        egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]),
         Box::new(move |cc| {
             let perf = plan.map(|phases| (phases, report));
             Ok(Box::new(App::with_perf_run(cc, source, perf, stats)?))
@@ -515,7 +515,9 @@ fn start_page(
     stats: Arc<Stats>,
 ) -> Result<Option<(String, u8)>, Error> {
     window(
-        beamcraft_ui::start::LAUNCHER_SIZE,
+        egui::ViewportBuilder::default()
+            .with_inner_size([1280.0, 800.0])
+            .with_min_inner_size([1100.0, 680.0]),
         Box::new(move |cc| Ok(Box::new(Shell::new(cc, cli, config_dir, samples, stats)))),
     )?;
     Ok(None)
@@ -548,7 +550,7 @@ fn shot_reply() -> Result<Option<(String, u8)>, Error> {
 }
 
 /// Runs one native window until it closes.
-fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error> {
+fn window(viewport: egui::ViewportBuilder, create: eframe::AppCreator<'_>) -> Result<(), Error> {
     let create: eframe::AppCreator<'_> = match SHOT.get() {
         Some((path, outcome)) => {
             let (path, outcome) = (path.clone(), std::sync::Arc::clone(outcome));
@@ -570,10 +572,7 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
         label: Some("BeamCraft viewport"),
         ..Default::default()
     });
-    let viewport = egui::ViewportBuilder::default()
-        .with_inner_size(size)
-        .with_title("BeamCraft")
-        .with_icon(load_icon());
+    let viewport = viewport.with_title("BeamCraft").with_icon(load_icon());
     // The window controls are always the operating system's own. macOS keeps its traffic
     // lights over a transparent title bar, with our header drawn under them; Windows and Linux
     // keep their native title bar and its controls above our header.

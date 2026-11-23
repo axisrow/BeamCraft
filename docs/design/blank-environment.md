@@ -100,6 +100,20 @@ saved setting.
   the level is not above the base).
 * Default materials: `Steel_Undefined` (density 0) and `Steel` (7850 kg/m3, no grade).
 
+## Starter template (2026-11-22, #840)
+
+A new model opened with no axes and no level, so the first column had nothing to land on. An
+environment may now declare `bim:environment:template`, a contained relative path to a layer of
+`/Template/<id>` entries (`steel:template:kind` `level` or `grid`; see
+`crates/commands/src/template.rs`). `create-project` copies the file with the environment and,
+after the default materials, creates each entry in id order through the same engine commands as
+`create-grid` and `create-level` (the grid options go through the one `create-grid` parser), one
+revision each; the reply counts them in `seeded.grids` and `seeded.levels`. The starter layout
+is data of the environment, not of the code: `blank` ships one invented 3 x 3 grid at 6000 mm
+(axes 1–3, A–C) and the level `+0.000`; the regional environments declare none yet. Unlike
+presets, a template is all or nothing: one refused entry refuses the creation and rolls the new
+folder back, since a half-seeded layout would look complete and not be.
+
 ## Zero density
 
 `Steel_Undefined` is the material of auxiliary, non-steel parts. Its density is exactly zero, so

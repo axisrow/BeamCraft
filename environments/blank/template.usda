@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    doc = "BeamCraft blank starter layout: the grid and level a new project of this environment opens with. Contributor-original, MPL-2.0. Every value is invented; none follows any national standard or commercial template."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+)
+
+def Scope "Template"
+{
+    def Scope "Grid"
+    {
+        token steel:template:kind = "grid"
+        string steel:template:name = "Grid"
+        string steel:template:uExpression = "0 2*6000"
+        string steel:template:uLabels = "1 2 3"
+        string steel:template:vExpression = "0 2*6000"
+        string steel:template:vLabels = "A B C"
+    }
+
+    def Scope "Level_0"
+    {
+        token steel:template:kind = "level"
+        string steel:template:name = "+0.000"
+        double steel:template:elevationMm = 0
+    }
+}

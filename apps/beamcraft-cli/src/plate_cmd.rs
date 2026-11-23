@@ -4169,36 +4169,7 @@ pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord)
             section_fields(&mut fields, section)?;
         }
         DefinitionRecord::SectionProfile { shape, section } => {
-            let (width, height) = shape.extent_mm();
-            fields.push(("width_mm", num(width)?));
-            fields.push(("height_mm", num(height)?));
-            match shape {
-                SectionShape::Parametric(p) => {
-                    let names = p.family().parameters();
-                    let values = names
-                        .iter()
-                        .zip(p.values())
-                        .map(|(n, v)| Ok(((*n).to_owned(), num(*v)?)))
-                        .collect::<Run<BTreeMap<_, _>>>()?;
-                    fields.push(("parameters_mm", Json::Object(values)));
-                }
-                SectionShape::Custom(c) => {
-                    let polygon = |points: &[[f64; 2]]| -> Run<Json> {
-                        Ok(Json::Array(
-                            points
-                                .iter()
-                                .map(|[x, y]| Ok(Json::Array(vec![num(*x)?, num(*y)?])))
-                                .collect::<Run<_>>()?,
-                        ))
-                    };
-                    fields.push(("outer_mm", polygon(&c.outer)?));
-                    fields.push((
-                        "cavities_mm",
-                        Json::Array(c.cavities.iter().map(|v| polygon(v)).collect::<Run<_>>()?),
-                    ));
-                }
-            }
-            section_fields(&mut fields, section)?;
+            profile_shape_fields(&mut fields, shape, section)?;
             fields.push((
                 "declared_area_warning",
                 match record.declared_area_warning() {
@@ -4266,6 +4237,43 @@ pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord)
 }
 
 /// The declared designation, standard and section numbers of any profile definition.
+fn profile_shape_fields(
+    fields: &mut Vec<(&'static str, Json)>,
+    shape: &SectionShape,
+    section: &SectionProperties,
+) -> Run<()> {
+    let (width, height) = shape.extent_mm();
+    fields.push(("width_mm", num(width)?));
+    fields.push(("height_mm", num(height)?));
+    match shape {
+        SectionShape::Parametric(p) => {
+            let names = p.family().parameters();
+            let values = names
+                .iter()
+                .zip(p.values())
+                .map(|(n, v)| Ok(((*n).to_owned(), num(*v)?)))
+                .collect::<Run<BTreeMap<_, _>>>()?;
+            fields.push(("parameters_mm", Json::Object(values)));
+        }
+        SectionShape::Custom(c) => {
+            let polygon = |points: &[[f64; 2]]| -> Run<Json> {
+                Ok(Json::Array(
+                    points
+                        .iter()
+                        .map(|[x, y]| Ok(Json::Array(vec![num(*x)?, num(*y)?])))
+                        .collect::<Run<_>>()?,
+                ))
+            };
+            fields.push(("outer_mm", polygon(&c.outer)?));
+            fields.push((
+                "cavities_mm",
+                Json::Array(c.cavities.iter().map(|v| polygon(v)).collect::<Run<_>>()?),
+            ));
+        }
+    }
+    section_fields(fields, section)
+}
+
 fn section_fields(fields: &mut Vec<(&'static str, Json)>, section: &SectionProperties) -> Run<()> {
     fields.push((
         "designation",
@@ -5382,10 +5390,30 @@ fn environment_profiles_json(inspection: &Inspection, options: &BTreeMap<&str, &
         if defined.contains(&entry.designation.as_str()) {
             continue;
         }
-        listed.push(Json::object([
-            ("designation", Json::text(entry.designation.clone())),
-            ("kind", Json::text(entry.record.kind())),
-        ]));
+        let mut object = BTreeMap::from([
+            ("designation".into(), Json::text(entry.designation.clone())),
+            ("kind".into(), Json::text(entry.record.kind())),
+        ]);
+        let mut extra = Vec::new();
+        match &entry.record {
+            DefinitionRecord::RectangleProfile {
+                width_mm,
+                height_mm,
+                section,
+            } => {
+                extra.push(("width_mm", num(*width_mm)?));
+                extra.push(("height_mm", num(*height_mm)?));
+                section_fields(&mut extra, section)?;
+            }
+            DefinitionRecord::SectionProfile { shape, section } => {
+                profile_shape_fields(&mut extra, shape, section)?;
+            }
+            _ => {}
+        }
+        for (key, value) in extra {
+            object.insert(key.into(), value);
+        }
+        listed.push(Json::Object(object));
     }
     Ok(Json::Array(listed))
 }

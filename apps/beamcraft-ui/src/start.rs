@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The start window and the start page, shown when the window is opened without a model.
+//! The model library, shown when the window is opened without a model.
 //!
-//! The start window asks for the environment and for the author: a name and an e-mail address,
-//! saved in the user's settings. The author identity those settings hold is recorded as the actor
-//! of every edit made in the window. "Don't show at start" skips the start window next time.
+//! The library sidebar lets users choose an environment for new models and save a local author
+//! profile. The saved identity is recorded as the actor of edits made in the model window.
 //!
 //! The start page lists the recently opened projects, the projects of a folder, and creates a new
 //! project from a template with the shared new-model form (`NewModelForm` in [`crate::library`]).
@@ -71,8 +70,6 @@ pub struct SettingsView {
     pub profile: Option<Profile>,
     /// The chosen environment id.
     pub environment: Option<String>,
-    /// Skip the start window.
-    pub skip_launcher: bool,
     /// The folder listed under "All models".
     pub models_dir: Option<String>,
 }
@@ -107,7 +104,7 @@ impl EnvironmentView {
     }
 }
 
-/// The note under the start window's environment choice: what an environment holds, with
+/// The note under the library's environment choice: what an environment holds, with
 /// Blank's own contents when Blank is chosen (docs/design/blank-environment.md).
 fn environment_note(chosen: Option<&str>) -> &'static str {
     if chosen == Some("blank") {
@@ -209,7 +206,6 @@ fn settings_view(dir: &Path, settings: &Settings) -> SettingsView {
             email: p.email.clone(),
         }),
         environment: settings.environment.clone(),
-        skip_launcher: settings.skip_launcher,
         models_dir: settings
             .models_dir
             .as_ref()
@@ -289,23 +285,23 @@ fn load_state(
     ))
 }
 
-/// Saves the start window's choices and returns the settings and the recent projects.
-fn save_choices(
+/// Updates one sidebar setting without rewriting other choices.
+fn save_setting(
     config_dir: Option<&Path>,
-    name: &str,
-    email: &str,
-    environment: &str,
-    skip_launcher: bool,
-) -> Result<(SettingsView, Vec<ProjectView>), ToolError> {
+    change: SettingChange,
+) -> Result<SettingsView, ToolError> {
     let dir = resolve_config_dir(config_dir)?;
     let settings = Settings::update(&dir, |settings| {
-        settings.set_profile(name, email, fresh_actor)?;
-        settings.environment = Some(environment.to_owned());
-        settings.skip_launcher = skip_launcher;
+        match change {
+            SettingChange::Account { name, email } => {
+                settings.set_profile(&name, &email, fresh_actor)?;
+            }
+            SettingChange::Environment(id) => settings.environment = Some(id),
+        }
         Ok(true)
     })
     .map_err(settings_failure)?;
-    Ok((settings_view(&dir, &settings), recent_views(&dir)?))
+    Ok(settings_view(&dir, &settings))
 }
 
 /// Remembers `folder` as the models folder, then lists the projects in it. The folder is saved
@@ -435,10 +431,15 @@ pub enum Tab {
 
 enum Reply {
     Loaded(Result<(SettingsView, Vec<EnvironmentView>, Vec<ProjectView>), ToolError>),
-    Saved(Result<(SettingsView, Vec<ProjectView>), ToolError>),
+    Saved(Result<SettingsView, ToolError>),
     Listed(Result<Vec<ProjectView>, ToolError>),
     Opened(Result<ProjectView, ToolError>),
     Recent(Result<Vec<ProjectView>, ToolError>),
+}
+
+enum SettingChange {
+    Account { name: String, email: String },
+    Environment(String),
 }
 
 /// What the preview worker read for a model.
@@ -489,7 +490,7 @@ struct PreviewJob {
     discard: bool,
 }
 
-/// The start window and the start page.
+/// The model library and its sidebar settings.
 pub struct StartPage {
     previews: std::collections::BTreeMap<String, Result<Preview, String>>,
     preview_job: Option<PreviewJob>,
@@ -497,14 +498,13 @@ pub struct StartPage {
     config_dir: Option<PathBuf>,
     stats: Arc<Stats>,
     job: Option<Receiver<Reply>>,
-    launcher: bool,
     loaded: bool,
     settings: SettingsView,
     environments: Vec<EnvironmentView>,
     environment: Option<String>,
     name: String,
     email: String,
-    skip: bool,
+    settings_error: Option<String>,
     tab: Tab,
     recent: Vec<ProjectView>,
     all: Vec<ProjectView>,
@@ -518,7 +518,6 @@ pub struct StartPage {
     selected: Option<usize>,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
-    small_window: Option<bool>,
 }
 
 impl StartPage {
@@ -531,14 +530,13 @@ impl StartPage {
             config_dir,
             stats,
             job: None,
-            launcher: true,
             loaded: false,
             settings: SettingsView::default(),
             environments: Vec::new(),
             environment: None,
             name: String::new(),
             email: String::new(),
-            skip: false,
+            settings_error: None,
             tab: Tab::Recent,
             recent: Vec::new(),
             all: Vec::new(),
@@ -551,7 +549,6 @@ impl StartPage {
             selected: None,
             logo: None,
             logo_tried: false,
-            small_window: None,
         };
         page.load();
         page
@@ -574,7 +571,7 @@ impl StartPage {
 
     /// The chosen environment id.
     pub fn environment(&self) -> Option<&str> {
-        self.settings.environment.as_deref()
+        self.environment.as_deref()
     }
 
     /// Runs `work` on a worker thread; the page polls for its reply.
@@ -598,24 +595,15 @@ impl StartPage {
         self.run_worker(move || Reply::Loaded(load_state(config.as_deref())));
     }
 
-    fn save_launcher(&mut self) {
-        let Some(environment) = self.environment.clone() else {
-            self.note = Some(Err("choose an environment".into()));
-            return;
-        };
+    fn save_sidebar_setting(&mut self, change: SettingChange) {
         let config = self.config_dir.clone();
-        let name = self.name.trim().to_owned();
-        let email = self.email.trim().to_owned();
-        let skip = self.skip;
-        self.run_worker(move || {
-            Reply::Saved(save_choices(
-                config.as_deref(),
-                &name,
-                &email,
-                &environment,
-                skip,
-            ))
-        });
+        self.settings_error = None;
+        self.run_worker(move || Reply::Saved(save_setting(config.as_deref(), change)));
+        if self.job.is_none()
+            && let Some(Err(error)) = self.note.take()
+        {
+            self.settings_error = Some(error);
+        }
     }
 
     fn list_folder(&mut self) {
@@ -676,7 +664,6 @@ impl StartPage {
             self.name.clone_from(&profile.name);
             self.email.clone_from(&profile.email);
         }
-        self.skip = settings.skip_launcher;
         if self.folder.is_empty() {
             self.folder = settings.models_dir.clone().unwrap_or_default();
         }
@@ -706,28 +693,35 @@ impl StartPage {
                 self.loaded = true;
                 self.environments = environments;
                 let usable = |id: &str| self.environments.iter().any(|e| e.usable_id() == Some(id));
-                let saved = settings.environment.clone().filter(|id| usable(id));
-                self.environment = saved.clone().or_else(|| {
-                    // The blank environment is the base one and has the sections a first beam
-                    // needs; any other usable environment is only the fallback.
-                    let usable = |wanted: Option<&str>| {
-                        self.environments.iter().find_map(|e| {
-                            e.usable_id()
-                                .filter(|id| wanted.is_none_or(|w| w == *id))
-                                .map(str::to_owned)
-                        })
-                    };
-                    usable(Some("blank")).or_else(|| usable(None))
-                });
-                self.launcher =
-                    !(settings.skip_launcher && settings.profile.is_some() && saved.is_some());
+                self.environment = settings
+                    .environment
+                    .clone()
+                    .filter(|id| usable(id))
+                    .or_else(|| {
+                        // The blank environment is the base one and has the sections a first beam
+                        // needs; any other usable environment is only the fallback.
+                        let usable = |wanted: Option<&str>| {
+                            self.environments.iter().find_map(|e| {
+                                e.usable_id()
+                                    .filter(|id| wanted.is_none_or(|w| w == *id))
+                                    .map(str::to_owned)
+                            })
+                        };
+                        usable(Some("blank")).or_else(|| usable(None))
+                    });
                 self.recent = recent;
                 self.adopt(settings);
             }
-            Reply::Saved(Ok((settings, recent))) => {
-                self.recent = recent;
-                self.adopt(settings);
-                self.launcher = false;
+            Reply::Saved(Ok(settings)) => {
+                if let Some(id) = &settings.environment
+                    && self
+                        .environments
+                        .iter()
+                        .any(|entry| entry.usable_id() == Some(id.as_str()))
+                {
+                    self.environment = Some(id.clone());
+                }
+                self.settings = settings;
             }
             Reply::Listed(Ok(projects)) => {
                 self.note = Some(Ok(format!("{} project(s)", projects.len())));
@@ -735,8 +729,11 @@ impl StartPage {
             }
             Reply::Opened(Ok(project)) => self.opened(project),
             Reply::Recent(Ok(recent)) => self.recent = recent,
-            Reply::Loaded(Err(e)) | Reply::Saved(Err(e)) => self.note = Some(Err(e.to_string())),
-            Reply::Listed(Err(e)) | Reply::Opened(Err(e)) | Reply::Recent(Err(e)) => {
+            Reply::Saved(Err(e)) => self.settings_error = Some(e.to_string()),
+            Reply::Loaded(Err(e))
+            | Reply::Listed(Err(e))
+            | Reply::Opened(Err(e))
+            | Reply::Recent(Err(e)) => {
                 self.note = Some(Err(e.to_string()));
             }
         }
@@ -754,42 +751,11 @@ impl StartPage {
             self.logo_tried = true;
             self.logo = theme::load_logo(ui.ctx(), 192);
         }
-        self.fit_window(ui.ctx());
-        let palette = Palette::current(ui);
-        if !self.loaded || self.launcher {
-            egui::CentralPanel::default()
-                .frame(
-                    egui::Frame::new()
-                        .fill(palette.surface)
-                        .inner_margin(egui::Margin::symmetric(20, 12)),
-                )
-                .show(ui, |ui| {
-                    if self.loaded {
-                        self.launcher_ui(ui, busy);
-                        // The start window is as tall as its content: no empty band below the
-                        // buttons, and room for a note when one appears.
-                        // The panel's own rect fills the window; the cursor is where the
-                        // content ends.
-                        let needed = (ui.cursor().top() + 12.0).ceil();
-                        let current = ui.ctx().content_rect().height();
-                        if (needed - current).abs() > 2.0 && needed > 200.0 {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(
-                                egui::vec2(LAUNCHER_SIZE.x, needed),
-                            ));
-                        }
-                    } else {
-                        self.loading_ui(ui, busy);
-                    }
-                });
-        } else {
-            self.home_ui(ui, busy);
-        }
+        self.home_ui(ui, busy);
         self.open.take()
     }
 
-    /// Returns to the model library without asking for the author again. The recent list is read
-    /// again, so models opened from a model window's menu are listed; a reply still pending is
-    /// never replaced, and the settings and the start window are not loaded again.
+    /// Returns to the library and refreshes Recent so models opened from a model window are listed.
     pub(crate) fn return_to_models(&mut self) {
         self.previews.clear();
         if let Some(job) = &mut self.preview_job {
@@ -798,7 +764,6 @@ impl StartPage {
         self.tab = Tab::Recent;
         self.search.clear();
         self.selected = None;
-        self.small_window = None;
         if self.job.is_none() {
             let config = self.config_dir.clone();
             self.run_worker(move || Reply::Recent(load_recent(config.as_deref())));
@@ -812,10 +777,6 @@ impl StartPage {
 
     pub(crate) fn busy(&self) -> bool {
         self.job.is_some() || self.create.busy()
-    }
-
-    pub(crate) fn resizable(&self) -> bool {
-        self.loaded && !self.launcher
     }
 
     fn poll_preview(&mut self, ctx: &egui::Context) {
@@ -886,32 +847,6 @@ impl StartPage {
         ctx.request_repaint_after(Duration::from_millis(50));
     }
 
-    /// Sizes the window for what it shows: the start window is a small fixed window, the start
-    /// page a large resizable one; each change is sent once and centred on the monitor.
-    fn fit_window(&mut self, ctx: &egui::Context) {
-        let small = !self.loaded || self.launcher;
-        if self.small_window == Some(small) {
-            return;
-        }
-        self.small_window = Some(small);
-        let size = if small {
-            LAUNCHER_SIZE
-        } else {
-            egui::vec2(1280.0, 800.0)
-        };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(!small));
-        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(if small {
-            egui::vec2(LAUNCHER_SIZE.x, 400.0)
-        } else {
-            egui::vec2(1100.0, 680.0)
-        }));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-        if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
-            let at = ((monitor - size) / 2.0).max(egui::Vec2::ZERO);
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(at.to_pos2()));
-        }
-    }
-
     fn note_ui(&self, ui: &mut egui::Ui) {
         let palette = Palette::current(ui);
         match &self.note {
@@ -941,123 +876,103 @@ impl StartPage {
         });
     }
 
-    /// The start window: the environment and the author.
-    fn launcher_ui(&mut self, ui: &mut egui::Ui, busy: bool) {
+    fn sidebar_settings(&mut self, ui: &mut egui::Ui, busy: bool) {
         let palette = Palette::current(ui);
-        ui.vertical_centered(|ui| {
-            theme::logo(ui, self.logo.as_ref(), 64.0);
-            ui.add_space(6.0);
-            ui.label(theme::bold("Welcome to BeamCraft", 26.0));
-            ui.label(
-                egui::RichText::new(
-                    "Pick the settings to work with and tell us who you are. You can change both later.",
-                )
-                .color(palette.muted),
-            );
-        });
-        ui.add_space(14.0);
-        ui.label(theme::bold("Environment", 14.0));
+        let side_text = palette.side_text();
+        let error_color = Palette::of(egui::Theme::Dark).error;
+        ui.label(theme::bold("Account", 14.0).color(side_text));
+        let (name, email) = ui
+            .add_enabled_ui(!busy, |ui| {
+                let name = ui.label(egui::RichText::new("Your name").color(side_text));
+                let name = library::field(ui, &mut self.name, 128).labelled_by(name.id);
+                let email = ui.label(egui::RichText::new("E-mail").color(side_text));
+                let email = library::field(ui, &mut self.email, 254).labelled_by(email.id);
+                (name, email)
+            })
+            .inner;
+        // Enter in a profile field must not also open the selected model.
+        if name.lost_focus() || email.lost_focus() {
+            ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        }
+        let name = self.name.trim();
+        let email = self.email.trim();
+        let changed = self
+            .settings
+            .profile
+            .as_ref()
+            .is_none_or(|profile| profile.name != name || profile.email != email);
+        if theme::button(
+            ui,
+            Kind::Secondary,
+            "Save account",
+            !busy && changed && !name.is_empty() && !email.is_empty(),
+        )
+        .clicked()
+        {
+            self.save_sidebar_setting(SettingChange::Account {
+                name: name.to_owned(),
+                email: email.to_owned(),
+            });
+        }
+
+        ui.add_space(12.0);
+        let title = ui.label(theme::bold("Environment", 14.0).color(side_text));
         let selected = self
             .environments
             .iter()
-            .find(|e| e.usable_id().is_some() && e.usable_id() == self.environment.as_deref())
-            .map_or_else(|| "choose…".to_owned(), EnvironmentView::label);
-        ui.horizontal(|ui| {
-            theme::icon(ui, Icon::Block, 26.0, palette.line);
-            let width = ui.available_width();
+            .find(|entry| entry.usable_id().is_some() && entry.usable_id() == self.environment())
+            .map_or_else(|| "Unavailable".to_owned(), EnvironmentView::label);
+        let width = ui.available_width();
+        let mut choice = self.environment.clone();
+        ui.add_enabled_ui(!busy && self.job.is_none() && choice.is_some(), |ui| {
             egui::ComboBox::from_id_salt("start-environment")
                 .width(width)
                 .height(260.0)
-                // A long environment name is cut off, not allowed to widen the row: an
-                // overflowing combo collapsed the whole welcome layout (issue axisrow/BeamCraft#562).
                 .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    // The open list keeps the combo's width too: a long name ran past the
-                    // window edge, unreadable there. It is cut with an ellipsis and its whole
-                    // text shows on hover (the recheck of issue 562 item 54).
                     ui.set_max_width(width);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                     for env in &self.environments {
                         if let Some(id) = env.usable_id() {
                             let label = env.label();
-                            ui.selectable_value(
-                                &mut self.environment,
-                                Some(id.to_owned()),
-                                label.as_str(),
-                            )
-                            // The hover text wraps within the window: one long line ran
-                            // past its right edge and was cut there too.
-                            .on_hover_ui(|ui| {
-                                ui.set_max_width(width);
-                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                ui.label(label.as_str());
-                            });
+                            ui.selectable_value(&mut choice, Some(id.to_owned()), &label)
+                                .on_hover_ui(|ui| {
+                                    ui.set_max_width(width);
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                                    ui.label(&label);
+                                });
                         }
                     }
-                });
+                })
+                .response
+                .labelled_by(title.id);
         });
-        // The note describes Blank only while Blank is the choice: under another environment
-        // its counts described the wrong one.
+        if choice != self.environment
+            && let Some(id) = choice
+        {
+            self.save_sidebar_setting(SettingChange::Environment(id));
+        }
         ui.label(
-            egui::RichText::new(environment_note(self.environment.as_deref()))
+            egui::RichText::new(environment_note(self.environment()))
                 .small()
-                .color(palette.muted),
+                .color(side_text),
         );
         for env in &self.environments {
             if let Some(reason) = &env.refused {
                 ui.label(
                     egui::RichText::new(format!("An environment was not loaded ({reason})."))
                         .small()
-                        .color(palette.error),
+                        .color(error_color),
                 );
             }
         }
         if self.environments.iter().all(|e| e.usable_id().is_none()) {
-            ui.label(
-                egui::RichText::new("No environment was found: reinstall BeamCraft or add one.")
-                    .color(palette.error),
-            );
+            ui.label(egui::RichText::new("No environment was found.").color(error_color));
         }
-        ui.add_space(6.0);
-        ui.columns(2, |cols| {
-            if let [left, right] = cols {
-                left.label(theme::bold("Your name", 14.0));
-                library::field(left, &mut self.name, 128);
-                right.label(theme::bold("E-mail", 14.0));
-                library::field(right, &mut self.email, 254);
-            }
-        });
-        ui.label(
-            egui::RichText::new(
-                "Shown next to the parts you create or change, so your team knows who edited what. Not a login.",
-            )
-            .small()
-            .color(palette.muted),
-        );
-        ui.add_space(4.0);
-        ui.checkbox(&mut self.skip, "Don't ask again at start");
-        ui.add_space(8.0);
-        let row = egui::vec2(ui.available_width(), 36.0);
-        ui.allocate_ui_with_layout(
-            row,
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                let ready = self.environment.is_some()
-                    && !self.name.trim().is_empty()
-                    && !self.email.trim().is_empty();
-                if theme::button(ui, Kind::Primary, "Continue", ready && !busy).clicked() {
-                    self.save_launcher();
-                }
-                if theme::button(ui, Kind::Secondary, "Quit", !busy).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                if busy {
-                    ui.spinner();
-                }
-            },
-        );
-        self.note_ui(ui);
+        if let Some(error) = &self.settings_error {
+            ui.label(egui::RichText::new(error).small().color(error_color));
+        }
     }
 
     fn home_ui(&mut self, ui: &mut egui::Ui, busy: bool) {
@@ -1076,13 +991,22 @@ impl StartPage {
                     [rect.right_top(), rect.right_bottom()],
                     egui::Stroke::new(1.0, palette.rule),
                 );
-                self.nav_ui(ui, busy);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.nav_ui(ui, busy || !self.loaded);
+                });
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(palette.page))
-            .show(ui, |ui| match self.tab {
-                Tab::Create => self.create_ui(ui, busy),
-                Tab::Recent | Tab::All | Tab::Shared => self.list_ui(ui, busy),
+            .show(ui, |ui| {
+                let busy = busy || self.busy();
+                if !self.loaded {
+                    self.loading_ui(ui, busy);
+                    return;
+                }
+                match self.tab {
+                    Tab::Create => self.create_ui(ui, busy),
+                    Tab::Recent | Tab::All | Tab::Shared => self.list_ui(ui, busy),
+                }
             });
     }
 
@@ -1112,75 +1036,16 @@ impl StartPage {
                 }
             }
         }
-        ui.add_space((ui.available_height() - PROFILE_CARD_HEIGHT).max(0.0));
-        ui.painter().hline(
-            ui.max_rect().x_range(),
-            ui.cursor().top(),
-            egui::Stroke::new(1.0, palette.side_grid),
-        );
-        ui.add_space(18.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Environment")
-                    .size(11.0)
-                    .color(palette.side_text()),
+        if self.loaded {
+            ui.add_space(16.0);
+            ui.painter().hline(
+                ui.max_rect().x_range(),
+                ui.cursor().top(),
+                egui::Stroke::new(1.0, palette.side_grid),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(self.environment().unwrap_or("none"))
-                            .size(11.0)
-                            .color(palette.side_text()),
-                    )
-                    .truncate(),
-                );
-            });
-        });
-        ui.add_space(16.0);
-        ui.horizontal(|ui| {
-            let (avatar, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-            ui.painter()
-                .circle_filled(avatar.center(), 14.0, palette.side_grid);
-            let name = self
-                .settings
-                .profile
-                .as_ref()
-                .map_or("Author", |profile| profile.name.as_str());
-            ui.painter().text(
-                avatar.center(),
-                egui::Align2::CENTER_CENTER,
-                name.chars().next().unwrap_or('A'),
-                egui::FontId::proportional(11.0),
-                palette.side_text(),
-            );
-            ui.vertical(|ui| {
-                // A long name stays on one line: a wrapped one grows the card past the
-                // window bottom and pushes the way back to the start window out of view
-                // (issue axisrow/BeamCraft#562).
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(name)
-                            .size(12.0)
-                            .color(palette.side_text()),
-                    )
-                    .truncate(),
-                );
-                if ui
-                    .add_enabled(
-                        !busy,
-                        egui::Button::new(
-                            egui::RichText::new("Local workspace · Settings")
-                                .size(10.0)
-                                .color(palette.side_text()),
-                        )
-                        .frame(false),
-                    )
-                    .clicked()
-                {
-                    self.launcher = true;
-                }
-            });
-        });
+            ui.add_space(10.0);
+            self.sidebar_settings(ui, busy || self.busy());
+        }
     }
 
     fn header(&mut self, ui: &mut egui::Ui, title: &str, back: bool, busy: bool) {
@@ -1746,10 +1611,6 @@ impl StartPage {
     }
 }
 
-/// The size of the start window.
-pub const LAUNCHER_SIZE: egui::Vec2 = egui::vec2(460.0, 520.0);
-/// Height of the profile card at the bottom of the start page's side panel.
-const PROFILE_CARD_HEIGHT: f32 = 108.0;
 /// Height of one row of the model list; tall enough for a model preview.
 const ROW_HEIGHT: f32 = 82.0;
 
@@ -1886,81 +1747,66 @@ mod tests {
     }
 
     #[test]
-    fn welcome_content_fits_compact_window_with_small_bottom_padding() {
+    fn first_launch_shows_the_library_and_sidebar_without_resizing() {
         let ctx = egui::Context::default();
         assert!(crate::app::inter(&ctx));
         theme::install(&ctx);
-        let mut page = StartPage::new(
-            PathBuf::from("missing-test-cli"),
-            scratch_config("page"),
-            Arc::new(Stats::default()),
+        let mut page = library_page("first-launch");
+        let (tx, rx) = std::sync::mpsc::channel();
+        page.job = Some(rx);
+        page.loaded = false;
+        tx.send(Reply::Loaded(Ok((
+            SettingsView::default(),
+            vec![EnvironmentView {
+                id: Some("blank".into()),
+                title: Some("Blank".into()),
+                origin: "builtin".into(),
+                shadowed: false,
+                refused: None,
+            }],
+            page.recent.clone(),
+        ))))
+        .unwrap();
+
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                assert!(page.ui(ui).is_none());
+            },
         );
-        page.job = None;
-        page.loaded = true;
-        page.name = "UI Test".into();
-        page.email = "ui@example.test".into();
-        page.environment = Some("blank".into());
-        page.environments = vec![EnvironmentView {
-            id: Some("blank".into()),
-            title: Some("Blank".into()),
-            origin: "builtin".into(),
-            shadowed: false,
-            refused: None,
-        }];
-        for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
-            ctx.set_theme(preference);
-            let output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, LAUNCHER_SIZE)),
-                    ..Default::default()
-                },
-                |ui| {
-                    egui::Panel::top("test-title")
-                        .exact_size(36.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("BeamCraft");
-                            });
-                        });
-                    page.ui(ui);
-                },
+        for label in [
+            "Your models",
+            "Bridge",
+            "Account",
+            "Environment",
+            "Blank (blank)",
+        ] {
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text) if text.galley.text() == label
+                )),
+                "{label}"
             );
-            let mut bottom = 0.0_f32;
-            let mut buttons = 0;
-            for shape in &output.shapes {
-                if let egui::Shape::Text(text) = &shape.shape {
-                    assert!(!matches!(text.galley.text(), "Structural modeling" | "□"));
-                    if matches!(text.galley.text(), "Continue" | "Quit") {
-                        bottom = bottom.max(text.pos.y + text.galley.size().y);
-                        buttons += 1;
-                        assert!(text.pos.x >= 20.0);
-                        assert!(text.pos.x + text.galley.size().x <= LAUNCHER_SIZE.x - 20.0);
-                    }
-                }
-            }
-            let size = output
+        }
+        assert!(
+            !output
                 .viewport_output
                 .values()
                 .flat_map(|viewport| &viewport.commands)
-                .filter_map(|command| {
-                    if let egui::ViewportCommand::InnerSize(size) = command {
-                        Some(*size)
-                    } else {
-                        None
-                    }
-                })
-                .next_back();
-            output.drop_without_applying_deltas();
-            assert_eq!(buttons, 2);
-            if let Some(size) = size {
-                assert!(size.y <= 540.0, "compact welcome is too tall: {size:?}");
-                assert!(
-                    size.y - bottom <= 40.0,
-                    "excessive bottom padding: {}",
-                    size.y - bottom
-                );
-            }
-        }
+                .any(|command| matches!(
+                    command,
+                    egui::ViewportCommand::InnerSize(_) | egui::ViewportCommand::Resizable(_)
+                ))
+        );
+        output.drop_without_applying_deltas();
+        assert!(page.actor_id().is_none());
+        assert_eq!(page.environment(), Some("blank"));
     }
 
     #[test]
@@ -1978,7 +1824,6 @@ mod tests {
         );
         page.job = None;
         page.loaded = true;
-        page.launcher = false;
         page.recent = vec![ProjectView {
             name: "Synthetic engineering model".into(),
             path: "synthetic-model".into(),
@@ -2058,7 +1903,6 @@ mod tests {
         );
         page.job = None;
         page.loaded = true;
-        page.launcher = false;
         page.folder = "/m".into();
         page.recent = vec![ProjectView {
             name: "Bridge".into(),
@@ -2184,111 +2028,147 @@ mod tests {
     }
 
     #[test]
-    fn a_long_author_name_stays_on_one_line_in_the_side_panel() {
+    fn account_and_environment_controls_fit_the_sidebar_in_both_themes() {
         let ctx = egui::Context::default();
         assert!(crate::app::inter(&ctx));
         theme::install(&ctx);
-        let long_name =
-            "Jean-Baptiste Emmanuel Maximilien de la Croix-Aumont du Boisguillem".to_owned();
-        let mut page = library_page("long-name");
-        page.settings.profile = Some(Profile {
-            actor_id: "id".into(),
-            name: long_name.clone(),
-            email: "a@b.cl".into(),
-        });
-        for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
-            ctx.set_theme(preference);
-            let texts = library_frame(&mut page, &ctx, (1280.0, 800.0));
-            let drawn = texts
-                .iter()
-                .find(|(text, _)| *text == long_name)
-                .map(|(_, bounds)| *bounds)
-                .unwrap_or_else(|| panic!("the author name is not drawn"));
-            assert!(
-                drawn.height() < 24.0,
-                "the author name wraps ({} rows) and pushes the card past the window bottom",
-                drawn.height()
-            );
-            let settings = texts
-                .iter()
-                .find(|(text, _)| text == "Local workspace · Settings")
-                .map(|(_, bounds)| *bounds)
-                .unwrap_or_else(|| panic!("the way back to the start window is not drawn"));
-            assert!(
-                settings.bottom() <= 800.0 + 0.5 && settings.right() <= 1280.0 + 0.5,
-                "Local workspace · Settings is clipped: {settings:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_launcher_keeps_a_long_environment_name_inside_the_window() {
-        let ctx = egui::Context::default();
-        assert!(crate::app::inter(&ctx));
-        theme::install(&ctx);
-        let long_title = "Trondhjem Bridgeworks and Steel Construction Showroom Environment Pack";
-        let mut page = StartPage::new(
-            PathBuf::from("missing-test-cli"),
-            scratch_config("launcher-long"),
-            Arc::new(Stats::default()),
-        );
-        page.job = None;
-        page.loaded = true;
+        let mut page = library_page("sidebar");
+        page.name = "Jean-Baptiste Emmanuel Maximilien de la Croix-Aumont du Boisguillem".into();
+        page.email = "author@example.test".into();
         page.environment = Some("showroom".into());
         page.environments = vec![EnvironmentView {
             id: Some("showroom".into()),
-            title: Some(long_title.into()),
+            title: Some(
+                "Trondhjem Bridgeworks and Steel Construction Showroom Environment Pack".into(),
+            ),
             origin: "user".into(),
             shadowed: false,
             refused: None,
         }];
         for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
             ctx.set_theme(preference);
-            let output = ctx.run_ui(
+            let texts = library_frame(&mut page, &ctx, (1100.0, 680.0));
+            for label in [
+                "Account",
+                "Your name",
+                "E-mail",
+                "Save account",
+                "Environment",
+            ] {
+                let (_, bounds) = texts.iter().find(|(text, _)| text == label).unwrap();
+                assert!(
+                    bounds.right() <= 216.0 && bounds.bottom() <= 680.0,
+                    "{label}: {bounds:?}"
+                );
+            }
+            let (_, bounds) = texts
+                .iter()
+                .find(|(text, _)| text.starts_with("Trondhjem"))
+                .unwrap();
+            assert!(bounds.right() <= 216.0, "{bounds:?}");
+        }
+    }
+
+    #[test]
+    fn sidebar_saves_account_and_environment_independently() {
+        let config = scratch_config("sidebar-save").unwrap();
+        let mut page = library_page("sidebar-save");
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        page.environments = ["blank", "local"]
+            .into_iter()
+            .map(|id| EnvironmentView {
+                id: Some(id.into()),
+                title: None,
+                origin: "user".into(),
+                shadowed: false,
+                refused: None,
+            })
+            .collect();
+        page.environment = Some("blank".into());
+        page.name = "Draft name".into();
+
+        let draw = |page: &mut StartPage, events| {
+            ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, LAUNCHER_SIZE)),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
                     ..Default::default()
                 },
                 |ui| {
-                    // The real window draws the appearance bar before the page.
-                    egui::Panel::top("test-title")
-                        .exact_size(36.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("BeamCraft");
-                            });
-                        });
-                    page.ui(ui);
+                    assert!(page.ui(ui).is_none());
                 },
-            );
-            let mut texts = Vec::new();
-            for shape in &output.shapes {
-                if let egui::Shape::Text(text) = &shape.shape {
-                    texts.push((
-                        text.galley.text().to_owned(),
-                        text.galley.rect.translate(text.pos.to_vec2()),
-                    ));
-                }
-            }
-            output.drop_without_applying_deltas();
-            let outside: Vec<String> = texts
+            )
+        };
+        let click = |page: &mut StartPage, label: &str| {
+            let output = draw(page, vec![]);
+            let at = output
+                .shapes
                 .iter()
-                .filter(|(_, bounds)| {
-                    bounds.right() > LAUNCHER_SIZE.x + 0.5
-                        || bounds.bottom() > LAUNCHER_SIZE.y + 0.5
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                    }
+                    _ => None,
                 })
-                .map(|(text, bounds)| format!("{text:?} {bounds:?}"))
-                .collect();
-            assert!(
-                outside.is_empty(),
-                "the welcome window overflows: {}",
-                outside.join("; ")
-            );
-            let has = |wanted: &str| texts.iter().any(|(text, _)| text == wanted);
-            for wanted in ["E-mail", "Quit", "Continue", "Your name"] {
-                assert!(has(wanted), "{wanted} disappeared from the welcome window");
+                .unwrap_or_else(|| panic!("missing control {label}"));
+            output.drop_without_applying_deltas();
+            for pressed in [true, false] {
+                draw(
+                    page,
+                    vec![
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton {
+                            pos: at,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                )
+                .drop_without_applying_deltas();
             }
+        };
+        let wait = |page: &mut StartPage| {
+            for _ in 0..250 {
+                draw(page, vec![]).drop_without_applying_deltas();
+                if page.job.is_none() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(page.job.is_none(), "the worker must finish");
+            assert!(page.settings_error.is_none(), "{:?}", page.settings_error);
+        };
+
+        click(&mut page, "blank");
+        click(&mut page, "local");
+        wait(&mut page);
+        assert_eq!(page.environment(), Some("local"));
+        assert_eq!(page.name, "Draft name");
+        assert!(page.actor_id().is_none());
+
+        for name in ["Ana", "Ana Silva"] {
+            let actor = page.actor_id();
+            page.name = name.into();
+            page.email = "ana@example.test".into();
+            click(&mut page, "Save account");
+            wait(&mut page);
+            assert_eq!(page.author_name().as_deref(), Some(name));
+            assert!(page.actor_id().is_some());
+            if actor.is_some() {
+                assert_eq!(page.actor_id(), actor);
+            }
+            assert_eq!(page.environment(), Some("local"));
         }
+        let settings = Settings::load(&config).unwrap();
+        assert_eq!(settings.environment.as_deref(), Some("local"));
+        assert_eq!(settings.profile.unwrap().name, "Ana Silva");
+        std::fs::remove_dir_all(config).unwrap();
     }
 
     #[test]
@@ -2453,7 +2333,7 @@ mod tests {
         let profile = view.profile.unwrap();
         assert_eq!(profile.name, "Ana");
         assert_eq!(profile.actor_id, "0199e7a0-0000-7000-8000-000000000001");
-        assert!(view.skip_launcher && view.models_dir.is_none());
+        assert!(view.models_dir.is_none());
         assert_eq!(view.config_dir, Path::new("/c").to_string_lossy());
     }
 

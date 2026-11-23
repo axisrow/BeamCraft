@@ -46,13 +46,14 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
 }
 
-const SETTINGS_OPTIONS: [&str; 6] = [
+const SETTINGS_OPTIONS: [&str; 7] = [
     "--plate-series",
     "--beam-series",
     "--column-series",
     "--assembly-series",
     "--tolerance",
     "--compare-name",
+    "--compare-holes",
 ];
 const PAGING_OPTIONS: [&str; 2] = ["--offset", "--limit"];
 
@@ -90,6 +91,11 @@ fn settings_of(options: &BTreeMap<&str, &str>) -> Run<Settings> {
             None | Some(&"false") => false,
             Some(&"true") => true,
             Some(_) => return Err(invalid("--compare-name is true or false")),
+        },
+        compare_holes: match options.get("--compare-holes") {
+            None | Some(&"true") => true,
+            Some(&"false") => false,
+            Some(_) => return Err(invalid("--compare-holes is true or false")),
         },
     })
 }
@@ -321,6 +327,7 @@ fn approval_json(report: &Report) -> Json {
                         Json::number(s.tolerance_mm).unwrap_or(Json::Null),
                     ),
                     ("compare_name", Json::Bool(s.compare_name)),
+                    ("compare_holes", Json::Bool(s.compare_holes)),
                 ])
             }),
         ),

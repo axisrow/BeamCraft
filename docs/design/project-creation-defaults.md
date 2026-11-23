@@ -16,6 +16,17 @@ This remains safe if another process takes the suggested name before Create is p
 Search is bounded to 10,000 candidates. Explicit CLI names retain their ordinary duplicate-name
 refusal unless the caller requests the unique-name option. No existing file is overwritten.
 
+Use `beamcraft create-project --here` to make the empty current directory the model root (#860).
+The project takes its name from the directory. Use `--here` on its own for location and naming,
+or supply `--parent` and `--name` for a new child directory. Any existing entry, including a
+hidden file or directory, makes `--here` refuse creation. Pass the absolute path from
+`project.path` in the JSON reply as `--store` on subsequent commands.
+
+In-place creation stages the first revision and the chosen environment before installing the
+store. A staging directory reserves creation across processes. A failed command rolls back its
+own entries and preserves the current directory. Abrupt termination can leave a staging
+directory or partially installed entries. A later call refuses a directory with those entries.
+
 Reading the recent list (`recent_projects`) removes confirmed missing model folders from saved settings. An unreadable model
 is kept, and unchanged listings do not rewrite settings. Other profile settings are preserved.
 

@@ -1943,6 +1943,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--assembly-series", "PREFIX:START"),
             opt("--tolerance", "MM"),
             opt("--compare-name", "true|false"),
+            opt("--compare-holes", "true|false"),
             opt("--previous", "SHA256"),
             opt("--offset", "N"),
             opt("--limit", "N"),
@@ -1963,6 +1964,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--assembly-series", "PREFIX:START"),
             opt("--tolerance", "MM"),
             opt("--compare-name", "true|false"),
+            opt("--compare-holes", "true|false"),
         ],
     ),
     entry(
@@ -2849,9 +2851,10 @@ pub const COMMANDS: &[Command] = &[
         Access::Write,
         Ids::Common,
         &[
-            req("--parent", "DIR"),
-            req("--name", "TEXT"),
+            opt("--parent", "DIR"),
+            opt("--name", "TEXT"),
             opt("--unique-name", "true|false"),
+            opt("--here", ""),
             opt("--config-dir", "DIR"),
             opt("--environment", "ID"),
             opt("--code", "CODE"),

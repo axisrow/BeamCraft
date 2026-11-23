@@ -59,6 +59,7 @@ pub mod registry;
 pub mod scope;
 pub mod source_file;
 pub mod store_schema;
+pub mod template;
 pub mod weld;
 pub mod workspace;
 

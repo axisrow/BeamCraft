@@ -172,7 +172,15 @@ fn the_india_environment_lists_and_carries_its_material_library() {
             designation,
         ]));
     }
-    let replies = f.script(&store, &lines);
+    // The enriched profile listing (the UI profile catalogue fields ride every entry since
+    // the #888 UI shell) puts a full listing near 90 KB and the whole-library listing near
+    // the envelope ceiling, so the whole script no longer fits one run-script summary
+    // envelope (1 MiB): the library listing, the store round and the refusal round ride
+    // separate invocations.
+    let replies = f.script(&store, &lines[0..1]);
+    let replies_b = f.script(&store, &lines[1..4]);
+    let replies_c = f.script(&store, &lines[4..7]);
+    let replies_d = f.script(&store, &lines[7..]);
     let listed = &replies[0];
     assert_eq!(
         at(listed, &["environment", "material_libraries"])
@@ -180,45 +188,45 @@ fn the_india_environment_lists_and_carries_its_material_library() {
             .unwrap(),
         [Json::text("materials-is-2062.usda")]
     );
-    let available = list(&replies[1], "environment_materials");
+    let available = list(&replies_b[0], "environment_materials");
     assert_eq!(available.len(), 28);
     assert_eq!(text(&available[0], "grade"), "E250A");
     assert_eq!(text(&available[27], "grade"), "E650BR");
-    let beam = &replies[2];
+    let beam = &replies_b[1];
     let mass = at(beam, &["member", "quantities", "mass"]);
     assert_eq!(text(mass, "status"), "current");
     let kg = at(mass, &["kg"]).float().unwrap();
     assert!((kg - 48.513).abs() < 0.01, "mass {kg} kg");
-    let pinned = list(&replies[3], "definitions");
+    let pinned = list(&replies_b[2], "definitions");
     assert_eq!(pinned.len(), 1);
     assert_eq!(text(&pinned[0], "kind"), "material");
     assert_eq!(text(&pinned[0], "grade"), "E350C");
     assert_eq!(text(&pinned[0], "standard"), "IS 2062-2011");
     assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
-    let remaining = list(&replies[4], "environment_materials");
+    let remaining = list(&replies_c[0], "environment_materials");
     assert_eq!(remaining.len(), 27);
     assert!(
         remaining.iter().all(|g| text(g, "grade") != "E350C"),
         "E350C is spent"
     );
-    let column = &replies[5];
+    let column = &replies_c[1];
     let steel_mass = at(column, &["member", "quantities", "mass"]);
     let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
     assert!(
         (steel_kg - 1030.0 * 4000.0 * 7850.0 / 1.0e9).abs() < 0.01,
         "Steel mass {steel_kg} kg"
     );
-    let pinned_steel = list(&replies[6], "definitions");
+    let pinned_steel = list(&replies_c[2], "definitions");
     assert_eq!(pinned_steel.len(), 1);
     assert!(
         at(&pinned_steel[0], &["grade"]).string().is_err(),
         "the neutral Steel declares no grade"
     );
 
-    // Replies 7..19 carry the refusals in the authored order.
+    // The third script carries the refusals in the authored order.
     for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            text(&replies[7 + index], "code"),
+            text(&replies_d[index], "code"),
             "NOT_FOUND",
             "{designation}"
         );

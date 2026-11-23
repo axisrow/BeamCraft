@@ -88,14 +88,20 @@ fn main() -> std::process::ExitCode {
     // words they own (commands, session, batch words, view export, export) get help too.
     if let Some(word) = args.first().and_then(|w| w.to_str())
         && let Some(command) = registry::COMMANDS.iter().find(|entry| entry.name == word)
-        && args
-            .get(1..)
-            .unwrap_or_default()
-            .iter()
-            .enumerate()
-            .any(|(position, arg)| {
-                position % 2 == 0 && arg.to_str().is_some_and(|s| s == "--help" || s == "-h")
-            })
+        && {
+            let mut options = args.iter().skip(1);
+            let mut help = false;
+            while let Some(key) = options.next() {
+                if key == "--help" || key == "-h" {
+                    help = true;
+                    break;
+                }
+                if command.name != "create-project" || key != "--here" {
+                    options.next();
+                }
+            }
+            help
+        }
     {
         println!("{}", help::for_family(command.family));
         return std::process::ExitCode::SUCCESS;

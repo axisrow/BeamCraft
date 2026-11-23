@@ -11,7 +11,7 @@ use beamcraft_engine::views::{
     AxisPick, ModelView, PartSide, Projection, ViewBook, WorkArea, validate_folder,
 };
 use beamcraft_engine::work_plane::WorkPlane;
-use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
+use beamcraft_engine::{ElementKind, KindFilter, RenderMode, Representation};
 use beamcraft_json::Limits;
 use beamcraft_model::id::Uuid7;
 use std::collections::{BTreeMap, BTreeSet};
@@ -683,6 +683,8 @@ pub struct Form {
     pub rotation: [String; 2],
     /// Render mode.
     pub mode: RenderMode,
+    /// Geometry representation level (U12: `Full` exact or `Simplified` for faster rendering).
+    pub representation: Representation,
     /// Grid guides shown.
     pub grids: bool,
     /// Hidden kinds.
@@ -727,6 +729,7 @@ impl Default for Form {
             depth: ["1000".into(), "1000".into()],
             rotation: ["0".into(), "0".into()],
             mode: RenderMode::Shaded,
+            representation: Representation::Full,
             grids: true,
             hidden: KindFilter::SHOW_ALL,
             area: None,
@@ -778,6 +781,7 @@ impl Form {
         }
         self.rotation = view.rotation_rad.map(degree_text);
         self.mode = view.render_mode;
+        self.representation = view.representation;
         self.grids = view.grids_visible;
         self.hidden = view.hidden_kinds;
         self.area = view.work_area;
@@ -797,6 +801,7 @@ impl Form {
             self.depth = [format!("{above}"), format!("{below}")];
         }
         self.grids = preset.grids_visible;
+        self.representation = preset.representation;
         self.hidden = preset.hidden_kinds;
         self.overrides.clone_from(&preset.overrides);
     }
@@ -837,6 +842,7 @@ impl Form {
             number(&self.rotation[1], "the rotation about X")?.to_radians(),
         ];
         view.render_mode = self.mode;
+        view.representation = self.representation;
         view.grids_visible = self.grids;
         view.hidden_kinds = self.hidden;
         view.work_area = self.area;
@@ -1221,6 +1227,8 @@ pub struct Views {
     pub job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     /// The hidden kinds the loaded scene was built with.
     pub shown: KindFilter,
+    /// The geometry representation level the loaded scene was built with.
+    pub shown_representation: Representation,
     /// Whether the browser shows previews.
     pub previews_on: bool,
     /// The rendered previews: the key they were drawn for (snapshot and definition) and the
@@ -1282,6 +1290,12 @@ impl Views {
     pub fn active_hidden(&self) -> KindFilter {
         self.active_view()
             .map_or(KindFilter::SHOW_ALL, |v| v.hidden_kinds)
+    }
+
+    /// The geometry representation level of the active view.
+    pub fn active_representation(&self) -> Representation {
+        self.active_view()
+            .map_or(Representation::Full, |v| v.representation)
     }
 
     /// The tint the active view draws with.
