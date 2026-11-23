@@ -3,13 +3,13 @@
 // The shipped USA environment lists the ASTM material grades
 // (`materials-astm.usda`): the grade designations of ASTM A36/A36M-19, A992/A992M-22 and
 // A572/A572M-21, re-entered by hand as our own data; the density is the metric 7850 kg/m3 of
-// the shipped profile packs. The environment carries no profile libraries (the USA profile
-// pack waits on the #649 provenance audit), so the mass check rides a plate, whose mass is
-// exact geometry. Provenance and licence are in `ATTRIBUTION.md` and in the library's own
-// metadata.
+// the shipped profile packs. The mass check rides a plate, whose mass is exact geometry, and
+// the assertions name the material library alone: the environment's profile library is the
+// subject of `usa_environment.rs`. Provenance and licence are in `ATTRIBUTION.md` and in the
+// library's own metadata.
 
 //! The material library of the `usa` environment end to end through the real `beamcraft`
-//! binary (#648): the environment lists its material library and nothing else, a project
+//! binary (#648): the environment lists its material library, a project
 //! created with the environment carries the library in its own copy, a grade resolves through
 //! it without any option, the mass math uses the catalogue entry's density, and a grade the
 //! set does not publish — including the compact industry shorthands — stays `NOT_FOUND`.
@@ -100,10 +100,10 @@ fn the_usa_environment_lists_and_carries_its_material_library() {
     // offered-grade reads, the two plates whose mass math uses the catalogue density, and
     // the refusals in their authored order.
     let mut lines = vec![
-        // The environment listing names the material library and no other library: the USA
-        // profile pack waits on the #649 provenance audit, the grades are the whole
-        // environment.
-        Scripted::ok(&["list-library", "--environment", ENVIRONMENT]),
+        // The environment listing names the material library; the material assertions read
+        // that list alone (the profile library beside it is `usa_environment.rs`). One entry
+        // is asked for: the 285 profile rows would fill the script's reply budget.
+        Scripted::ok(&["list-library", "--environment", ENVIRONMENT, "--limit", "1"]),
         // Every shipped grade is listed for pickers until the model defines it: the single
         // A36, the five A572 grades and A992, first and last in the loader's designation
         // order.
@@ -129,8 +129,10 @@ fn the_usa_environment_lists_and_carries_its_material_library() {
         // The pinned definition is the catalogue entry itself: the declared grade, standard
         // and density ride into the model, which never needs the library file again.
         Scripted::ok(&["definitions", "--store", &store, "--name", "A36"]),
-        // The spent grade is no longer offered to pickers; the other six still are.
-        Scripted::ok(&["definitions", "--store", &store]),
+        // The spent grade is no longer offered to pickers; the other six still are. That
+        // listing is read in its own process after the script: a project from this
+        // environment offers 285 profiles beside the grades, so two full listings would fill
+        // the script's reply budget.
         // The seeded constants stay the neutral fallback: Steel still answers by name.
         Scripted::ok(&[
             "create-plate",
@@ -202,27 +204,28 @@ fn the_usa_environment_lists_and_carries_its_material_library() {
     assert_eq!(text(&pinned[0], "grade"), "A36");
     assert_eq!(text(&pinned[0], "standard"), "ASTM A36/A36M-19");
     assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
-    let remaining = list(&replies[4], "environment_materials");
+    let offered = f.ok(&["definitions", "--store", &store]);
+    let remaining = list(&offered, "environment_materials");
     assert_eq!(remaining.len(), 6);
     assert!(
         remaining.iter().all(|g| text(g, "grade") != "A36"),
         "A36 is spent"
     );
-    let steel_plate = &replies[5];
+    let steel_plate = &replies[4];
     let steel_mass = at(steel_plate, &["plate", "quantities", "mass"]);
     let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
     assert!((steel_kg - 47.1).abs() < 0.001, "Steel mass {steel_kg} kg");
-    let pinned_steel = list(&replies[6], "definitions");
+    let pinned_steel = list(&replies[5], "definitions");
     assert_eq!(pinned_steel.len(), 1);
     assert!(
         at(&pinned_steel[0], &["grade"]).string().is_err(),
         "the neutral Steel declares no grade"
     );
 
-    // Replies 7..14 carry the refusals in the authored order.
+    // Replies 6..13 carry the refusals in the authored order.
     for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            text(&replies[7 + index], "code"),
+            text(&replies[6 + index], "code"),
             "NOT_FOUND",
             "{designation}"
         );

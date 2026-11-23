@@ -2979,10 +2979,15 @@ mod tests {
             "/../../environments/usa/environment.usda"
         );
         let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.libraries, ["profiles-astm-a6-w-hp.usda"]);
         assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
-        // The environment carries no profile or fastener libraries: the USA profile pack waits
-        // on the #649 provenance audit, so the material listing is the whole environment.
-        assert_eq!(environment.sources.len(), 0);
+        // The environment carries its profile library beside its material library and no
+        // fastener library yet (the USA fastener slice is still open).
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(
+            environment.sources[0].library.info.id,
+            "usa-astm-a6-w-hp-profiles"
+        );
         assert_eq!(environment.fastener_sources.len(), 0);
         assert_eq!(environment.material_sources.len(), 1);
         let materials = &environment.material_sources[0];
@@ -7038,6 +7043,218 @@ mod tests {
         let chain = project_library_chain(&plain.path, Some(&config)).unwrap();
         assert!(chain.environment_lost.is_none(), "{chain:?}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shipped_usa_w_and_hp_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/profiles-astm-a6-w-hp.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "usa-astm-a6-w-hp-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 285);
+        // The thirteen shapes the Nucor-Yamato catalog does not roll have no printed radius
+        // and carry a sharp corner; every other row carries one of the catalog's radii.
+        let sharp = [
+            "W40X331", "W36X800", "W12X14", "W10X19", "W10X17", "W10X15", "W10X12", "W8X15",
+            "W8X13", "W8X10", "W5X19", "W5X16", "W4X13",
+        ];
+        let catalog_radii = [8.0, 8.5, 10.0, 13.0, 15.0, 19.0, 20.0, 30.0];
+        let mut designations = Vec::new();
+        let mut warned = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // W and HP shapes have parallel flanges: the i_shape family.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("ASTM A6/A6M-05a"),
+                "{}",
+                entry.designation
+            );
+            let radius = parametric.values()[4];
+            if sharp.contains(&entry.designation.as_str()) {
+                assert_eq!(radius, 0.0, "{}", entry.designation);
+            } else {
+                assert!(
+                    catalog_radii.contains(&radius),
+                    "{}: radius {radius}",
+                    entry.designation
+                );
+            }
+            // Unlike the other packs, this one expects the D3 warning: the standard prints
+            // no radius, and its SI column rounds the printed dimensions to the millimetre
+            // and the tenth, so the closed-form area of a row sits up to 4.4 percent from
+            // the declared area even with the catalog radius (owner decision of 2026-10-18:
+            // a warning, never a refusal). The bound is the typo detector: 150 rows warn,
+            // none beyond 5 percent. The nominal SI mass of the designation follows the
+            // area at 7850 kg/m3 within 2.2 percent (worst W14X38, whose nominal 58 kg/m
+            // rounds up from the 56.7 its area gives).
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.022,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            if let Some(warning) = entry.record.declared_area_warning() {
+                warned += 1;
+                assert_eq!(warning.declared_mm2, area, "{}", entry.designation);
+                assert!(
+                    warning.relative_difference < 0.05,
+                    "{}: declared area {area} mm2 is {} off the outline",
+                    entry.designation,
+                    warning.relative_difference
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        assert_eq!(warned, 150, "rows carrying the declared-area warning");
+        // Spot checks against the standard's printed SI column and the catalog's radius:
+        // designation, [h, b, tw, tf, r], area mm2, nominal mass kg/m.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("W44X335", [1118.0, 405.0, 26.0, 45.0, 30.0], 63500.0, 499.0);
+        // The W 36 X 800 designation cell prints its area before its weight in both public
+        // copies (`W36 X 236.4800`); the row is read from its metric designation W920 X 1191.
+        spot(
+            "W36X800",
+            [1081.0, 457.0, 60.5, 109.0, 0.0],
+            152500.0,
+            1191.0,
+        );
+        spot("W24X68", [603.0, 228.0, 10.5, 14.9, 30.0], 13000.0, 101.0);
+        spot("W12X40", [303.0, 203.0, 7.5, 13.1, 19.0], 7610.0, 60.0);
+        spot("W6X8.5", [148.0, 100.0, 4.3, 4.9, 8.0], 1630.0, 13.0);
+        spot("W4X13", [106.0, 103.0, 7.1, 8.8, 0.0], 2470.0, 19.3);
+        spot("HP14X117", [361.0, 378.0, 20.4, 20.4, 30.0], 22200.0, 174.0);
+        spot("HP8X36", [204.0, 207.0, 11.3, 11.3, 13.0], 6840.0, 53.0);
+        // The declared-area warning: widest on W24X68, where the catalog radius is larger
+        // than the fillet the standard's area allows; absent where the two agree.
+        let difference = |designation: &str| {
+            library
+                .entry(designation)
+                .unwrap()
+                .record
+                .declared_area_warning()
+                .map(|w| w.relative_difference)
+        };
+        assert!((difference("W24X68").unwrap() - 0.0431).abs() < 0.001);
+        assert!((difference("W12X40").unwrap() - 0.0123).abs() < 0.0005);
+        assert_eq!(difference("W6X8.5"), None);
+        // The W and HP rows exactly as ASTM A6/A6M-05a Annex A2 prints them, 274 + 11.
+        let assortment = [
+            "W44X335 W44X290 W44X262 W44X230",
+            "W40X593 W40X503 W40X431 W40X397 W40X372 W40X362 W40X324 W40X297 W40X277 W40X249",
+            "W40X215 W40X199 W40X392 W40X331 W40X327 W40X294 W40X278 W40X264 W40X235 W40X211",
+            "W40X183 W40X167 W40X149",
+            "W36X800 W36X652 W36X529 W36X487 W36X441 W36X395 W36X361 W36X330 W36X302 W36X282",
+            "W36X262 W36X247 W36X231 W36X256 W36X232 W36X210 W36X194 W36X182 W36X170 W36X160",
+            "W36X150 W36X135",
+            "W33X387 W33X354 W33X318 W33X291 W33X263 W33X241 W33X221 W33X201 W33X169 W33X152",
+            "W33X141 W33X130 W33X118",
+            "W30X391 W30X357 W30X326 W30X292 W30X261 W30X235 W30X211 W30X191 W30X173 W30X148",
+            "W30X132 W30X124 W30X116 W30X108 W30X99 W30X90",
+            "W27X539 W27X368 W27X336 W27X307 W27X281 W27X258 W27X235 W27X217 W27X194 W27X178",
+            "W27X161 W27X146 W27X129 W27X114 W27X102 W27X94 W27X84",
+            "W24X370 W24X335 W24X306 W24X279 W24X250 W24X229 W24X207 W24X192 W24X176 W24X162",
+            "W24X146 W24X131 W24X117 W24X104 W24X103 W24X94 W24X84 W24X76 W24X68 W24X62 W24X55",
+            "W21X201 W21X182 W21X166 W21X147 W21X132 W21X122 W21X111 W21X101 W21X93 W21X83 W21X73",
+            "W21X68 W21X62 W21X55 W21X48 W21X57 W21X50 W21X44",
+            "W18X311 W18X283 W18X258 W18X234 W18X211 W18X192 W18X175 W18X158 W18X143 W18X130",
+            "W18X119 W18X106 W18X97 W18X86 W18X76 W18X71 W18X65 W18X60 W18X55 W18X50 W18X46",
+            "W18X40 W18X35",
+            "W16X100 W16X89 W16X77 W16X67 W16X57 W16X50 W16X45 W16X40 W16X36 W16X31 W16X26",
+            "W14X730 W14X665 W14X605 W14X550 W14X500 W14X455 W14X426 W14X398 W14X370 W14X342",
+            "W14X311 W14X283 W14X257 W14X233 W14X211 W14X193 W14X176 W14X159 W14X145 W14X132",
+            "W14X120 W14X109 W14X99 W14X90 W14X82 W14X74 W14X68 W14X61 W14X53 W14X48 W14X43",
+            "W14X38 W14X34 W14X30 W14X26 W14X22",
+            "W12X336 W12X305 W12X279 W12X252 W12X230 W12X210 W12X190 W12X170 W12X152 W12X136",
+            "W12X120 W12X106 W12X96 W12X87 W12X79 W12X72 W12X65 W12X58 W12X53 W12X50 W12X45",
+            "W12X40 W12X35 W12X30 W12X26 W12X22 W12X19 W12X16 W12X14",
+            "W10X112 W10X100 W10X88 W10X77 W10X68 W10X60 W10X54 W10X49 W10X45 W10X39 W10X33",
+            "W10X30 W10X26 W10X22 W10X19 W10X17 W10X15 W10X12",
+            "W8X67 W8X58 W8X48 W8X40 W8X35 W8X31 W8X28 W8X24 W8X21 W8X18 W8X15 W8X13 W8X10",
+            "W6X25 W6X20 W6X15 W6X16 W6X12 W6X9 W6X8.5",
+            "W5X19 W5X16",
+            "W4X13",
+            "HP14X117 HP14X102 HP14X89 HP14X73",
+            "HP12X84 HP12X74 HP12X63 HP12X53",
+            "HP10X57 HP10X42",
+            "HP8X36",
+        ];
+        let mut expected: Vec<&str> = assortment.iter().flat_map(|g| g.split(' ')).collect();
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Refused, never a near match: the jumbo shapes newer editions of the standard carry
+        // (the Nucor-Yamato size list names them; the declared 05a tables do not), the other
+        // shape families of the same annex (not in this slice), the metric designation of the
+        // same rows (no aliases), and every other spelling.
+        for absent in [
+            "W44X408",
+            "W44X368",
+            "W40X655",
+            "W30X433",
+            "W21X223",
+            "W14X808",
+            "HP12X89",
+            "HP16X183",
+            "HP18X204",
+            "S24X121",
+            "M12X11.6",
+            "C15X50",
+            "MC18X58",
+            "L8X8X1",
+            "W1100X499",
+            "W44x335",
+            "W 44 X 335",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
     }
 
     #[test]
