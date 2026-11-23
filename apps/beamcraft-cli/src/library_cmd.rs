@@ -13,7 +13,10 @@
 //! space in that order. The resolvers are never merged into one lookup: the same text may be a
 //! grade and a designation, so a merged lookup would report shadowing where there is none.
 
-use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
+use crate::plate_cmd::{
+    Run, definition_json, environment_lost_json, fit_page, invalid, page_of, profile_record,
+    shadow_json,
+};
 use crate::report::report;
 use beamcraft_commands::library::{
     EnvironmentCopyLost, FirmFileRefused, LAYER_LIBRARY, LibraryEntry, LibraryInfo, Lookup,
@@ -120,23 +123,6 @@ fn rejected_json<'a>(rejected: impl Iterator<Item = (&'a str, &'a RejectedEntry)
     )
 }
 
-fn shadow_json(records: impl IntoIterator<Item = Shadowed>) -> Json {
-    Json::Array(
-        records
-            .into_iter()
-            .map(|s| {
-                Json::object([
-                    ("designation", Json::text(s.designation)),
-                    ("used_library", Json::text(s.used_library)),
-                    ("used_layer", Json::text(s.used_layer)),
-                    ("shadowed_library", Json::text(s.shadowed_library)),
-                    ("shadowed_layer", Json::text(s.shadowed_layer)),
-                ])
-            })
-            .collect(),
-    )
-}
-
 fn firm_refused_json(refused: &[FirmFileRefused]) -> Json {
     Json::Array(
         refused
@@ -150,13 +136,6 @@ fn firm_refused_json(refused: &[FirmFileRefused]) -> Json {
             })
             .collect(),
     )
-}
-
-fn environment_lost_json(lost: &EnvironmentCopyLost) -> Json {
-    Json::object([
-        ("path", Json::text(lost.path.clone())),
-        ("message", Json::text(lost.message.clone())),
-    ])
 }
 
 const PROFILE_OPTIONS: &[&str] = &[

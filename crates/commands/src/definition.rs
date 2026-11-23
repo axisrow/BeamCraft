@@ -109,6 +109,18 @@ impl DefinitionRecord {
         !matches!(self, Self::Material { .. })
     }
 
+    /// The catalogue namespace this definition belongs to. The namespaces stay apart: a name
+    /// resolves inside the namespace that was asked for, never into another one.
+    pub const fn namespace(&self) -> crate::library::Namespace {
+        match self {
+            Self::Material { .. } => crate::library::Namespace::Material,
+            Self::Fastener { .. } => crate::library::Namespace::Fastener,
+            Self::RectangleProfile { .. } | Self::SectionProfile { .. } => {
+                crate::library::Namespace::Profile
+            }
+        }
+    }
+
     /// The readable name stored in the definition, if it has one (definitions published before
     /// A07.2 have none).
     pub fn display_name(&self) -> Option<&str> {
@@ -509,40 +521,6 @@ pub(crate) fn profile_lookup(
             "profile_digest",
             "profile definition is not in the model",
         )),
-    }
-}
-
-/// What a readable name selected in the definitions of a stage.
-#[derive(Debug, Clone, PartialEq)]
-pub enum NameResolution {
-    /// Exactly one definition of the wanted kind has the name.
-    Found(ContentDigest),
-    /// No definition of the wanted kind has the name.
-    NotFound,
-    /// More than one distinct definition has the name; none is chosen.
-    Ambiguous(Vec<(ContentDigest, DefinitionRecord)>),
-}
-
-/// Selects a definition by name: a profile (`profiles` true) or a material, whose display name or
-/// catalogue label (designation of a profile, grade of a material) equals `name` exactly. The
-/// match is case-sensitive; an ambiguous name is reported with every candidate, never guessed.
-pub fn resolve_name(
-    definitions: &BTreeMap<ContentDigest, DefinitionRecord>,
-    name: &str,
-    profiles: bool,
-) -> NameResolution {
-    let mut found: Vec<(ContentDigest, DefinitionRecord)> = definitions
-        .iter()
-        .filter(|(_, record)| record.is_profile() == profiles)
-        .filter(|(_, record)| record.selectable_names().contains(&name))
-        .map(|(digest, record)| (*digest, record.clone()))
-        .collect();
-    match found.len() {
-        0 => NameResolution::NotFound,
-        1 => found.pop().map_or(NameResolution::NotFound, |(digest, _)| {
-            NameResolution::Found(digest)
-        }),
-        _ => NameResolution::Ambiguous(found),
     }
 }
 
@@ -1287,59 +1265,6 @@ mod tests {
             rectangle(None).named(None).display_name(),
             Some("RECT 200x300.5")
         );
-    }
-
-    #[test]
-    fn names_resolve_exactly_by_kind_and_an_ambiguous_name_names_every_candidate() {
-        let profile = |designation: &str, width: f64| {
-            DefinitionRecord::RectangleProfile {
-                width_mm: width,
-                height_mm: 100.0,
-                section: SectionProperties {
-                    designation: Some(designation.into()),
-                    ..SectionProperties::default()
-                },
-            }
-            .named(None)
-        };
-        let material = |density: f64| {
-            DefinitionRecord::Material {
-                density_kg_m3: Some(density),
-                grade: Some("S355".into()),
-                standard: None,
-                display_name: None,
-            }
-            .named(None)
-        };
-        let records = [
-            profile("A", 10.0),
-            profile("A", 20.0),
-            profile("B", 30.0),
-            material(7850.0),
-            material(7800.0),
-        ];
-        let definitions: BTreeMap<_, _> = records
-            .iter()
-            .map(|r| (r.resource().unwrap().digest, r.clone()))
-            .collect();
-        let resolve = |name: &str, profiles: bool| resolve_name(&definitions, name, profiles);
-        assert!(matches!(resolve("B", true), NameResolution::Found(_)));
-        assert_eq!(resolve("b", true), NameResolution::NotFound);
-        assert_eq!(resolve("B", false), NameResolution::NotFound);
-        assert_eq!(resolve("S355", true), NameResolution::NotFound);
-        assert!(matches!(
-            resolve("S355 7800 kg/m3", false),
-            NameResolution::Found(_)
-        ));
-        let NameResolution::Ambiguous(found) = resolve("A", true) else {
-            panic!("two profiles share the designation A");
-        };
-        assert_eq!(found.len(), 2);
-        let NameResolution::Ambiguous(found) = resolve("S355", false) else {
-            panic!("two materials share the grade S355");
-        };
-        assert_eq!(found.len(), 2);
-        assert_eq!(resolve("", true), NameResolution::NotFound);
     }
 
     #[test]

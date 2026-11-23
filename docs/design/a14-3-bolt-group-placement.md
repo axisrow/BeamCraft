@@ -90,7 +90,11 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
   follows; without it an update keeps the pinned digest, so a changed library file changes
   nothing until a person asks. A stored A05 group is upgraded by naming the placement inputs
   and a library entry (its `--repin`-guard does not apply: the annotation has no definition to
-  protect).
+  protect). Since the creation resolver of #628
+  ([A07 section 14](a07-section-library.md#14-one-resolver-for-creation-628)) a designation of
+  `create-bolt-group` resolves through the model first and then the libraries, and
+  `--fastener-digest` names a fastener definition of the head exactly; a repin still takes the
+  current library entry and never consults the model.
 - **A group belongs to its main part (issue 544).** `update-element` that moves, rotates or
   re-orients a connected part carries the groups over it in the same transaction
   (`bolt::follow_moved_part`, called from `edit::update_element`): the moved part's world

@@ -4,14 +4,18 @@
 // projects are created from the shipped europe, russia and blank environments, whose provenance
 // and licences are in `ATTRIBUTION.md`.
 
-//! The catalogue search of #628 end to end through the real `beamcraft` binary: a project's
-//! chain carries three namespaces, profiles, fasteners and materials, and `--namespace` on
+//! The namespaces of #628 end to end through the real `beamcraft` binary. A project's chain
+//! carries three namespaces, profiles, fasteners and materials, and `--namespace` on
 //! `list-library` and `show-library` reaches all of them. `all` pages the three resolvers as one
 //! position space in that order; the resolvers are never merged, so the shadow report covers
 //! every namespace without a record across two of them; `--filter` folds case in every script
 //! and drops whitespace, while every exact lookup stays exact and inside its namespace; without
-//! `--namespace` the replies keep their shape. Every run names its own `BEAMCRAFT_CONFIG_DIR`,
-//! so the user's real application data is never read or written.
+//! `--namespace` the replies keep their shape. The creation commands resolve a name through the
+//! same three namespaces with one resolver, the model first and then the chain: their replies
+//! name the layer and the library that answered, the shadowed entries and a lost environment;
+//! two generations of one designation in the model refuse until a digest is given; and a repin
+//! still follows the current library. Every run names its own `BEAMCRAFT_CONFIG_DIR`, so the
+//! user's real application data is never read or written.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -58,6 +62,105 @@ impl Fixture {
         let (code, body) = self.raw(args);
         assert_eq!(code, 2, "{args:?}: {body:?}");
         text(&body, "code")
+    }
+    /// The head revision of the store.
+    fn head(&self, store: &str) -> String {
+        text(
+            &self.ok(&["open-revision", "--store", store]),
+            "revision_id",
+        )
+    }
+    /// A beam of `profile` and `material` between two points: the reply of `create-member`.
+    fn member(&self, store: &str, profile: &str, material: &str) -> Json {
+        self.ok(&[
+            "create-member",
+            "--store",
+            store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            profile,
+            "--material",
+            material,
+        ])
+    }
+    /// Two stacked plates of 200 x 200 x 20 mm, the parts of a bolt group: their identities.
+    fn parts(&self, store: &str) -> [String; 2] {
+        [None, Some("0,0,20")].map(|translation| {
+            let mut args = vec![
+                "create-plate",
+                "--store",
+                store,
+                "--width",
+                "200",
+                "--length",
+                "200",
+                "--thickness",
+                "20",
+            ];
+            args.extend(
+                translation
+                    .map(|t| vec!["--translation", t])
+                    .unwrap_or_default(),
+            );
+            text(at(&self.ok(&args), &["plate"]), "element_id")
+        })
+    }
+    /// `create-bolt-group` over `parts`: a row of two fasteners with no hole, named by
+    /// `fastener` (`--designation TEXT` or `--fastener-digest SHA256`), with `extra` beside.
+    /// The raw reply: its exit status and its body.
+    fn group_raw(
+        &self,
+        store: &str,
+        parts: &[String; 2],
+        name: &str,
+        fastener: &[&str],
+        extra: &[&str],
+    ) -> (i32, Json) {
+        let joined = parts.join(",");
+        let mut args = vec![
+            "create-bolt-group",
+            "--store",
+            store,
+            "--name",
+            name,
+            "--parts",
+            &joined,
+            "--point1",
+            "50,50,40",
+            "--point2",
+            "50,150,40",
+            "--plane-normal",
+            "0,0,-1",
+            "--offset-start",
+            "25",
+            "--count",
+            "2",
+            "--pitch",
+            "50",
+            "--hole-mode",
+            "none",
+        ];
+        args.extend_from_slice(fastener);
+        args.extend_from_slice(extra);
+        self.raw(&args)
+    }
+    /// The reply of a `create-bolt-group` that must succeed ([`Self::group_raw`]).
+    fn group(
+        &self,
+        store: &str,
+        parts: &[String; 2],
+        name: &str,
+        fastener: &[&str],
+        extra: &[&str],
+    ) -> Json {
+        let (code, body) = self.group_raw(store, parts, name, fastener, extra);
+        assert_eq!(code, 0, "{name}: {body:?}");
+        body
     }
     /// Installs the mixed firm file into the application data's `libraries/` and answers its path.
     fn firm(&self) -> String {
@@ -109,6 +212,27 @@ impl Fixture {
     }
 }
 
+/// One bolt entry of the suite's library files: a hex bolt of `diameter` with the thread
+/// protrusion `protrusion`. Every value is invented for these tests.
+fn bolt(prim: &str, designation: &str, diameter: f64, protrusion: f64) -> String {
+    format!(
+        "        def Scope \"{prim}\"\n        {{\nstring steel:fastener:designation = \"{designation}\"\ntoken steel:fastener:kind = \"bolt\"\ntoken steel:fastener:headKind = \"hex\"\ndouble steel:fastener:nominalDiameterMm = {diameter}\ndouble steel:fastener:headAcrossFlatsMm = {}\ndouble steel:fastener:headHeightMm = {}\ndouble steel:fastener:nutAcrossFlatsMm = {}\ndouble steel:fastener:nutHeightMm = {}\ndouble steel:fastener:holeClearanceMm = 2\ndouble[] steel:fastener:lengthsMm = [60, 70, 80]\ndouble steel:fastener:threadProtrusionMm = {protrusion}\nbool steel:fastener:washerUnderHead = false\nbool steel:fastener:washerUnderNut = false\ntoken steel:fastener:holeMode = \"generate\"\n        }}\n",
+        diameter * 1.5,
+        diameter * 0.625,
+        diameter * 1.5,
+        diameter * 0.9,
+    )
+}
+
+/// A fastener library of one entry, the `M20` of the firm file with another thread protrusion: a
+/// second generation of the designation, for a file named on the command line.
+fn generation_file() -> String {
+    format!(
+        "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"generation\"\n    }}\n)\ndef Scope \"Library\"\n{{\n    def Scope \"Fasteners\"\n    {{\n{}    }}\n}}\n",
+        bolt("M20", "M20", 20.0, 5.0)
+    )
+}
+
 /// The mixed firm file of the suite, `bim:library:id` `mine`: the profile `IPE300` at another
 /// height than the shipped one, the bolts `M20` (another thread protrusion than the shipped
 /// one) and `FIRM-M16`, the grades `S355J0` (another density than the shipped one) and
@@ -116,15 +240,6 @@ impl Fixture {
 /// a hyphen carries an underscore: a prim name is an identifier.
 fn firm_file() -> String {
     let profile = "        def Scope \"IPE300\"\n        {\nstring steel:profile:designation = \"IPE300\"\ntoken steel:profile:family = \"i_shape\"\ndouble steel:profile:hMm = 299\ndouble steel:profile:bMm = 150\ndouble steel:profile:twMm = 7.1\ndouble steel:profile:tfMm = 10.7\ndouble steel:profile:rMm = 15\n        }\n";
-    let bolt = |prim: &str, designation: &str, diameter: f64| {
-        format!(
-            "        def Scope \"{prim}\"\n        {{\nstring steel:fastener:designation = \"{designation}\"\ntoken steel:fastener:kind = \"bolt\"\ntoken steel:fastener:headKind = \"hex\"\ndouble steel:fastener:nominalDiameterMm = {diameter}\ndouble steel:fastener:headAcrossFlatsMm = {}\ndouble steel:fastener:headHeightMm = {}\ndouble steel:fastener:nutAcrossFlatsMm = {}\ndouble steel:fastener:nutHeightMm = {}\ndouble steel:fastener:holeClearanceMm = 2\ndouble[] steel:fastener:lengthsMm = [60, 70, 80]\ndouble steel:fastener:threadProtrusionMm = 4\nbool steel:fastener:washerUnderHead = false\nbool steel:fastener:washerUnderNut = false\ntoken steel:fastener:holeMode = \"generate\"\n        }}\n",
-            diameter * 1.5,
-            diameter * 0.625,
-            diameter * 1.5,
-            diameter * 0.9,
-        )
-    };
     let grade = |prim: &str, designation: &str, density: f64| {
         format!(
             "        def Scope \"{prim}\"\n        {{\nstring steel:material:grade = \"{designation}\"\ndouble steel:material:densityKgM3 = {density}\n        }}\n"
@@ -132,8 +247,8 @@ fn firm_file() -> String {
     };
     let bolts = format!(
         "{}{}",
-        bolt("M20", "M20", 20.0),
-        bolt("FIRM_M16", "FIRM-M16", 16.0)
+        bolt("M20", "M20", 20.0, 4.0),
+        bolt("FIRM_M16", "FIRM-M16", 16.0, 4.0)
     );
     let grades = format!(
         "{}{}",
@@ -622,4 +737,407 @@ fn a_lost_environment_copy_is_reported_in_every_namespace() {
         list(&all, "libraries").len(),
         list(&profiles, "libraries").len()
     );
+}
+
+/// The one definition `definitions --name NAME` lists in the store.
+fn definition(f: &Fixture, store: &str, name: &str) -> Json {
+    let defined = f.ok(&["definitions", "--store", store, "--name", name]);
+    let found = list(&defined, "definitions");
+    assert_eq!(found.len(), 1, "{name}: {found:?}");
+    found[0].clone()
+}
+
+/// A number of the one definition `definitions --name NAME` lists, at `path`.
+fn number_of(f: &Fixture, store: &str, name: &str, path: &[&str]) -> f64 {
+    at(&definition(f, store, name), path).float().unwrap()
+}
+
+/// The identity of the one bolt group named `name`, and the digest of its fastener.
+fn group_of(f: &Fixture, store: &str, name: &str) -> (String, String) {
+    let listed = f.ok(&["bolts", "--store", store]);
+    let groups: Vec<&Json> = list(&listed, "bolt_groups")
+        .iter()
+        .filter(|g| text(g, "name") == name)
+        .collect();
+    assert_eq!(groups.len(), 1, "{name}: {groups:?}");
+    (text(groups[0], "id"), text(groups[0], "fastener"))
+}
+
+/// The lookup record of `namespace` in a creation reply.
+fn lookup<'a>(reply: &'a Json, namespace: &str) -> &'a Json {
+    let found = list(reply, "lookups")
+        .iter()
+        .find(|l| text(l, "namespace") == namespace);
+    assert!(found.is_some(), "no {namespace} lookup: {reply:?}");
+    found.unwrap()
+}
+
+/// Asserts that `namespace` of the creation `reply` was answered by `layer`: the model (no
+/// library is named), or the library `show-library` names for the designation in the project's
+/// chain.
+fn answered(f: &Fixture, reply: &Json, store: &str, namespace: &str, layer: &str) {
+    let found = lookup(reply, namespace);
+    assert_eq!(text(found, "layer"), layer, "{namespace}: {reply:?}");
+    if layer == "model" {
+        assert_eq!(at(found, &["library"]), &Json::Null, "{reply:?}");
+        return;
+    }
+    let designation = text(found, "name");
+    let shown = f.shown(store, &["--namespace", namespace], &designation);
+    assert_eq!(
+        text(found, "library"),
+        text(at(&shown, &["library"]), "id"),
+        "{namespace}: {reply:?}"
+    );
+}
+
+#[test]
+fn creation_names_resolve_through_the_model_then_the_chain_and_the_reply_says_which() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Created", "europe");
+
+    // First use: the project's copy answers both namespaces. For each name the reply names the
+    // layer and the library that answered (the ones show-library names) and the weaker entry of
+    // the same designation.
+    let made = f.member(&store, "IPE300", "S355J0");
+    assert_eq!(text(&made, "outcome"), "member_created");
+    assert_eq!(list(&made, "lookups").len(), 2);
+    for namespace in ["profile", "material"] {
+        answered(&f, &made, &store, namespace, "project");
+        let name = text(lookup(&made, namespace), "name");
+        let shadows = list(lookup(&made, namespace), "shadowed");
+        assert_eq!(shadows.len(), 1, "{namespace}: {made:?}");
+        assert_eq!(text(&shadows[0], "designation"), name);
+        assert_eq!(text(&shadows[0], "used_layer"), "project");
+        assert_eq!(text(&shadows[0], "shadowed_library"), "mine");
+        assert_eq!(text(&shadows[0], "shadowed_layer"), "firm");
+    }
+    assert!(made.get("environment_lost").is_err(), "{made:?}");
+    assert_eq!(
+        number_of(&f, &store, "IPE300", &["parameters_mm", "h"]),
+        300.0
+    );
+    assert_eq!(number_of(&f, &store, "S355J0", &["density_kg_m3"]), 7850.0);
+
+    // Second use: the model answers and the chain is never consulted, so nothing is shadowed
+    // and no library is named.
+    let again = f.member(&store, "IPE300", "S355J0");
+    assert_eq!(list(&again, "lookups").len(), 2);
+    for namespace in ["profile", "material"] {
+        answered(&f, &again, &store, namespace, "model");
+        assert!(list(lookup(&again, namespace), "shadowed").is_empty());
+    }
+
+    // The layers under the copy: the firm grade for a plate and the neutral fallback for a
+    // designation no other layer declares; a seeded constant answers from the model.
+    let plate = f.ok(&[
+        "create-plate",
+        "--store",
+        &store,
+        "--width",
+        "200",
+        "--length",
+        "200",
+        "--thickness",
+        "20",
+        "--material",
+        "FIRM-S355",
+    ]);
+    assert_eq!(list(&plate, "lookups").len(), 1);
+    answered(&f, &plate, &store, "material", "firm");
+    assert!(list(lookup(&plate, "material"), "shadowed").is_empty());
+    let neutral = f.member(&store, "I-200x100", "Steel");
+    answered(&f, &neutral, &store, "profile", "neutral");
+    answered(&f, &neutral, &store, "material", "model");
+
+    // Fasteners join the walk, though they skipped the model before: the copy's M20 answers over
+    // the firm bolt of the same designation, the firm's own bolt from the firm layer, and a
+    // second group of the same designation from the model, with the digest of the first.
+    let parts = f.parts(&store);
+    let first = f.group(&store, &parts, "G1", &["--designation", "M20"], &[]);
+    answered(&f, &first, &store, "fastener", "project");
+    let shadows = list(lookup(&first, "fastener"), "shadowed");
+    assert_eq!(shadows.len(), 1);
+    assert_eq!(text(&shadows[0], "designation"), "M20");
+    assert_eq!(text(&shadows[0], "shadowed_layer"), "firm");
+    assert_eq!(number_of(&f, &store, "M20", &["thread_protrusion_mm"]), 6.0);
+    let firm = f.group(&store, &parts, "G2", &["--designation", "FIRM-M16"], &[]);
+    answered(&f, &firm, &store, "fastener", "firm");
+    let again = f.group(&store, &parts, "G3", &["--designation", "M20"], &[]);
+    answered(&f, &again, &store, "fastener", "model");
+    assert!(list(lookup(&again, "fastener"), "shadowed").is_empty());
+    assert_eq!(group_of(&f, &store, "G3").1, group_of(&f, &store, "G1").1);
+
+    // The namespaces stay apart: the fastener the head defines never answers a profile lookup,
+    // and a profile designation never names a fastener.
+    assert_eq!(
+        f.code(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            "M20",
+        ]),
+        "NOT_FOUND"
+    );
+    assert_eq!(
+        text(
+            &f.group_raw(&store, &parts, "G4", &["--designation", "IPE300"], &[])
+                .1,
+            "code"
+        ),
+        "NOT_FOUND"
+    );
+
+    // A member's new section goes through the same resolver (a designation the model does not
+    // hold yet is defined from the chain first), and a command that gives digests, or no name,
+    // keeps its reply as it was.
+    let member = text(at(&made, &["member"]), "element_id");
+    let updated = f.ok(&[
+        "update-element",
+        "--store",
+        &store,
+        "--id",
+        &member,
+        "--profile",
+        "IPE200",
+    ]);
+    assert_eq!(list(&updated, "lookups").len(), 1);
+    answered(&f, &updated, &store, "profile", "project");
+    let bare = f.ok(&[
+        "create-plate",
+        "--store",
+        &store,
+        "--width",
+        "200",
+        "--length",
+        "200",
+        "--thickness",
+        "20",
+    ]);
+    assert!(
+        bare.get("lookups").is_err() && bare.get("environment_lost").is_err(),
+        "{bare:?}"
+    );
+}
+
+#[test]
+fn the_russia_pack_creates_through_the_same_resolver() {
+    let f = Fixture::new();
+    let store = f.create("Russia", "russia");
+
+    // The GOST beam, the Cyrillic grade and the GOST bolt all answer from the project's copy,
+    // and each reply names the library show-library names for its designation.
+    let made = f.member(&store, "30B1", "С245");
+    answered(&f, &made, &store, "profile", "project");
+    answered(&f, &made, &store, "material", "project");
+    assert_eq!(
+        number_of(&f, &store, "С245", &["density_kg_m3"]),
+        7850.0,
+        "the pinned grade is the catalogue entry"
+    );
+    let parts = f.parts(&store);
+    let group = f.group(&store, &parts, "R1", &["--designation", "M16"], &[]);
+    answered(&f, &group, &store, "fastener", "project");
+    assert_eq!(
+        text(lookup(&group, "fastener"), "library"),
+        "beamcraft-gost-fasteners"
+    );
+    assert!(list(lookup(&group, "fastener"), "shadowed").is_empty());
+}
+
+#[test]
+fn a_lost_environment_is_reported_by_the_creation_replies() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Lost", "europe");
+    let parts = f.parts(&store);
+    // A fastener the model pins before the loss.
+    f.group(&store, &parts, "G1", &["--designation", "M16"], &[]);
+
+    fs::remove_dir_all(Path::new(&store).join("environment")).unwrap();
+    let lost = "the project was created with the environment europe version 1, whose copy is no longer in the project";
+
+    // The hazard the warning names: a name the copy answered now resolves from the firm layer,
+    // to another bolt, section and density than the project was created with. The reply says
+    // so beside its result instead of substituting silently.
+    let group = f.group(&store, &parts, "G2", &["--designation", "M20"], &[]);
+    answered(&f, &group, &store, "fastener", "firm");
+    assert!(
+        text(at(&group, &["environment_lost"]), "message").contains(lost),
+        "{group:?}"
+    );
+    assert_eq!(number_of(&f, &store, "M20", &["thread_protrusion_mm"]), 4.0);
+    let member = f.member(&store, "IPE300", "S355J0");
+    for namespace in ["profile", "material"] {
+        answered(&f, &member, &store, namespace, "firm");
+    }
+    assert!(
+        text(at(&member, &["environment_lost"]), "message").contains(lost),
+        "{member:?}"
+    );
+    assert_eq!(
+        number_of(&f, &store, "IPE300", &["parameters_mm", "h"]),
+        299.0
+    );
+    assert_eq!(number_of(&f, &store, "S355J0", &["density_kg_m3"]), 7800.0);
+
+    // A definition the model pinned before the loss answers from the model, before the chain is
+    // consulted: no warning, because nothing was substituted.
+    let pinned = f.group(&store, &parts, "G3", &["--designation", "M16"], &[]);
+    answered(&f, &pinned, &store, "fastener", "model");
+    assert!(pinned.get("environment_lost").is_err(), "{pinned:?}");
+    assert_eq!(group_of(&f, &store, "G3").1, group_of(&f, &store, "G1").1);
+
+    // A name only the copy answered resolves nothing: NOT_FOUND, never a substitution.
+    assert_eq!(
+        text(
+            &f.group_raw(&store, &parts, "G4", &["--designation", "M24"], &[])
+                .1,
+            "code"
+        ),
+        "NOT_FOUND"
+    );
+    assert_eq!(
+        f.code(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            "IPE200",
+        ]),
+        "NOT_FOUND"
+    );
+}
+
+#[test]
+fn two_generations_of_one_designation_refuse_until_a_digest_names_one() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Generations", "europe");
+    let parts = f.parts(&store);
+    // Generation one: the copy's M20. Generation two: a file named on the command line answers
+    // alone and pins its own M20 beside it.
+    f.group(&store, &parts, "G1", &["--designation", "M20"], &[]);
+    let file = f.path("generation.usda");
+    fs::write(&file, generation_file()).unwrap();
+    let second = f.group(
+        &store,
+        &parts,
+        "G2",
+        &["--designation", "M20"],
+        &["--fastener-library", &file],
+    );
+    let found = lookup(&second, "fastener");
+    assert_eq!(
+        (
+            text(found, "layer").as_str(),
+            text(found, "library").as_str()
+        ),
+        ("library", "generation"),
+        "{second:?}"
+    );
+    assert!(list(found, "shadowed").is_empty());
+    let (one, two) = (group_of(&f, &store, "G1").1, group_of(&f, &store, "G2").1);
+    assert_ne!(one, two);
+
+    // The model holds two generations of M20: a third group by designation through the chain
+    // refuses, names both digests in its diagnostics, and writes nothing.
+    let head = f.head(&store);
+    let (code, refused) = f.group_raw(&store, &parts, "G3", &["--designation", "M20"], &[]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    let diagnostics = list(&refused, "diagnostics");
+    let mut digests: Vec<String> = diagnostics.iter().map(|d| text(d, "digest")).collect();
+    digests.sort();
+    let mut generations = vec![one.clone(), two.clone()];
+    generations.sort();
+    assert_eq!(digests, generations, "{refused:?}");
+    for candidate in diagnostics {
+        assert_eq!(text(candidate, "kind"), "fastener");
+        assert!(list(candidate, "names").contains(&Json::text("M20")));
+    }
+    assert_eq!(f.head(&store), head, "the refusal writes nothing");
+
+    // The digest names one generation exactly, and the reply keeps its shape.
+    let chosen = f.group(&store, &parts, "G3", &["--fastener-digest", &one], &[]);
+    assert_eq!(group_of(&f, &store, "G3").1, one);
+    assert!(chosen.get("lookups").is_err(), "{chosen:?}");
+
+    // The digest option stands alone and names a fastener the head holds: never beside a name
+    // or a library file, never a profile, never a digest the head does not hold.
+    f.member(&store, "IPE300", "Steel");
+    let profile = text(&definition(&f, &store, "IPE300"), "digest");
+    let absent = "0".repeat(64);
+    for (fastener, expected) in [
+        (
+            vec!["--fastener-digest", one.as_str(), "--designation", "M20"],
+            "INVALID_ARGUMENT",
+        ),
+        (
+            vec![
+                "--fastener-digest",
+                one.as_str(),
+                "--fastener-library",
+                file.as_str(),
+            ],
+            "INVALID_ARGUMENT",
+        ),
+        (
+            vec!["--fastener-digest", profile.as_str()],
+            "INVALID_ARGUMENT",
+        ),
+        (vec!["--fastener-digest", absent.as_str()], "NOT_FOUND"),
+    ] {
+        let (code, body) = f.group_raw(&store, &parts, "G4", &fastener, &[]);
+        assert_eq!(
+            (code, text(&body, "code")),
+            (2, expected.to_owned()),
+            "{fastener:?}: {body:?}"
+        );
+    }
+    assert_eq!(
+        group_of(&f, &store, "G3").1,
+        one,
+        "nothing else was written"
+    );
+
+    // A repin follows the current library entry, never the model: with the copy gone the firm
+    // layer answers, and the two generations the head holds refuse nothing. The firm bolt
+    // carries no washer, so the repin replaces the stored washer switches.
+    fs::remove_dir_all(Path::new(&store).join("environment")).unwrap();
+    let (target, _) = group_of(&f, &store, "G3");
+    let repinned = f.ok(&[
+        "update-bolt-group",
+        "--store",
+        &store,
+        "--target",
+        &target,
+        "--repin",
+        "true",
+        "--designation",
+        "M20",
+        "--washer-under-head",
+        "false",
+        "--washer-under-nut",
+        "false",
+    ]);
+    answered(&f, &repinned, &store, "fastener", "firm");
+    assert!(repinned.get("environment_lost").is_ok(), "{repinned:?}");
+    let followed = group_of(&f, &store, "G3").1;
+    assert_ne!(followed, one);
+    assert_ne!(followed, two);
 }

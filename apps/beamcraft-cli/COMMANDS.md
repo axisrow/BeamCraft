@@ -748,12 +748,12 @@ welds --store ROOT [--offset N] [--limit N]
 write.
 
 ```text
-create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --designation TEXT --point1 X,Y,Z
-    --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM [--fastener-library FILE]
-    [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--spacings MM,MM,...] [--count N]
-    [--pitch MM] [--offset-end MM] [--washer-under-head true|false]
-    [--washer-under-nut true|false] [--length-mode auto|fixed] [--length MM]
-    [--hole-mode generate|none] [--hole-clearance MM] [--new-id UUID] [--op-id UUID]
+create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --point1 X,Y,Z --point2 X,Y,Z
+    --plane-normal X,Y,Z --offset-start MM (--fastener-digest SHA256 | --designation TEXT)
+    [--fastener-library FILE] [--rotation-deg DEG] [--on-plane MM] [--depth MM]
+    [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
+    [--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode auto|fixed]
+    [--length MM] [--hole-mode generate|none] [--hole-clearance MM] [--new-id UUID] [--op-id UUID]
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
@@ -763,9 +763,9 @@ write.
 
 ```text
 update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,...]
-    [--fastener-library FILE] [--designation TEXT] [--point1 X,Y,Z] [--point2 X,Y,Z]
-    [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--offset-start MM]
-    [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
+    [--fastener-library FILE] [--fastener-digest SHA256] [--designation TEXT] [--point1 X,Y,Z]
+    [--point2 X,Y,Z] [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM]
+    [--offset-start MM] [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
     [--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode auto|fixed]
     [--length MM] [--hole-mode generate|none] [--hole-clearance MM] [--repin true] [--op-id UUID]
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
