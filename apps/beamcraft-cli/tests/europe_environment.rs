@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// The shipped Europe environment holds the real EN 10365:2022 nominal dimensions, re-entered by
+// The shipped Europe environment holds the real EN 10365:2017 nominal dimensions, re-entered by
 // hand as our own data; provenance and licence are in `ATTRIBUTION.md` and in the library's own
 // metadata. The expected areas and masses in this file are the standard's published values.
 

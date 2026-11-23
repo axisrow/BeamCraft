@@ -1,13 +1,13 @@
 #usda 1.0
 (
-    doc = "BeamCraft Europe environment: hot-rolled I and H sections of the IPE, HEA and HEB series, the parallel-flange UPE channel series and the taper-flange UPN channel series. The nominal dimensions, areas and masses are the published values of the public standard EN 10365:2022, re-entered by hand as our own data; no text or table is copied. The UPN rows carry the taper-flange channel geometry: the inner flange faces rise at the slope the standard prints (8 percent up to UPN 300, 5 percent for UPN 320 to 400), t is the mid-leg flange thickness, r and r1 are the root and toe radii. The declared UPN areas follow the convention the standard publishes (steel:profile:areaConvention): the UPN 50 to 300 areas are the nominal sharp-cornered constant-flange value the standard prints (no fillet allowance), and the UPN 320 to 400 areas are the exact area of the filleted tapered section; the D3 declared-area check compares like-for-like. Reference data for modelling; it is not a substitute for the standard itself."
+    doc = "BeamCraft Europe environment: hot-rolled I and H sections of the IPE, HEA and HEB series, the parallel-flange UPE channel series and the taper-flange UPN channel series. The nominal dimensions, areas and masses are the published values of the public standard EN 10365:2017, re-entered by hand as our own data; no text or table is copied. The UPN rows carry the taper-flange channel geometry: the inner flange faces rise at the slope the standard prints (8 percent up to UPN 300, 5 percent for UPN 320 to 400), t is the mid-leg flange thickness, r and r1 are the root and toe radii. The declared UPN areas follow the convention the standard publishes (steel:profile:areaConvention): the UPN 50 to 300 areas are the nominal sharp-cornered constant-flange value the standard prints (no fillet allowance), and the UPN 320 to 400 areas are the exact area of the filleted tapered section; the D3 declared-area check compares like-for-like. Reference data for modelling; it is not a substitute for the standard itself."
     metersPerUnit = 0.001
     upAxis = "Z"
     customLayerData = {
         string "bim:library:id" = "europe-en-10365-profiles"
         string "bim:library:title" = "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, UPE, UPN)"
         string "bim:library:version" = "3"
-        string "bim:library:source" = "EN 10365:2022 nominal facts (IPE/HEA/HEB 100-600, UPE 80-400, UPN 50-400) re-entered by hand; cross-checked against bauforumstahl.de, montanstahl.com, millstockgroup.com, structurecalcs.com, mesteel.com and masteel.co.uk; no table copied"
+        string "bim:library:source" = "EN 10365:2017 nominal facts (IPE/HEA/HEB 100-600, UPE 80-400, UPN 50-400) re-entered by hand; cross-checked against bauforumstahl.de, montanstahl.com, millstockgroup.com, structurecalcs.com, mesteel.com and masteel.co.uk; no table copied"
         string "bim:library:licence" = "MPL-2.0"
     }
 )
@@ -27,7 +27,7 @@ def Scope "Library"
             double steel:profile:rMm = 7
             double steel:profile:areaMm2 = 1032
             double steel:profile:massPerMeterKg = 8.1
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_120"
@@ -41,7 +41,7 @@ def Scope "Library"
             double steel:profile:rMm = 7
             double steel:profile:areaMm2 = 1321
             double steel:profile:massPerMeterKg = 10.4
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_140"
@@ -55,7 +55,7 @@ def Scope "Library"
             double steel:profile:rMm = 7
             double steel:profile:areaMm2 = 1643
             double steel:profile:massPerMeterKg = 12.9
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_160"
@@ -69,7 +69,7 @@ def Scope "Library"
             double steel:profile:rMm = 9
             double steel:profile:areaMm2 = 2009
             double steel:profile:massPerMeterKg = 15.8
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_180"
@@ -83,7 +83,7 @@ def Scope "Library"
             double steel:profile:rMm = 9
             double steel:profile:areaMm2 = 2395
             double steel:profile:massPerMeterKg = 18.8
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_200"
@@ -97,7 +97,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 2848
             double steel:profile:massPerMeterKg = 22.4
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_220"
@@ -111,7 +111,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 3337
             double steel:profile:massPerMeterKg = 26.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_240"
@@ -125,7 +125,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 3912
             double steel:profile:massPerMeterKg = 30.7
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_270"
@@ -139,7 +139,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 4595
             double steel:profile:massPerMeterKg = 36.1
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_300"
@@ -153,7 +153,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 5381
             double steel:profile:massPerMeterKg = 42.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_330"
@@ -167,7 +167,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 6261
             double steel:profile:massPerMeterKg = 49.1
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_360"
@@ -181,7 +181,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 7273
             double steel:profile:massPerMeterKg = 57.1
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_400"
@@ -195,7 +195,7 @@ def Scope "Library"
             double steel:profile:rMm = 21
             double steel:profile:areaMm2 = 8446
             double steel:profile:massPerMeterKg = 66.3
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_450"
@@ -209,7 +209,7 @@ def Scope "Library"
             double steel:profile:rMm = 21
             double steel:profile:areaMm2 = 9882
             double steel:profile:massPerMeterKg = 77.6
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_500"
@@ -223,7 +223,7 @@ def Scope "Library"
             double steel:profile:rMm = 21
             double steel:profile:areaMm2 = 11550
             double steel:profile:massPerMeterKg = 90.7
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_550"
@@ -237,7 +237,7 @@ def Scope "Library"
             double steel:profile:rMm = 24
             double steel:profile:areaMm2 = 13440
             double steel:profile:massPerMeterKg = 106
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "IPE_600"
@@ -251,7 +251,7 @@ def Scope "Library"
             double steel:profile:rMm = 24
             double steel:profile:areaMm2 = 15600
             double steel:profile:massPerMeterKg = 122
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_100"
@@ -265,7 +265,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 2120
             double steel:profile:massPerMeterKg = 16.7
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_120"
@@ -279,7 +279,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 2530
             double steel:profile:massPerMeterKg = 19.9
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_140"
@@ -293,7 +293,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 3140
             double steel:profile:massPerMeterKg = 24.7
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_160"
@@ -307,7 +307,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 3880
             double steel:profile:massPerMeterKg = 30.4
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_180"
@@ -321,7 +321,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 4530
             double steel:profile:massPerMeterKg = 35.5
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_200"
@@ -335,7 +335,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 5380
             double steel:profile:massPerMeterKg = 42.3
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_220"
@@ -349,7 +349,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 6430
             double steel:profile:massPerMeterKg = 50.5
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_240"
@@ -363,7 +363,7 @@ def Scope "Library"
             double steel:profile:rMm = 21
             double steel:profile:areaMm2 = 7680
             double steel:profile:massPerMeterKg = 60.3
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_260"
@@ -377,7 +377,7 @@ def Scope "Library"
             double steel:profile:rMm = 24
             double steel:profile:areaMm2 = 8680
             double steel:profile:massPerMeterKg = 68.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_280"
@@ -391,7 +391,7 @@ def Scope "Library"
             double steel:profile:rMm = 24
             double steel:profile:areaMm2 = 9730
             double steel:profile:massPerMeterKg = 76.4
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_300"
@@ -405,7 +405,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 11250
             double steel:profile:massPerMeterKg = 88.3
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_320"
@@ -419,7 +419,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 12440
             double steel:profile:massPerMeterKg = 97.6
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_340"
@@ -433,7 +433,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 13350
             double steel:profile:massPerMeterKg = 105
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_360"
@@ -447,7 +447,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 14280
             double steel:profile:massPerMeterKg = 112
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_400"
@@ -461,7 +461,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 15900
             double steel:profile:massPerMeterKg = 125
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_450"
@@ -475,7 +475,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 17800
             double steel:profile:massPerMeterKg = 140
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_500"
@@ -489,7 +489,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 19750
             double steel:profile:massPerMeterKg = 155
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_550"
@@ -503,7 +503,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 21180
             double steel:profile:massPerMeterKg = 166
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEA_600"
@@ -517,7 +517,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 22650
             double steel:profile:massPerMeterKg = 178
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_100"
@@ -531,7 +531,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 2600
             double steel:profile:massPerMeterKg = 20.4
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_120"
@@ -545,7 +545,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 3400
             double steel:profile:massPerMeterKg = 26.7
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_140"
@@ -559,7 +559,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 4300
             double steel:profile:massPerMeterKg = 33.7
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_160"
@@ -573,7 +573,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 5430
             double steel:profile:massPerMeterKg = 42.6
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_180"
@@ -587,7 +587,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 6530
             double steel:profile:massPerMeterKg = 51.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_200"
@@ -601,7 +601,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 7810
             double steel:profile:massPerMeterKg = 61.3
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_220"
@@ -615,7 +615,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 9100
             double steel:profile:massPerMeterKg = 71.5
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_240"
@@ -629,7 +629,7 @@ def Scope "Library"
             double steel:profile:rMm = 21
             double steel:profile:areaMm2 = 10600
             double steel:profile:massPerMeterKg = 83.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_260"
@@ -643,7 +643,7 @@ def Scope "Library"
             double steel:profile:rMm = 24
             double steel:profile:areaMm2 = 11840
             double steel:profile:massPerMeterKg = 93
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_280"
@@ -657,7 +657,7 @@ def Scope "Library"
             double steel:profile:rMm = 24
             double steel:profile:areaMm2 = 13140
             double steel:profile:massPerMeterKg = 103
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_300"
@@ -671,7 +671,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 14910
             double steel:profile:massPerMeterKg = 117
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_320"
@@ -685,7 +685,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 16130
             double steel:profile:massPerMeterKg = 127
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_340"
@@ -699,7 +699,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 17090
             double steel:profile:massPerMeterKg = 134
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_360"
@@ -713,7 +713,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 18060
             double steel:profile:massPerMeterKg = 142
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_400"
@@ -727,7 +727,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 19780
             double steel:profile:massPerMeterKg = 155
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_450"
@@ -741,7 +741,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 21800
             double steel:profile:massPerMeterKg = 171
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_500"
@@ -755,7 +755,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 23860
             double steel:profile:massPerMeterKg = 187
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_550"
@@ -769,7 +769,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 25410
             double steel:profile:massPerMeterKg = 199
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "HEB_600"
@@ -783,7 +783,7 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 27000
             double steel:profile:massPerMeterKg = 212
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_80"
@@ -797,7 +797,7 @@ def Scope "Library"
             double steel:profile:rMm = 10
             double steel:profile:areaMm2 = 1010
             double steel:profile:massPerMeterKg = 7.9
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_100"
@@ -811,7 +811,7 @@ def Scope "Library"
             double steel:profile:rMm = 10
             double steel:profile:areaMm2 = 1250
             double steel:profile:massPerMeterKg = 9.8
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_120"
@@ -825,7 +825,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 1540
             double steel:profile:massPerMeterKg = 12.1
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_140"
@@ -839,7 +839,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 1840
             double steel:profile:massPerMeterKg = 14.5
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_160"
@@ -853,7 +853,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 2170
             double steel:profile:massPerMeterKg = 17
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_180"
@@ -867,7 +867,7 @@ def Scope "Library"
             double steel:profile:rMm = 12
             double steel:profile:areaMm2 = 2510
             double steel:profile:massPerMeterKg = 19.7
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_200"
@@ -881,7 +881,7 @@ def Scope "Library"
             double steel:profile:rMm = 13
             double steel:profile:areaMm2 = 2900
             double steel:profile:massPerMeterKg = 22.8
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_220"
@@ -895,7 +895,7 @@ def Scope "Library"
             double steel:profile:rMm = 13
             double steel:profile:areaMm2 = 3390
             double steel:profile:massPerMeterKg = 26.6
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_240"
@@ -909,7 +909,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 3850
             double steel:profile:massPerMeterKg = 30.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_270"
@@ -923,7 +923,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 4480
             double steel:profile:massPerMeterKg = 35.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_300"
@@ -937,7 +937,7 @@ def Scope "Library"
             double steel:profile:rMm = 15
             double steel:profile:areaMm2 = 5660
             double steel:profile:massPerMeterKg = 44.4
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_330"
@@ -951,7 +951,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 6780
             double steel:profile:massPerMeterKg = 53.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_360"
@@ -965,7 +965,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 7790
             double steel:profile:massPerMeterKg = 61.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPE_400"
@@ -979,7 +979,7 @@ def Scope "Library"
             double steel:profile:rMm = 18
             double steel:profile:areaMm2 = 9190
             double steel:profile:massPerMeterKg = 72.2
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_50"
@@ -996,7 +996,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 712
             double steel:profile:massPerMeterKg = 5.6
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_65"
@@ -1013,7 +1013,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 903
             double steel:profile:massPerMeterKg = 7.1
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_80"
@@ -1030,7 +1030,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 1100
             double steel:profile:massPerMeterKg = 8.6
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_100"
@@ -1047,7 +1047,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 1350
             double steel:profile:massPerMeterKg = 10.6
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_120"
@@ -1064,7 +1064,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 1700
             double steel:profile:massPerMeterKg = 13.4
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_140"
@@ -1081,7 +1081,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 2040
             double steel:profile:massPerMeterKg = 16
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_160"
@@ -1098,7 +1098,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 2400
             double steel:profile:massPerMeterKg = 18.8
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_180"
@@ -1115,7 +1115,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 2800
             double steel:profile:massPerMeterKg = 22
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_200"
@@ -1132,7 +1132,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 3220
             double steel:profile:massPerMeterKg = 25.3
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_220"
@@ -1149,7 +1149,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 3740
             double steel:profile:massPerMeterKg = 29.4
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_240"
@@ -1166,7 +1166,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 4230
             double steel:profile:massPerMeterKg = 33.2
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_260"
@@ -1183,7 +1183,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 4830
             double steel:profile:massPerMeterKg = 37.9
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_280"
@@ -1200,7 +1200,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 5330
             double steel:profile:massPerMeterKg = 41.8
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_300"
@@ -1217,7 +1217,7 @@ def Scope "Library"
             double steel:profile:areaMm2 = 5880
             double steel:profile:massPerMeterKg = 46.2
             string steel:profile:areaConvention = "nominal_sharp"
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_320"
@@ -1233,7 +1233,7 @@ def Scope "Library"
             double steel:profile:k = 0.05
             double steel:profile:areaMm2 = 7580
             double steel:profile:massPerMeterKg = 59.5
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_350"
@@ -1249,7 +1249,7 @@ def Scope "Library"
             double steel:profile:k = 0.05
             double steel:profile:areaMm2 = 7720
             double steel:profile:massPerMeterKg = 60.6
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_380"
@@ -1265,7 +1265,7 @@ def Scope "Library"
             double steel:profile:k = 0.05
             double steel:profile:areaMm2 = 8040
             double steel:profile:massPerMeterKg = 63.1
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
         def Scope "UPN_400"
@@ -1281,7 +1281,7 @@ def Scope "Library"
             double steel:profile:k = 0.05
             double steel:profile:areaMm2 = 9150
             double steel:profile:massPerMeterKg = 71.8
-            string steel:profile:standard = "EN 10365:2022"
+            string steel:profile:standard = "EN 10365:2017"
         }
 
     }

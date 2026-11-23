@@ -2303,7 +2303,7 @@ mod tests {
             assert_eq!(parametric.family(), want_family);
             assert_eq!(
                 section.standard.as_deref(),
-                Some("EN 10365:2022"),
+                Some("EN 10365:2017"),
                 "{}",
                 entry.designation
             );
