@@ -58,10 +58,12 @@ saved setting.
   fastener set (M12/16/20/24, the environment's fastener library, BC-ENV-002) and, since
   2026-11-16, a material library with the complete published grade set of GB/T 1591-2018
   (fifty-three designations across the as-rolled, normalizing and thermomechanical delivery
-  families; see `ATTRIBUTION.md`), `environments/usa/` (2026-11-15) holds, so far, only a material
-  library with the ASTM grades A36, A992 and the complete A572 Grade 42–65 set — the USA
-  profile pack waits on the #649 provenance audit, so the environment lists no profile or
-  fastener libraries and the grades are its whole content — and `environments/canada/`
+  families; see `ATTRIBUTION.md`), `environments/usa/` (2026-11-15) holds a material
+  library with the ASTM grades A36, A992 and the complete A572 Grade 42–65 set and, since
+  2026-11-23, a profile library with the W and HP shapes of ASTM A6/A6M-05a (285 rows of the
+  standard's own SI column, the root radius from the Nucor-Yamato catalog that permits its
+  use; the declared-area warning is expected on 150 of them; see `usa-astm-a6-profiles.md`)
+  — the environment lists no fastener library yet — and `environments/canada/`
   (2026-11-15) is grades-only the same way: the complete weldable category of
   CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W). `environments/south-america/`
   (2026-11-23, #711) is grades-only as well, and national: the complete grade set of NCh203.Of2006,
