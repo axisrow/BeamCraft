@@ -52,6 +52,34 @@ Open questions are at the end.
   ASTM A6/A6M tables) lands. The design note is
   [`blank-environment.md`](../design/blank-environment.md).
 
+- **USA profile geometry comes from ASTM A6/A6M, not from AISC.** Owner decision: the `usa`
+  environment's rolled-shape libraries re-enter, by hand as BeamCraft's own data, the nominal
+  dimensions, areas and masses of ASTM A6/A6M Annex A2, the route every shipped regional pack
+  takes (facts of a public standard, with the standard and its edition recorded). No standard is
+  bought: the declared edition is the edition of the public copy the rows were read from, for
+  the first slice A6/A6M-05a (W and HP shapes, [design note](../design/usa-astm-a6-profiles.md)),
+  and the declared edition is a provenance statement, not a claim that it is current, as for
+  GOST 26020-83 on 2026-11-16. The AISC Shapes Database and the AISC Manual tables are not an
+  admitted source for catalogue data, neither as copied or converted tables nor as cross-checks:
+  aisc.org grants "personal, internal and noncommercial" use only and forbids distribution and
+  derivative works ([AISC Terms & Conditions §5](https://www.aisc.org/aisc/about-aisc/terms-conditions)),
+  and the database itself carries no licence. AISC specifications remain engineering-rule
+  sources under `AGENTS.md` §2. The values are the standard's own SI column (A6/A6M, Annex A2);
+  a pack converts and rounds nothing. A value a source prints only in inches is converted
+  exactly (x 25.4) and the pack says so. The root radius, which A6/A6M does not print, is taken
+  from the Nucor-Yamato Steel Structural Shapes catalog, which permits reproduction when the
+  revision date and Nucor-Yamato Steel Company are named as the source
+  ([catalog](https://nucoryamato.com/staticdata/catalog.pdf)); that catalog is also the row
+  cross-check. `declared_area_warning` is expected on part of the ASTM rows under either area
+  convention and is not a pack defect there (the decision of 2026-10-18). HSS, tees and the
+  sloped-flange families wait for their own source decisions.
+- **Sourcing principle for regional packs.** Owner decision: national standards whose owner is
+  the state are usable. The standards of private publishers enter a pack only through an open
+  public copy of the official text or through a producer catalog that expressly permits its
+  use. No pack purchases a standard. Every source a pack takes a value from is linked in the
+  documentation with its edition or revision and the retrieval date, in `ATTRIBUTION.md` and in
+  the pack's design note.
+
 ## 2026-11-21
 
 - **Paginate level and assembly listings as summaries.** With `--offset` or `--limit`,
