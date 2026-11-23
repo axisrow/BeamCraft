@@ -127,6 +127,7 @@ mod schedules_store;
 mod script;
 mod sections;
 mod session;
+mod south_america_materials;
 mod start;
 mod t015_grid_rights;
 mod t018_magnetic;

@@ -27,6 +27,31 @@ Open questions are at the end.
   to it is a separate owner decision, taken under the standing pack discipline, and never edits
   the existing rows in place. Fasteners are not part of the pack (#708 carries the fastener set).
 
+- **The South America pack starts as a grades-only `south-america` environment with the national
+  grades of NCh203.Of2006.** Owner decision of 2026-11-23 on the South America pack (#711): act
+  and document in detail, from open online sources only — nothing is purchased, and every source
+  is linked in `ATTRIBUTION.md`. The region's research found one national standard admitted under
+  the maintainer's national-standards principle: NCh203.Of2006, *Acero para uso estructural -
+  Requisitos*, the official Chilean standard for structural steel, which
+  [Decreto 231 of the Ministry of Public Works](https://www.bcn.cl/leychile/navegar?idNorma=249463)
+  declared an official norm of the Republic in 2006, annulling NCh203.Of77 and NCh1159.Of77. Peru
+  and Colombia name ASTM in their regulations, and the section standards of Argentina (IRAM) and
+  Colombia (ICONTEC) belong to private bodies the state recognises: state-recognised is not
+  state-owned, so those standards do not enter under the principle. The pack therefore takes the
+  shape the loader already admits for `usa` and `canada` (#697), one material library and no
+  profile library, and carries the standard's own designations — the steel type letter (A, M, Y),
+  the minimum yield strength in MPa and the class ES (general construction) or ESP (constructions
+  under dynamic loads): A240ES, A270ES, A345ES, M345ES, Y345ES, A250ESP and A345ESP. They are
+  national rows, not ASTM aliases: the relations the standard's informative Annex C draws to ASTM
+  A36 and A572 Grade 50 are conditional on verifying further requirements, so an ASTM name would
+  claim an equivalence the standard does not grant. The declared edition is NCh203.Of2006, the
+  edition every source read names. The standard's text is published by INN; the designations were
+  read from a public technical manual that reproduces the standard's two classification tables
+  and cross-checked against Chilean producer and industry documents, with M345ES and Y345ES
+  resting on that table alone. Profiles are deferred: they follow when the #708 route (the public
+  ASTM A6/A6M tables) lands. The design note is
+  [`blank-environment.md`](../design/blank-environment.md).
+
 ## 2026-11-21
 
 - **Paginate level and assembly listings as summaries.** With `--offset` or `--limit`,
