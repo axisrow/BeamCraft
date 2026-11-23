@@ -2807,6 +2807,306 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_south_africa_ipe_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-africa/profiles-en-10365-ipe.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "south-africa-en-10365-ipe-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 17);
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // The live EN string is the declared standard: EN 10365:2017 carries the IPE series
+            // that DIN 1025-5 specified before EN 10365 superseded it.
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("EN 10365:2017"),
+                "{}",
+                entry.designation
+            );
+            // The D3 declared-area check: the declared catalogue area matches the exact
+            // filleted reference (the 1 percent warning never fires) and the declared mass is
+            // the area at 7850 kg/m3 within the standard's published rounding.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() <= 0.55,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            assert_eq!(section.area_convention, AreaConvention::ExactFilleted);
+        }
+        // The series as EN 10365 publishes it, in the loader's designation order: the sequence
+        // steps 240 to 270 (no IPE 250 or 280) and ends at 600.
+        let designations: Vec<&str> = library
+            .entries
+            .iter()
+            .map(|e| e.designation.as_str())
+            .collect();
+        assert_eq!(
+            designations,
+            [
+                "IPE100", "IPE120", "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240",
+                "IPE270", "IPE300", "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550",
+                "IPE600",
+            ]
+        );
+        // Every row is the europe pack's IPE row of the same designation, value for value: one
+        // transcription of the series serves both packs.
+        let europe = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/profiles-en-10365.usda"
+        ))
+        .unwrap();
+        let twins: Vec<&LibraryEntry> = europe
+            .entries
+            .iter()
+            .filter(|e| e.designation.starts_with("IPE"))
+            .collect();
+        assert_eq!(twins.len(), 17);
+        let rows: Vec<&LibraryEntry> = library.entries.iter().collect();
+        assert_eq!(rows, twins, "the IPE rows are the europe pack's");
+        // Spot checks against the standard's published values.
+        let ipe300 = library.entry("IPE300").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &ipe300.record
+        else {
+            panic!("IPE300 is not a parametric section");
+        };
+        assert_eq!(p.values(), [300.0, 150.0, 7.1, 10.7, 15.0]);
+        assert_eq!(section.area_mm2, Some(5381.0));
+        assert_eq!(section.mass_per_meter_kg, Some(42.2));
+        let ipe100 = library.entry("IPE100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &ipe100.record
+        else {
+            panic!("IPE100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 55.0, 4.1, 5.7, 7.0]);
+        assert_eq!(section.area_mm2, Some(1032.0));
+        assert_eq!(section.mass_per_meter_kg, Some(8.1));
+        // Out of this library: the BS UB/UC/UBP/PFC series of South African practice (an open
+        // owner question), the other EN 10365 series, the sizes beyond IPE 600, and any other
+        // spelling of a shipped designation.
+        for absent in [
+            "IPE250",
+            "IPE280",
+            "IPE750",
+            "HEA200",
+            "HEB200",
+            "UPE200",
+            "UPN200",
+            "UB203x133x25",
+            "UC203x203x46",
+            "UBP254x254x71",
+            "PFC200",
+            "IPE 300",
+            "ipe300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_south_africa_sans_50025_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-africa/materials-sans-50025.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "south-africa-sans-50025-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 27);
+        // The structural grade sets of SANS 50025-2/-3/-4:2009, in the loader's designation
+        // order, each with its part and the pack density. The 2009 SANS parts adopt the 2004
+        // EN editions: S450J0 ships, the S460 JR/J0/J2/K2 qualities, S500J0, S500M and S500ML
+        // the 2019 EN revision added do not, and S185 and the E295/E335/E360 engineering steels,
+        // whose chemical composition the standard does not specify, ride no rows.
+        let part2 = "SANS 50025-2:2009";
+        let part3 = "SANS 50025-3:2009";
+        let part4 = "SANS 50025-4:2009";
+        let expected: [(&str, &str); 27] = [
+            ("S235J0", part2),
+            ("S235J2", part2),
+            ("S235JR", part2),
+            ("S275J0", part2),
+            ("S275J2", part2),
+            ("S275JR", part2),
+            ("S275M", part4),
+            ("S275ML", part4),
+            ("S275N", part3),
+            ("S275NL", part3),
+            ("S355J0", part2),
+            ("S355J2", part2),
+            ("S355JR", part2),
+            ("S355K2", part2),
+            ("S355M", part4),
+            ("S355ML", part4),
+            ("S355N", part3),
+            ("S355NL", part3),
+            ("S420M", part4),
+            ("S420ML", part4),
+            ("S420N", part3),
+            ("S420NL", part3),
+            ("S450J0", part2),
+            ("S460M", part4),
+            ("S460ML", part4),
+            ("S460N", part3),
+            ("S460NL", part3),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+        // Cross-check against the shipped `europe` pack, the independently transcribed 2019 EN
+        // editions: every SANS grade but S450J0 is a 2019 EN grade too, and the 2019 EN grades
+        // the pack lacks are exactly those the 2019 revision added.
+        let europe = load_material(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/materials-en-10025.usda"
+        ))
+        .unwrap();
+        let sans: Vec<&str> = library
+            .entries
+            .iter()
+            .map(|e| e.designation.as_str())
+            .collect();
+        let added_in_2019 = [
+            "S460JR", "S460J0", "S460J2", "S460K2", "S500J0", "S500M", "S500ML",
+        ];
+        for entry in &europe.entries {
+            assert_eq!(
+                sans.contains(&entry.designation.as_str()),
+                !added_in_2019.contains(&entry.designation.as_str()),
+                "{}",
+                entry.designation
+            );
+        }
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no lowercase, no delivery-condition suffix and no grade of another edition.
+        for absent in [
+            "S235", "S355", "s355j2", "S355K2+N", "S460JR", "S500J0", "S500M", "S185", "E295",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_south_africa_environment_admits_its_libraries() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-africa/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "south-africa");
+        assert_eq!(environment.info.version.as_deref(), Some("1"));
+        assert_eq!(environment.info.libraries, ["profiles-en-10365-ipe.usda"]);
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-sans-50025.usda"]
+        );
+        // The environment names no fastener library (#708), so that namespace stays empty.
+        assert!(environment.info.fastener_libraries.is_empty());
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.sources[0].library.entries.len(), 17);
+        assert!(environment.sources[0].library.rejected.is_empty());
+        assert!(environment.fastener_sources.is_empty());
+        assert_eq!(environment.material_sources.len(), 1);
+        assert_eq!(environment.material_sources[0].library.entries.len(), 27);
+        assert!(environment.material_sources[0].library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, s355) = lookup.find("S355J2").unwrap();
+        assert_eq!(source.library.info.id, "south-africa-sans-50025-materials");
+        assert!(matches!(
+            &s355.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("SANS 50025-2:2009")
+        ));
+        // A bolt designation stays NOT_FOUND: the pack carries no fastener set.
+        assert_eq!(
+            environment.fastener_lookup().find("M20").unwrap_err().code,
+            ErrorCode::NotFound
+        );
+    }
+
+    #[test]
     fn the_shipped_russia_gost_27772_materials_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

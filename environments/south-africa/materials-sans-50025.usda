@@ -1,0 +1,182 @@
+#usda 1.0
+(
+    doc = "BeamCraft South Africa structural steel grades: the structural grade sets of SANS 50025-2 (non-alloy structural steels: S235, S275 and S355 in the JR, J0 and J2 qualities, S355K2 and S450J0), SANS 50025-3 (normalized/normalized rolled weldable fine grain steels, S275 to S460 in N and NL) and SANS 50025-4 (thermomechanical rolled weldable fine grain steels, S275 to S460 in M and ML). Each 2009 SANS part adopts the 2004 edition of its EN 10025 part, so the sets are those of EN 10025:2004: S450J0 ships, and the grades the 2019 EN revision added (the S460 JR, J0, J2 and K2 qualities, S500J0, S500M and S500ML) are not in the pack; S185, E295, E335 and E360, whose chemical composition the standard does not specify, ride no rows. Re-entered by hand as our own data; the density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1). No text or table is copied from a standard document. BeamCraft contributors, MPL-2.0. Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "south-africa-sans-50025-materials"
+        string "bim:library:title" = "SANS 50025 structural steel grades (parts 2, 3 and 4)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standards SANS 50025-2/-3/-4:2009 (SABS edition 1, the national adoptions of the EN 10025 2004 editions): the structural grade sets re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "S235J0"
+        {
+            string steel:material:grade = "S235J0"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S235J2"
+        {
+            string steel:material:grade = "S235J2"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S235JR"
+        {
+            string steel:material:grade = "S235JR"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275J0"
+        {
+            string steel:material:grade = "S275J0"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275J2"
+        {
+            string steel:material:grade = "S275J2"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275JR"
+        {
+            string steel:material:grade = "S275JR"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275M"
+        {
+            string steel:material:grade = "S275M"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275ML"
+        {
+            string steel:material:grade = "S275ML"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275N"
+        {
+            string steel:material:grade = "S275N"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S275NL"
+        {
+            string steel:material:grade = "S275NL"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355J0"
+        {
+            string steel:material:grade = "S355J0"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355J2"
+        {
+            string steel:material:grade = "S355J2"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355JR"
+        {
+            string steel:material:grade = "S355JR"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355K2"
+        {
+            string steel:material:grade = "S355K2"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355M"
+        {
+            string steel:material:grade = "S355M"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355ML"
+        {
+            string steel:material:grade = "S355ML"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355N"
+        {
+            string steel:material:grade = "S355N"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S355NL"
+        {
+            string steel:material:grade = "S355NL"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420M"
+        {
+            string steel:material:grade = "S420M"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420ML"
+        {
+            string steel:material:grade = "S420ML"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420N"
+        {
+            string steel:material:grade = "S420N"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S420NL"
+        {
+            string steel:material:grade = "S420NL"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S450J0"
+        {
+            string steel:material:grade = "S450J0"
+            string steel:material:standard = "SANS 50025-2:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460M"
+        {
+            string steel:material:grade = "S460M"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460ML"
+        {
+            string steel:material:grade = "S460ML"
+            string steel:material:standard = "SANS 50025-4:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460N"
+        {
+            string steel:material:grade = "S460N"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "S460NL"
+        {
+            string steel:material:grade = "S460NL"
+            string steel:material:standard = "SANS 50025-3:2009"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}

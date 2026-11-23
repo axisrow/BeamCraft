@@ -80,6 +80,33 @@ Open questions are at the end.
   documentation with its edition or revision and the retrieval date, in `ATTRIBUTION.md` and in
   the pack's design note.
 
+- **The South Africa pack ships the IPE series under EN 10365:2017 and the SANS 50025 grade
+  sets.** The series decision of the South Africa pack (#714, one of the regional packs of the
+  2026-10-27 coverage decision) is taken for its first slice, following the owner direction on
+  upstream #877 (SANS 50025 / EN 10025 for grades, DIN 1025 for the IPE series; independently
+  sourced data, a permitted licence and attribution per dataset) and the sourcing principle
+  above: SANS 50025 is a national standard, and every source the pack takes a value from is
+  linked in `ATTRIBUTION.md` and in the design note
+  ([`blank-environment.md`](../design/blank-environment.md)):
+  - *Sections:* the IPE series, IPE 100 to IPE 600, with `steel:profile:standard =
+    "EN 10365:2017"` on every row. DIN 1025-5 (the IPE part, commonly cited as 1994-03) is
+    superseded by EN 10365:2017, which carries the IPE series, so the live EN string is the
+    declared standard and the rows are the `europe` pack's IPE rows, value for value.
+  - *Materials:* the structural grade sets of SANS 50025-2, -3 and -4, declared per row as the
+    2009 SANS editions (`SANS 50025-2:2009`, `SANS 50025-3:2009`, `SANS 50025-4:2009`). The
+    2009 SANS parts are the national adoptions of the EN 10025 2004 editions (SANS 50025-2:2009
+    states its identical implementation of EN 10025-2:2004 and EN corrigendum 1:2005), so the
+    pack ships the 2004 grade sets: S450J0 is in, and the grades the 2019 EN revision added —
+    the S460 JR, J0, J2 and K2 qualities, S500J0, S500M and S500ML — stay `NOT_FOUND`. EN 10025
+    parts 2, 3 and 4 have since been revised to 2019; whether the pack follows is a future
+    edition decision, taken as its own PR that never edits the existing rows in place.
+  - *Not in this slice:* the BS UB/UC series (with UBP and PFC) that South African practice also
+    uses. The direction names the IPE series only, so the series question of #714 — BS UB/UC,
+    the EN re-designations or both — stays open for those families, and UB, UC, UBP and PFC
+    designations are `NOT_FOUND` until the owner decides. ArcelorMittal South Africa's I-sections
+    catalogue is a cross-check source only (no table is copied from it); fasteners are out of
+    scope (#708).
+
 ## 2026-11-21
 
 - **Paginate level and assembly listings as summaries.** With `--offset` or `--limit`,
@@ -782,3 +809,4 @@ For the `check-model` harness (design in issue #634, contract in
 | 12 | Which DIN or ISO numbers make the first fastener set and who enters the values (bolt amendment O-B2a) | A14.1 |
 | 13 | Whole sub-assembly nested instead of a conflict when a workshop weld meets a part already in an assembly (weld amendment O-W1) | A06.2, A16 |
 | 14 | Whether bolts and welds are numbered, and where defaults for omitted command arguments live (project, user or both) | A09 follow-up |
+| 15 | Whether the South Africa pack adds the BS UB/UC series (with UBP and PFC) beside its IPE series, and whether its grades follow the 2019 revisions of EN 10025 | #714 |

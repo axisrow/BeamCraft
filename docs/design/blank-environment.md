@@ -87,7 +87,21 @@ saved setting.
   declared with the edition the regional producer prints (A36/A36M-19, A572/A572M-21,
   A992/A992M-20); the HL, HD and HP series and the sizes above 600 stay `NOT_FOUND`, the
   channels and the BS, American and Australian series are outside the mix, and the environment
-  lists no fastener library (see `ATTRIBUTION.md`).
+  lists no fastener library (see `ATTRIBUTION.md`). `environments/south-africa/` (2026-11-23,
+  #714) holds a profile library with the EN 10365:2017 IPE series (IPE 100 to IPE 600, the
+  `europe` pack's IPE rows, declared against the live EN string because EN 10365 superseded
+  DIN 1025-5; cross-checked against the
+  [EMSTEEL Heavy Sections catalogue](https://emsteel.com/pdf/2025/05/heavy-section.pdf)) and a
+  material library with the structural grade sets of SANS 50025-2/-3/-4:2009, the national
+  adoptions of the EN 10025 2004 editions (twenty-seven designations: S235 to S450 in the JR,
+  J0, J2 and K2 qualities, S275 to S460 in N, NL, M and ML; editions per the
+  [SABS catalogue](https://store.sabs.co.za/sans-50025-2-2009-ed-1-00.html), grade sets read from
+  public text copies of [EN 10025-2:2004](https://www.corrugatedmetalculvert.com/pdf/BS_EN_10025-2-2004.pdf),
+  [EN 10025-3:2004](https://www.corrugatedmetalculvert.com/pdf/BS_EN_10025-3-2004.pdf) and
+  [EN 10025-4:2004](https://www.corrugatedmetalculvert.com/pdf/BS_EN_10025-4-2004.pdf), all
+  retrieved 2026-11-23; see `ATTRIBUTION.md`); the BS UB/UC series is an open owner question and
+  the environment lists no fastener library (owner decision of 2026-11-23 in
+  `docs/plan/decisions.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or
