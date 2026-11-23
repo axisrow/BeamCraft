@@ -63,7 +63,19 @@ saved setting.
   profile pack waits on the #649 provenance audit, so the environment lists no profile or
   fastener libraries and the grades are its whole content — and `environments/canada/`
   (2026-11-15) is grades-only the same way: the complete weldable category of
-  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W), and `environments/australia/`
+  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W). `environments/south-america/`
+  (2026-11-23, #711) is grades-only as well, and national: the complete grade set of NCh203.Of2006,
+  the official Chilean structural steel standard, in the standard's own designations — the
+  general-construction class ES (A240ES, A270ES, A345ES, M345ES, Y345ES) and the dynamic-load class
+  ESP (A250ESP, A345ESP). Its status is public:
+  [Decreto 231 of 2006 of the Ministry of Public Works declares NCh203.Of2006 an official norm of
+  the Republic](https://www.bcn.cl/leychile/navegar?idNorma=249463) and annuls NCh203.Of77 and
+  NCh1159.Of77. The environment lists no profile library — the region's profile pack follows the
+  #708 route — so a grade is its whole content: `create-project --environment south-america` lets
+  a new model select one (`--material A270ES`). The standard's text is published by INN; the rows
+  were read from a public technical manual that reproduces the standard's two classification
+  tables and cross-checked against Chilean producer tables, with M345ES and Y345ES resting on
+  that table alone (sources in `ATTRIBUTION.md`). Finally, `environments/australia/`
   carries, since 2026-11-16, a material library with the AS/NZS 3678-2016 base grades
   (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads

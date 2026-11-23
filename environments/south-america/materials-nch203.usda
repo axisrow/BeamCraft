@@ -1,0 +1,62 @@
+#usda 1.0
+(
+    doc = "BeamCraft South America structural steel grades: the complete grade set of NCh203.Of2006 (Acero para uso estructural - Requisitos), the official Chilean standard for structural steel, in the standard's own national designations — the steel type letter (A, carbon steel; M, microalloyed steel; Y, high-strength low-alloy steel), the minimum yield strength in MPa and the class: ES for steels of general construction (A240ES, A270ES, A345ES, M345ES, Y345ES) and ESP for steels of constructions under dynamic loads (A250ESP, A345ESP). The optional condition letters of a full designation (N, RH, RP) are not grade rows, and the relations of the standard's informative Annex C to ASTM A36 and A572 Grade 50 are not aliases. Re-entered by hand as our own data; no text or table is copied from the standard. The density is the 7850 kg/m3 every shipped profile pack computes its masses with (EN 1991-1-1). Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "south-america-nch203-materials"
+        string "bim:library:title" = "NCh203 structural steel grades (NCh203.Of2006, ES and ESP classes)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standard NCh203.Of2006 grade designations, the complete ES and ESP sets, re-entered as our own data; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "A240ES"
+        {
+            string steel:material:grade = "A240ES"
+            string steel:material:standard = "NCh203.Of2006"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A270ES"
+        {
+            string steel:material:grade = "A270ES"
+            string steel:material:standard = "NCh203.Of2006"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A345ES"
+        {
+            string steel:material:grade = "A345ES"
+            string steel:material:standard = "NCh203.Of2006"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "M345ES"
+        {
+            string steel:material:grade = "M345ES"
+            string steel:material:standard = "NCh203.Of2006"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "Y345ES"
+        {
+            string steel:material:grade = "Y345ES"
+            string steel:material:standard = "NCh203.Of2006"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A250ESP"
+        {
+            string steel:material:grade = "A250ESP"
+            string steel:material:standard = "NCh203.Of2006"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "A345ESP"
+        {
+            string steel:material:grade = "A345ESP"
+            string steel:material:standard = "NCh203.Of2006"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}
