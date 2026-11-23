@@ -89,6 +89,7 @@ mod libraries;
 mod listing_pages;
 mod lofted_plates;
 mod members;
+mod middle_east_environment;
 mod model_checks;
 mod numbering;
 mod numbering_approval;

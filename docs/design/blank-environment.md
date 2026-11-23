@@ -65,7 +65,15 @@ saved setting.
   (2026-11-15) is grades-only the same way: the complete weldable category of
   CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W), and `environments/australia/`
   carries, since 2026-11-16, a material library with the AS/NZS 3678-2016 base grades
-  (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from).
+  (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from),
+  and `environments/middle-east/` (2026-11-23, the curated mix of the owner decision of that
+  day) holds one profile library with the EN 10365:2017 IPE, HEA and HEB rows of the `europe`
+  pack, sizes 100 to 600 (fifty-five rows carried over unchanged), and a material library with
+  the ASTM grades A36, A992 and the complete A572 Grade 42–65 set of the `usa` pack, each
+  declared with the edition the regional producer prints (A36/A36M-19, A572/A572M-21,
+  A992/A992M-20); the HL, HD and HP series and the sizes above 600 stay `NOT_FOUND`, the
+  channels and the BS, American and Australian series are outside the mix, and the environment
+  lists no fastener library (see `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or

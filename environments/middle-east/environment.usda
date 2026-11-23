@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "middle-east"
+        string "bim:environment:version" = "1"
+        string "bim:environment:title" = "Middle East (EN 10365:2017 sections, ASTM A36, A572, A992 grades)"
+        string[] "bim:environment:libraries" = ["profiles-en-10365.usda"]
+        string[] "bim:environment:material-libraries" = ["materials-astm.usda"]
+    }
+)
