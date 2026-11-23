@@ -190,7 +190,7 @@ read.
 ```text
 list-library (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
     [--user-library FILE] [--family TEXT] [--filter TEXT] [--offset N] [--limit N]
-    [--shadow-offset N]
+    [--shadow-offset N] [--namespace profile|fastener|material|all]
 ```
 
 ### show-library
@@ -200,7 +200,7 @@ read.
 ```text
 show-library --designation TEXT
     (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
-    [--user-library FILE]
+    [--user-library FILE] [--namespace profile|fastener|material]
 ```
 
 ### add-library

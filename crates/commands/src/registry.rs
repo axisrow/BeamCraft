@@ -553,6 +553,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--offset", "N"),
             opt("--limit", "N"),
             opt("--shadow-offset", "N"),
+            opt("--namespace", "profile|fastener|material|all"),
         ],
     ),
     entry(
@@ -568,6 +569,7 @@ pub const COMMANDS: &[Command] = &[
             one(1, "--fastener-library", "FILE"),
             one(1, "--project", "ROOT"),
             opt("--user-library", "FILE"),
+            opt("--namespace", "profile|fastener|material"),
         ],
     ),
     entry(

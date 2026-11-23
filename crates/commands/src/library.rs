@@ -45,6 +45,10 @@
 //! [`ProjectChain::material_lookup`]), and every namespace of the firm layer feeds its own
 //! chain.
 //!
+//! A project chain has three namespaces ([`Namespace`]): a listing walks their resolvers one
+//! after another and never merges them, because the same text may be a grade and a designation
+//! ([`ProjectChain::lookup_of`], [`Lookup::matching`]).
+//!
 //! Limits, none of them hidden: a bad entry is reported and skipped, while a duplicate
 //! designation refuses the whole library; a firm file that does not read is reported and skipped
 //! by [`load_firm`], never silently dropped; a project copy whose `environment/` folder survives
@@ -768,12 +772,44 @@ pub struct Shadowed {
     pub shadowed_layer: &'static str,
 }
 
+/// A catalogue namespace: one of the three kinds of library an environment selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Namespace {
+    /// Profiles: entries under `/Library/Profiles`.
+    Profile,
+    /// Fasteners: entries under `/Library/Fasteners`.
+    Fastener,
+    /// Materials: entries under `/Library/Materials`.
+    Material,
+}
+
+impl Namespace {
+    /// Every namespace, in listing order.
+    pub const ALL: [Self; 3] = [Self::Profile, Self::Fastener, Self::Material];
+
+    /// The token of `--namespace` and of a reply's `namespace`.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::Fastener => "fastener",
+            Self::Material => "material",
+        }
+    }
+
+    /// The namespace of a token; any other text is `None`.
+    pub fn parse(token: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|namespace| namespace.token() == token)
+    }
+}
+
 /// Libraries in lookup order, strongest first.
 ///
 /// The first library that has a designation answers for it, and a refused entry answers with its
 /// refusal: a weaker library is never consulted for a designation that a stronger one declares,
-/// valid or not.
-#[derive(Debug, Clone, PartialEq)]
+/// valid or not. A default lookup has no library and answers nothing.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Lookup {
     sources: Vec<Source>,
 }
@@ -854,12 +890,22 @@ impl Lookup {
 
     /// The entries that answer a lookup, one per designation, in designation order.
     pub fn effective(&self) -> Vec<(&Source, &LibraryEntry)> {
+        self.matching(None)
+    }
+
+    /// The entries that answer a lookup, one per designation in designation order, whose
+    /// designation matches `text` ([`designation_matches`]); every one of them when `text` is
+    /// `None`.
+    pub fn matching(&self, text: Option<&str>) -> Vec<(&Source, &LibraryEntry)> {
         self.slots()
             .0
             .into_values()
             .filter_map(|(_, _, slot)| match slot {
                 Slot::Entry(source, entry) => Some((source, entry)),
                 Slot::Refused => None,
+            })
+            .filter(|(_, entry)| {
+                text.is_none_or(|text| designation_matches(&entry.designation, text))
             })
             .collect()
     }
@@ -875,6 +921,24 @@ impl Lookup {
         records.retain(|s| s.designation == designation);
         records
     }
+}
+
+/// Whether a designation matches a search text: both lower-cased in every script and stripped of
+/// whitespace; the folded text must occur in the folded designation.
+///
+/// This is a search, never a lookup: it proposes entries, and an exact lookup disposes.
+pub fn designation_matches(designation: &str, text: &str) -> bool {
+    fold(designation).contains(&fold(text))
+}
+
+/// The search fold of one text. Lower-casing is per character, so it is a widening of the ASCII
+/// fold it replaces for every needle: a context-dependent rule (the Greek final sigma) could turn
+/// a designation and a needle that agreed into ones that do not.
+fn fold(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// A loaded environment: its libraries in lookup order.
@@ -1300,6 +1364,20 @@ pub struct ProjectChain {
     pub environment_lost: Option<EnvironmentCopyLost>,
     /// The firm files that did not read, in file-name order.
     pub firm_refused: Vec<FirmFileRefused>,
+}
+
+impl ProjectChain {
+    /// The resolver of one namespace over the chain, strongest first; `None` when no layer of
+    /// the chain declares a library of that namespace. The resolvers stay apart on purpose: the
+    /// same text may be a grade and a designation, so one merged lookup would report that as
+    /// shadowing.
+    pub fn lookup_of(&self, namespace: Namespace) -> Option<&Lookup> {
+        match namespace {
+            Namespace::Profile => Some(&self.lookup),
+            Namespace::Fastener => self.fastener_lookup.as_ref(),
+            Namespace::Material => self.material_lookup.as_ref(),
+        }
+    }
 }
 
 /// Builds the [`ProjectChain`] of the project folder at `store`. The project's environment copy
@@ -2111,6 +2189,99 @@ mod tests {
         );
         assert!(lookup.effective().is_empty());
         assert_eq!(lookup.shadowed().len(), 1);
+    }
+
+    #[test]
+    fn namespace_tokens_round_trip_and_refuse_any_other_text() {
+        let tokens: Vec<&str> = Namespace::ALL
+            .iter()
+            .map(|namespace| namespace.token())
+            .collect();
+        assert_eq!(tokens, ["profile", "fastener", "material"], "listing order");
+        for namespace in Namespace::ALL {
+            assert_eq!(Namespace::parse(namespace.token()), Some(namespace));
+        }
+        // `all` names a listing, a token is exact: neither names a namespace.
+        for other in ["all", "Profile", "bolt", "", "profile "] {
+            assert_eq!(Namespace::parse(other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn lookup_of_hands_every_namespace_its_own_resolver() {
+        let mut chain = ProjectChain {
+            lookup: Lookup::new(vec![source("a", "profiles", &[("P", "X-1")])]),
+            fastener_lookup: None,
+            material_lookup: None,
+            environment: None,
+            environment_lost: None,
+            firm_refused: Vec::new(),
+        };
+        assert_eq!(
+            chain
+                .lookup_of(Namespace::Profile)
+                .map(|lookup| lookup.find("X-1").is_ok()),
+            Some(true),
+            "the profile resolver is always there"
+        );
+        assert!(chain.lookup_of(Namespace::Fastener).is_none());
+        assert!(chain.lookup_of(Namespace::Material).is_none());
+        chain.fastener_lookup = Some(Lookup::new(vec![source("b", "bolts", &[("P", "X-1")])]));
+        // The same designation in two namespaces is no shadow: every resolver answers it from
+        // its own library and reports none.
+        for (namespace, library) in [
+            (Namespace::Profile, "profiles"),
+            (Namespace::Fastener, "bolts"),
+        ] {
+            let lookup = chain.lookup_of(namespace).unwrap();
+            assert_eq!(lookup.find("X-1").unwrap().0.library.info.id, library);
+            assert!(lookup.shadowed().is_empty(), "{namespace:?}");
+        }
+        assert!(chain.lookup_of(Namespace::Material).is_none());
+    }
+
+    #[test]
+    fn the_search_folds_case_script_and_whitespace_and_stays_a_search() {
+        for (designation, text, matches) in [
+            ("IPE300", "ipe300", true),
+            ("IPE300", "IPE 300", true),
+            ("I PE 300", "ipe300", true),
+            ("IPE300", "ipe30", true),
+            ("IPE300", "ipe3000", false),
+            ("IPE300", "ipe200", false),
+            ("С345", "с345", true),
+            ("С345", "С345", true),
+            ("C345", "с345", false),
+        ] {
+            assert_eq!(
+                designation_matches(designation, text),
+                matches,
+                "{designation:?} / {text:?}"
+            );
+        }
+        let lookup = Lookup::new(vec![source(
+            "a",
+            "lib",
+            &[("P", "IPE300"), ("Q", "IPE200"), ("R", "Ш20К1")],
+        )]);
+        let names = |text: &str| -> Vec<&str> {
+            lookup
+                .matching(Some(text))
+                .into_iter()
+                .map(|(_, e)| e.designation.as_str())
+                .collect()
+        };
+        assert_eq!(names("ipe"), ["IPE200", "IPE300"]);
+        assert_eq!(names("IPE 3"), ["IPE300"]);
+        assert_eq!(names("ш20"), ["Ш20К1"]);
+        assert!(
+            names("ipe250").is_empty(),
+            "a search never proposes a near match"
+        );
+        // Without a text every answering entry is listed, as `effective` lists them.
+        assert_eq!(lookup.matching(None).len(), 3);
+        // Search proposes; the exact lookup disposes, in the designation's own spelling.
+        assert_eq!(lookup.find("ipe300").unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]

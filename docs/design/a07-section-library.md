@@ -508,6 +508,69 @@ absent resolves every placed definition. The record is provenance and warning in
 re-resolves a designation. A store without a record — a plain project, or one created before
 the record existed — behaves exactly as before.
 
+## 13. Searching the namespaces of a project chain (#628)
+
+A project's chain carries three namespaces over the same layers — profiles, fasteners and
+materials — and until this section only the profiles could be listed or searched: the fastener
+and material resolvers of the chain (`ProjectChain::fastener_lookup`, `material_lookup`) reached
+no command, and `--filter` matched ASCII case only, so `с245` never found the Cyrillic grade
+`С245` of the Russia pack. No new command: `list-library --filter` already is the search, with
+the reply shape, the paging and the shadow report the project uses, and it now reaches all three
+namespaces.
+
+```text
+list-library (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
+    [--user-library FILE] [--family TEXT] [--filter TEXT] [--offset N] [--limit N]
+    [--shadow-offset N] [--namespace profile|fastener|material|all]
+
+show-library --designation TEXT
+    (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
+    [--user-library FILE] [--namespace profile|fastener|material]
+```
+
+`--namespace` needs `--project` (`INVALID_ARGUMENT` otherwise): the namespaces are those of a
+project chain, while `--library`, `--environment` and `--fastener-library` already name one file
+of one namespace. Without the option the reply keeps its shape and content. With it, every
+listed entry carries `namespace`, and the `show-library` reply and its entry also carry `layer`.
+`all` lists the three resolvers in the order profile, fastener, material, each in designation
+order, then the refused entries: one position space for `--offset` / `--limit`. `libraries`,
+`shadowed`, `shadowed_count` and `shadowed_next_offset` cover the listed namespaces in the same
+order; `show-library` takes one namespace (`all` is `INVALID_ARGUMENT`).
+
+Two rules carry the design:
+
+* **The namespaces are never merged into one lookup.** The same text may be a grade and a
+  designation — the Australia grades are `250`, `300`, … — and a merged lookup would report that
+  as shadowing. Each namespace keeps its own resolver (`ProjectChain::lookup_of`) and its own
+  shadow report; a listing walks them one after another.
+* **Search proposes, exact lookup disposes.** `--filter` folds case in every script and drops
+  whitespace from the needle and the designation, so `IPE 300`, `ipe300` and the lower-case
+  Cyrillic `с345` find `IPE300`, `IPE300` and `С345`. The fold is a widening of the ASCII one it
+  replaces: every needle that matched before still matches. `show-library --designation` and the
+  `--profile`, `--material` and `--designation` of a creation command stay exact and
+  case-sensitive: `IPE 300`, `ipe300` and `с345` are `NOT_FOUND`, never a near match, never an
+  answer from another namespace or from another layer under a refused entry.
+
+There is no search index and nothing is persisted: the search scans the entries the process has
+just loaded, under the standing bounds (4096 entries per library, 32 libraries per list, 8 MiB
+per file), so nothing can go stale. Two limits are recorded rather than hidden. The model layer
+is not searched: `list-library` never opens the store by design, so the model's own names are
+reached through `definitions --name`, exact. And the search covers the project's chain only,
+never other environments: a designation means something only inside its environment, and a hit
+from another one cannot be used in the project.
+
+The engine side is `beamcraft_commands::library`: `Namespace` (with `ALL`, `token` and `parse`),
+`ProjectChain::lookup_of`, `Lookup::matching` and `designation_matches`. Nothing is stored, so
+no schema, digest or store changes; `geom`, `model` and `kernel` are untouched.
+
+Evidence: `cargo test -p beamcraft-cli --test cli -- catalog_namespaces::` (real binary, a
+project created from the shipped europe environment beside one mixed firm file, and a second
+from the russia environment: every namespace lists and searches through one command, the
+Cyrillic fold, one position space walked a page at a time, the shadow report of every namespace,
+the exact lookup inside its namespace, the three refusals, the unchanged reply without
+`--namespace`, a lost environment copy reported in every namespace) and the `library` unit tests
+of `beamcraft-commands` (tokens, `lookup_of`, the fold table).
+
 ## Provenance
 
 Section families and their parameters are generic engineering geometry described in public

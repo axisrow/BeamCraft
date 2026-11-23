@@ -1,0 +1,622 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic firm libraries that follow no national standard, MPL-2.0. The
+// projects are created from the shipped europe, russia and blank environments, whose provenance
+// and licences are in `ATTRIBUTION.md`.
+
+//! The catalogue search of #628 end to end through the real `beamcraft` binary: a project's
+//! chain carries three namespaces, profiles, fasteners and materials, and `--namespace` on
+//! `list-library` and `show-library` reaches all of them. `all` pages the three resolvers as one
+//! position space in that order; the resolvers are never merged, so the shadow report covers
+//! every namespace without a record across two of them; `--filter` folds case in every script
+//! and drops whitespace, while every exact lookup stays exact and inside its namespace; without
+//! `--namespace` the replies keep their shape. Every run names its own `BEAMCRAFT_CONFIG_DIR`,
+//! so the user's real application data is never read or written.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use crate::support::{self, at, list, text};
+
+use beamcraft_json::{Json, Limits};
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
+const ACTOR: &str = "0199e7a0-0000-7000-8000-000000000426";
+
+struct Fixture {
+    shared: support::StoreFixture,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let fixture = Self {
+            shared: support::StoreFixture::new("catalog-namespaces-tests"),
+        };
+        fs::create_dir_all(fixture.shared.root.join("config/libraries")).unwrap();
+        fs::create_dir(fixture.shared.root.join("models")).unwrap();
+        fixture
+    }
+    fn path(&self, name: &str) -> String {
+        self.shared.root.join(name).to_str().unwrap().to_owned()
+    }
+    fn raw(&self, args: &[&str]) -> (i32, Json) {
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(args)
+            .env("BEAMCRAFT_CONFIG_DIR", self.path("config"))
+            .output()
+            .unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+        (output.status.code().unwrap(), body)
+    }
+    fn ok(&self, args: &[&str]) -> Json {
+        let (code, body) = self.raw(args);
+        assert_eq!(code, 0, "{args:?}: {body:?}");
+        body
+    }
+    fn code(&self, args: &[&str]) -> String {
+        let (code, body) = self.raw(args);
+        assert_eq!(code, 2, "{args:?}: {body:?}");
+        text(&body, "code")
+    }
+    /// Installs the mixed firm file into the application data's `libraries/` and answers its path.
+    fn firm(&self) -> String {
+        let path = self.shared.root.join("config/libraries/mine.usda");
+        fs::write(&path, firm_file()).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+    /// Creates a project named `name` from the shipped environment `environment` and answers
+    /// its store path.
+    fn create(&self, name: &str, environment: &str) -> String {
+        let models = self.path("models");
+        text(
+            at(
+                &self.ok(&[
+                    "create-project",
+                    "--parent",
+                    &models,
+                    "--name",
+                    name,
+                    "--actor-id",
+                    ACTOR,
+                    "--environment",
+                    environment,
+                ]),
+                &["project"],
+            ),
+            "path",
+        )
+    }
+    /// `list-library --project STORE` with the extra options.
+    fn listing(&self, store: &str, options: &[&str]) -> Json {
+        let mut args = vec!["list-library", "--project", store];
+        args.extend_from_slice(options);
+        self.ok(&args)
+    }
+    /// `show-library --project STORE --designation DESIGNATION` with the extra options.
+    fn shown(&self, store: &str, options: &[&str], designation: &str) -> Json {
+        let mut args = vec!["show-library", "--project", store];
+        args.extend_from_slice(options);
+        args.extend(["--designation", designation]);
+        self.ok(&args)
+    }
+    /// The refusal code of `show-library --project STORE --designation DESIGNATION`.
+    fn not_found(&self, store: &str, options: &[&str], designation: &str) {
+        let mut args = vec!["show-library", "--project", store];
+        args.extend_from_slice(options);
+        args.extend(["--designation", designation]);
+        assert_eq!(self.code(&args), "NOT_FOUND", "{args:?}");
+    }
+}
+
+/// The mixed firm file of the suite, `bim:library:id` `mine`: the profile `IPE300` at another
+/// height than the shipped one, the bolts `M20` (another thread protrusion than the shipped
+/// one) and `FIRM-M16`, the grades `S355J0` (another density than the shipped one) and
+/// `FIRM-S355`. Every value is invented for these tests. The entry prim of a designation with
+/// a hyphen carries an underscore: a prim name is an identifier.
+fn firm_file() -> String {
+    let profile = "        def Scope \"IPE300\"\n        {\nstring steel:profile:designation = \"IPE300\"\ntoken steel:profile:family = \"i_shape\"\ndouble steel:profile:hMm = 299\ndouble steel:profile:bMm = 150\ndouble steel:profile:twMm = 7.1\ndouble steel:profile:tfMm = 10.7\ndouble steel:profile:rMm = 15\n        }\n";
+    let bolt = |prim: &str, designation: &str, diameter: f64| {
+        format!(
+            "        def Scope \"{prim}\"\n        {{\nstring steel:fastener:designation = \"{designation}\"\ntoken steel:fastener:kind = \"bolt\"\ntoken steel:fastener:headKind = \"hex\"\ndouble steel:fastener:nominalDiameterMm = {diameter}\ndouble steel:fastener:headAcrossFlatsMm = {}\ndouble steel:fastener:headHeightMm = {}\ndouble steel:fastener:nutAcrossFlatsMm = {}\ndouble steel:fastener:nutHeightMm = {}\ndouble steel:fastener:holeClearanceMm = 2\ndouble[] steel:fastener:lengthsMm = [60, 70, 80]\ndouble steel:fastener:threadProtrusionMm = 4\nbool steel:fastener:washerUnderHead = false\nbool steel:fastener:washerUnderNut = false\ntoken steel:fastener:holeMode = \"generate\"\n        }}\n",
+            diameter * 1.5,
+            diameter * 0.625,
+            diameter * 1.5,
+            diameter * 0.9,
+        )
+    };
+    let grade = |prim: &str, designation: &str, density: f64| {
+        format!(
+            "        def Scope \"{prim}\"\n        {{\nstring steel:material:grade = \"{designation}\"\ndouble steel:material:densityKgM3 = {density}\n        }}\n"
+        )
+    };
+    let bolts = format!(
+        "{}{}",
+        bolt("M20", "M20", 20.0),
+        bolt("FIRM_M16", "FIRM-M16", 16.0)
+    );
+    let grades = format!(
+        "{}{}",
+        grade("S355J0", "S355J0", 7800.0),
+        grade("FIRM_S355", "FIRM-S355", 7850.0)
+    );
+    format!(
+        "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:library:id\" = \"mine\"\n    }}\n)\ndef Scope \"Library\"\n{{\n    def Scope \"Profiles\"\n    {{\n{profile}    }}\n    def Scope \"Fasteners\"\n    {{\n{bolts}    }}\n    def Scope \"Materials\"\n    {{\n{grades}    }}\n}}\n"
+    )
+}
+
+/// The designations of a listing's entries, in page order.
+fn designations(listed: &Json) -> Vec<String> {
+    list(listed, "entries")
+        .iter()
+        .map(|e| text(e, "designation"))
+        .collect()
+}
+
+/// The unsigned number at `key`; `None` when the key is null.
+fn number(json: &Json, key: &str) -> Option<u64> {
+    json.get(key).ok().and_then(|v| v.unsigned().ok())
+}
+
+fn count(json: &Json, key: &str) -> u64 {
+    number(json, key).unwrap()
+}
+
+/// The entry of a listing that carries `designation`.
+fn entry<'a>(listed: &'a Json, designation: &str) -> &'a Json {
+    list(listed, "entries")
+        .iter()
+        .find(|e| text(e, "designation") == designation)
+        .unwrap()
+}
+
+/// Walks one namespace of the chain a listing entry per page and returns the listed designations
+/// in page order.
+fn walk(f: &Fixture, store: &str, namespace: &str) -> Vec<String> {
+    let mut listed = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        let at = offset.to_string();
+        let page = f.listing(
+            store,
+            &["--namespace", namespace, "--offset", &at, "--limit", "1"],
+        );
+        assert_eq!(count(&page, "offset"), offset, "{namespace}");
+        assert_eq!(count(&page, "page_size"), 1, "{namespace}");
+        listed.extend(designations(&page));
+        match number(&page, "next_offset") {
+            Some(next) => offset = next,
+            None => return listed,
+        }
+    }
+}
+
+#[test]
+fn every_namespace_lists_and_searches_through_one_command() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Europe", "europe");
+
+    // Profiles: the search folds case and whitespace, and the hit names its namespace and layer.
+    let profiles = f.listing(&store, &["--namespace", "profile", "--filter", "IPE 300"]);
+    assert_eq!(designations(&profiles), ["IPE300"]);
+    let hit = entry(&profiles, "IPE300");
+    assert_eq!(text(hit, "namespace"), "profile");
+    assert_eq!(text(hit, "layer"), "project");
+    assert_eq!(text(hit, "library_id"), "europe-en-10365-profiles");
+
+    // Fasteners: the shipped DIN set and the firm bolt, every entry a fastener definition, from
+    // the project copy and the firm layer.
+    let bolts = f.listing(&store, &["--namespace", "fastener"]);
+    assert_eq!(
+        designations(&bolts),
+        ["FIRM-M16", "M12", "M16", "M20", "M24", "M27", "M30"]
+    );
+    for bolt in list(&bolts, "entries") {
+        assert_eq!(text(bolt, "kind"), "fastener");
+        assert_eq!(text(bolt, "namespace"), "fastener");
+    }
+    assert_eq!(text(entry(&bolts, "FIRM-M16"), "layer"), "firm");
+    assert_eq!(text(entry(&bolts, "M16"), "layer"), "project");
+    assert_eq!(
+        text(entry(&bolts, "M16"), "library_id"),
+        "beamcraft-din-fasteners"
+    );
+
+    // Materials: the eight S355 grades of EN 10025 and the firm grade.
+    let grades = f.listing(&store, &["--namespace", "material", "--filter", "s355"]);
+    assert_eq!(
+        designations(&grades),
+        [
+            "FIRM-S355",
+            "S355J0",
+            "S355J2",
+            "S355JR",
+            "S355K2",
+            "S355M",
+            "S355ML",
+            "S355N",
+            "S355NL",
+        ]
+    );
+    assert_eq!(text(entry(&grades, "FIRM-S355"), "kind"), "material");
+
+    // Every namespace through one command: a needle reaches the namespace that holds it and
+    // nothing else answers.
+    let bolts = f.listing(&store, &["--namespace", "all", "--filter", "m16"]);
+    assert_eq!(designations(&bolts), ["FIRM-M16", "M16"]);
+    let grades = f.listing(&store, &["--namespace", "all", "--filter", "s355j0"]);
+    assert_eq!(designations(&grades), ["S355J0"]);
+}
+
+#[test]
+fn the_search_text_folds_case_script_and_whitespace() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Russia", "russia");
+
+    // A lower-case Cyrillic needle finds the upper-case GOST 27772 grades, which the ASCII fold
+    // it replaces never matched.
+    let grades = f.listing(&store, &["--namespace", "material", "--filter", "с345"]);
+    assert_eq!(designations(&grades), ["С345", "С345К"]);
+    assert_eq!(
+        entry(&grades, "С345").get("namespace").unwrap(),
+        &Json::text("material")
+    );
+    // The Latin look-alike of the Cyrillic letter is another text, never a near match.
+    let latin = f.listing(&store, &["--namespace", "material", "--filter", "c345"]);
+    assert_eq!(count(&latin, "entry_count"), 0);
+    assert!(list(&latin, "entries").is_empty());
+
+    // Search proposes, the exact lookup disposes: the same lower-case text resolves nothing,
+    // the grade's own spelling resolves from the project copy.
+    f.not_found(&store, &["--namespace", "material"], "с345");
+    let exact = f.shown(&store, &["--namespace", "material"], "С345");
+    assert_eq!(text(&exact, "layer"), "project");
+}
+
+#[test]
+fn all_namespaces_page_as_one_position_space() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Paged", "europe");
+
+    // The three listings the `all` listing concatenates, and the `all` listing walked a page of
+    // one entry at a time: the pages tile the three ranges exactly, in namespace order.
+    let expected: Vec<String> = ["profile", "fastener", "material"]
+        .into_iter()
+        .flat_map(|namespace| {
+            designations(&f.listing(&store, &["--namespace", namespace, "--limit", "256"]))
+        })
+        .collect();
+    assert_eq!(walk(&f, &store, "all"), expected);
+    let first = f.listing(&store, &["--namespace", "all", "--limit", "1"]);
+    assert_eq!(count(&first, "entry_count"), expected.len() as u64);
+
+    // A page past the end is empty and last, and bad pages refuse as on every listing.
+    let past = expected.len().to_string();
+    let past = f.listing(
+        &store,
+        &["--namespace", "all", "--offset", &past, "--limit", "2"],
+    );
+    assert!(list(&past, "entries").is_empty());
+    assert_eq!(count(&past, "page_size"), 0);
+    assert!(number(&past, "next_offset").is_none());
+    for bad in [["--limit", "0"], ["--limit", "257"], ["--offset", "-1"]] {
+        assert_eq!(
+            f.code(&[
+                "list-library",
+                "--project",
+                &store,
+                "--namespace",
+                "all",
+                bad[0],
+                bad[1]
+            ]),
+            "INVALID_ARGUMENT",
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn the_shadow_report_covers_every_namespace() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Shadowed", "europe");
+
+    // The firm file declares one entry of every namespace that the project copy declares too:
+    // three shadow records, one per namespace, each answered inside its own resolver.
+    let all = f.listing(&store, &["--namespace", "all"]);
+    assert_eq!(count(&all, "shadowed_count"), 3);
+    let shadowed = list(&all, "shadowed");
+    let names: Vec<String> = shadowed.iter().map(|s| text(s, "designation")).collect();
+    assert_eq!(names, ["IPE300", "M20", "S355J0"]);
+    for record in shadowed {
+        assert_eq!(text(record, "used_layer"), "project");
+        assert_eq!(text(record, "shadowed_layer"), "firm");
+        assert_eq!(text(record, "shadowed_library"), "mine");
+    }
+    // The libraries of the three resolvers in turn, strongest first inside each: the mixed firm
+    // file appears once per namespace it feeds.
+    let sources: Vec<(String, String)> = list(&all, "libraries")
+        .iter()
+        .map(|s| (text(s, "layer"), text(at(s, &["library"]), "id")))
+        .collect();
+    assert_eq!(
+        sources,
+        [
+            ("project", "europe-en-10365-profiles"),
+            ("project", "europe-en-10219-profiles"),
+            ("firm", "mine"),
+            ("neutral", "blank-profiles"),
+            ("project", "beamcraft-din-fasteners"),
+            ("firm", "mine"),
+            ("project", "europe-en-10025-materials"),
+            ("firm", "mine"),
+        ]
+        .map(|(layer, id)| (layer.to_owned(), id.to_owned()))
+    );
+
+    // One namespace reports its own shadows only, and the records page on their own.
+    for (namespace, designation) in [
+        ("profile", "IPE300"),
+        ("fastener", "M20"),
+        ("material", "S355J0"),
+    ] {
+        let listed = f.listing(&store, &["--namespace", namespace]);
+        assert_eq!(count(&listed, "shadowed_count"), 1, "{namespace}");
+        let own = list(&listed, "shadowed");
+        assert_eq!(own.len(), 1);
+        assert_eq!(text(&own[0], "designation"), designation);
+        assert_eq!(
+            list(&listed, "libraries").len(),
+            if namespace == "profile" { 4 } else { 2 }
+        );
+    }
+    let page = f.listing(
+        &store,
+        &["--namespace", "all", "--shadow-offset", "1", "--limit", "1"],
+    );
+    assert_eq!(count(&page, "shadowed_count"), 3);
+    assert_eq!(list(&page, "shadowed").len(), 1);
+    assert_eq!(text(&list(&page, "shadowed")[0], "designation"), "M20");
+    assert_eq!(count(&page, "shadowed_next_offset"), 2);
+    let last = f.listing(
+        &store,
+        &["--namespace", "all", "--shadow-offset", "3", "--limit", "1"],
+    );
+    assert!(list(&last, "shadowed").is_empty());
+    assert!(number(&last, "shadowed_next_offset").is_none());
+}
+
+#[test]
+fn an_exact_lookup_stays_exact_and_inside_its_namespace() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Exact", "europe");
+
+    // Without a namespace the lookup answers from the profiles: no bolt there.
+    f.not_found(&store, &[], "M20");
+
+    // The named namespace answers with its strongest layer: the project copy, not the firm bolt
+    // of the same designation. The reply and its entry name the namespace and the layer.
+    let shown = f.shown(&store, &["--namespace", "fastener"], "M20");
+    assert_eq!(text(&shown, "namespace"), "fastener");
+    assert_eq!(text(&shown, "layer"), "project");
+    assert_eq!(
+        text(at(&shown, &["library"]), "id"),
+        "beamcraft-din-fasteners"
+    );
+    assert!(text(&shown, "library_path").ends_with("din-fasteners.usda"));
+    let hit = at(&shown, &["entry"]);
+    assert_eq!(text(hit, "namespace"), "fastener");
+    assert_eq!(text(hit, "layer"), "project");
+    assert_eq!(text(hit, "kind"), "fastener");
+    assert_eq!(at(hit, &["thread_protrusion_mm"]).float().unwrap(), 6.0);
+    let shadows = list(&shown, "shadowed");
+    assert_eq!(shadows.len(), 1);
+    assert_eq!(text(&shadows[0], "shadowed_layer"), "firm");
+
+    // The same for a grade and a profile designation.
+    let grade = f.shown(&store, &["--namespace", "material"], "S355J0");
+    assert_eq!(text(&grade, "namespace"), "material");
+    assert_eq!(
+        at(&grade, &["entry", "density_kg_m3"]).float().unwrap(),
+        7850.0
+    );
+    let beam = f.shown(&store, &["--namespace", "profile"], "IPE300");
+    assert_eq!(at(&beam, &["entry", "height_mm"]).float().unwrap(), 300.0);
+
+    // The lookup stays exact in case and in spelling: `m20` is not `M20`, and a designation the
+    // set does not publish is `NOT_FOUND`, never a near match.
+    for designation in ["m20", "M25"] {
+        f.not_found(&store, &["--namespace", "fastener"], designation);
+    }
+    // It never crosses into another namespace.
+    f.not_found(&store, &["--namespace", "profile"], "IPE 300");
+    f.not_found(&store, &["--namespace", "profile"], "S355J0");
+    f.not_found(&store, &["--namespace", "material"], "IPE300");
+}
+
+#[test]
+fn a_bad_namespace_option_is_refused() {
+    let f = Fixture::new();
+    let lib = f.firm();
+    let store = f.create("Refused", "europe");
+
+    // A named file is one namespace already; `all` lists and never resolves; a token is exact.
+    for (args, message) in [
+        (
+            vec!["list-library", "--library", &lib, "--namespace", "profile"],
+            "--namespace needs --project",
+        ),
+        (
+            vec![
+                "show-library",
+                "--fastener-library",
+                &lib,
+                "--designation",
+                "M20",
+                "--namespace",
+                "fastener",
+            ],
+            "--namespace needs --project",
+        ),
+        (
+            vec![
+                "show-library",
+                "--project",
+                &store,
+                "--designation",
+                "M20",
+                "--namespace",
+                "all",
+            ],
+            "--namespace all lists every namespace; show-library takes one of profile, fastener or material",
+        ),
+        (
+            vec![
+                "show-library",
+                "--project",
+                &store,
+                "--designation",
+                "M20",
+                "--namespace",
+                "bolt",
+            ],
+            "--namespace is one of profile, fastener, material or all",
+        ),
+        (
+            vec![
+                "list-library",
+                "--project",
+                &store,
+                "--namespace",
+                "profiles",
+            ],
+            "--namespace is one of profile, fastener, material or all",
+        ),
+    ] {
+        let (code, body) = f.raw(&args);
+        assert_eq!(code, 2, "{args:?}: {body:?}");
+        assert_eq!(text(&body, "code"), "INVALID_ARGUMENT", "{args:?}");
+        let refusal = text(&body, "message");
+        assert_eq!(refusal, message, "{args:?}");
+        // The registry's probe passes a value that names nothing and reads this word as an
+        // option that is not listed.
+        assert!(!refusal.contains("unknown"), "{args:?}: {refusal}");
+    }
+}
+
+#[test]
+fn the_reply_without_namespace_is_unchanged() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Untagged", "europe");
+
+    // The default listing is the profile listing: same entries from the same libraries, without
+    // the namespace key.
+    let plain = f.listing(&store, &[]);
+    let profiles = f.listing(&store, &["--namespace", "profile"]);
+    assert_eq!(
+        count(&plain, "entry_count"),
+        count(&profiles, "entry_count")
+    );
+    assert!(plain.get("namespace").is_err());
+    let tagged = list(&profiles, "entries");
+    assert_eq!(list(&plain, "entries").len(), tagged.len());
+    for (plain, tagged) in list(&plain, "entries").iter().zip(tagged) {
+        assert!(plain.get("namespace").is_err(), "{plain:?}");
+        for key in ["designation", "layer", "library_id", "digest", "kind"] {
+            assert_eq!(text(plain, key), text(tagged, key));
+        }
+        assert_eq!(tagged.get("namespace").unwrap(), &Json::text("profile"));
+    }
+    assert_eq!(list(&plain, "libraries"), list(&profiles, "libraries"));
+    assert_eq!(list(&plain, "shadowed"), list(&profiles, "shadowed"));
+
+    // The one difference is the widened search fold, which the default listing shares.
+    assert_eq!(
+        designations(&f.listing(&store, &["--filter", "IPE 300"])),
+        ["IPE300"]
+    );
+
+    // `show-library` keeps its shape too.
+    let plain = f.shown(&store, &[], "IPE300");
+    assert!(plain.get("namespace").is_err() && plain.get("layer").is_err());
+    let hit = at(&plain, &["entry"]);
+    assert!(hit.get("namespace").is_err() && hit.get("layer").is_err());
+    let profiles = f.shown(&store, &["--namespace", "profile"], "IPE300");
+    assert_eq!(text(&profiles, "namespace"), "profile");
+    assert_eq!(text(&profiles, "layer"), "project");
+}
+
+#[test]
+fn a_lost_environment_copy_is_reported_in_every_namespace() {
+    let f = Fixture::new();
+    f.firm();
+    let store = f.create("Lost", "europe");
+
+    // The copy folder is gone: the chain resolves from the firm layer and the neutral
+    // environment alone, and every namespace's reply carries the loss by name.
+    fs::remove_dir_all(Path::new(&store).join("environment")).unwrap();
+    let lost = "the project was created with the environment europe version 1, whose copy is no longer in the project";
+    let bolts = f.listing(&store, &["--namespace", "fastener"]);
+    assert_eq!(designations(&bolts), ["FIRM-M16", "M20"]);
+    assert_eq!(
+        count(&bolts, "shadowed_count"),
+        0,
+        "nothing shadows the firm bolts now"
+    );
+    assert!(text(at(&bolts, &["environment_lost"]), "message").contains(lost));
+    for namespace in ["profile", "material", "all"] {
+        let listed = f.listing(&store, &["--namespace", namespace]);
+        assert!(
+            text(at(&listed, &["environment_lost"]), "message").contains(lost),
+            "{namespace}"
+        );
+        assert!(listed.get("environment").is_err(), "{namespace}");
+    }
+
+    // The hazard the warning names: a designation the copy answered now resolves from the firm
+    // layer, to another bolt and another density than the project was created with.
+    let bolt = f.shown(&store, &["--namespace", "fastener"], "M20");
+    assert_eq!(text(&bolt, "layer"), "firm");
+    assert_eq!(
+        at(&bolt, &["entry", "thread_protrusion_mm"])
+            .float()
+            .unwrap(),
+        4.0
+    );
+    assert!(bolt.get("environment_lost").is_ok());
+    let grade = f.shown(&store, &["--namespace", "material"], "S355J0");
+    assert_eq!(
+        at(&grade, &["entry", "density_kg_m3"]).float().unwrap(),
+        7800.0
+    );
+    assert!(grade.get("environment_lost").is_ok());
+
+    // A designation only the copy answered is absent now; nothing is substituted under it.
+    f.not_found(&store, &["--namespace", "fastener"], "M16");
+    f.not_found(&store, &["--namespace", "material"], "S355J2");
+
+    // A plain project: a namespace no layer of the chain declares lists empty and resolves
+    // nothing, without a warning.
+    let bare = Fixture::new();
+    let store = bare.create("Bare", "blank");
+    for namespace in ["fastener", "material"] {
+        let listed = bare.listing(&store, &["--namespace", namespace]);
+        assert_eq!(count(&listed, "entry_count"), 0, "{namespace}");
+        assert!(list(&listed, "libraries").is_empty(), "{namespace}");
+        assert!(listed.get("environment_lost").is_err(), "{namespace}");
+    }
+    bare.not_found(&store, &["--namespace", "material"], "S355J0");
+    let all = bare.listing(&store, &["--namespace", "all"]);
+    let profiles = bare.listing(&store, &["--namespace", "profile"]);
+    assert_eq!(count(&all, "entry_count"), count(&profiles, "entry_count"));
+    assert_eq!(
+        list(&all, "libraries").len(),
+        list(&profiles, "libraries").len()
+    );
+}
