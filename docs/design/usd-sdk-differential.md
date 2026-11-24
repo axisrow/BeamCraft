@@ -41,6 +41,10 @@ export or a third-party model — through two readers:
    - a USDC round-trip serializes the canonical text to the official binary form and reads it back;
    - the refusal matrix replays three corrupted variants through both readers.
 
+The `--digest` mode replaces the check matrix with the LEW-05 cross-platform digest export:
+one fixed-identity stack written by the real writer on the running platform, hashed exactly as
+written (below), for a manual one-run-per-platform comparison.
+
 Fixtures: `positive-revision` (owned `root/authored/derived` stack, one plate with authored inputs,
 an instanceable internal reference arc to a shared geometry asset, pinned material and profile
 definitions, closed-form volume/bounds/mass) and `positive-reference` (R01-style wrapper with an
@@ -70,6 +74,37 @@ All 30 checks passed (`tools/usd-sdk-differential/run.sh`, exit 0).
   structural compliance check"), not a defect. The harness asserts this matrix so a future change
   on either side is caught.
 
+## Digest run (LEW-05, 2026-11-24)
+
+The owner decision of 2026-11-22 runs the LEW-05 cross-platform SHA-256 comparison manually: on
+each platform, `tools/usd-sdk-differential/run.sh --digest` writes one fixed-identity stack with
+the real writer — a 1000×500×10 mm plate with a round hole, a translation and a quarter-turn
+orientation, every identity pinned by flags (element, operation, revision, actor, project,
+workspace) so nothing depends on the clock — and hashes the five manifest layers exactly as
+written: no line-ending translation, no trailing-newline normalization (the oracle's `digest`
+mode normalizes nothing, and the layer engine asserts the LF policy — one final LF, no CR — in
+`generated_layer_bytes_are_lf_only_with_one_final_newline`). The comparison set is exactly the
+manifest's layers; the store's own records (the revision manifest and the command footprint) are
+out of scope.
+
+Recorded macOS leg (macOS 27.0.1 arm64, `beamcraft 0.0.1`, oracle from this commit; three
+consecutive runs produced the identical table):
+
+| Layer | SHA-256 | Size |
+|---|---|---|
+| `root.usda` | `d8313922da94e09368d9b055f81c6098a9fafb0bad59362db5af1f0e76dc072e` | 320 B |
+| `authored.usda` | `4c67d35dc2659d873c944796c9ae79f1ae93036ed5ff9a17efb4b2ca5641559c` | 8179 B |
+| `derived.usda` | `3f5d44cf3d9e818be0bd9cfb0dd75aa1c4fa342a771ffe11b3e2dfe99d5f69de` | 270 B |
+| `derived/0199e7a000007000800000000000d001.usda` | `5ec1cd8c770498bc4fb4a1e79fcce45d4567f3a8fda481fdf79fad427b8ad586` | 2570 B |
+| `derived/geometry.usda` | `a258c64e15933bf36907a2e221115e94e5f00ab72c8f0444891b31480b35034f` | 17350 B |
+
+The Linux leg is **not run: CANNOT-RUN-LOCALLY** — this environment has no usable Linux host
+(the docker CLI exists but no daemon runs on this machine, and a cross-OS container build was not
+attempted on it). The leg stays open: one manual `run.sh --digest` on any Linux host, or a
+hand-dispatched ubuntu CI run of the same command, completes the comparison; until then no
+cross-platform claim is made. The mode is in place so both platforms run the same committed
+commands.
+
 ## Linux wrapper build
 
 The wrapper (`beamcraft-layer-engine`, `beamcraft-steel`) is pure Rust with no target-specific
@@ -98,9 +133,10 @@ Linux (links in the PR description and the issue).
   matrix; the oracle reads text layers only, so the binary USDC leg exercises the official tools,
   not the oracle. The differential is read-side evidence, not the U02 engineering validation and
   not a claim about meshes the writer cannot emit.
-- **Platform digests (LEW-05).** The second half of LEW-05's remaining evidence — comparing
-  deterministic authored bytes/digests across platforms — was not run here; it needs a second
-  platform producing digests, which this environment does not have locally.
+- **Platform digests (LEW-05).** The macOS leg ran on 2026-11-24 (above) and is deterministic
+  across consecutive runs; the Linux leg has not run yet — no usable Linux host exists locally —
+  so the cross-platform comparison itself is still open until the same manual run lands on a
+  Linux host.
 - The fixtures are synthetic and contributor-original; they prove reader agreement on the
   composition semantics, not anything about real project content.
 
@@ -109,6 +145,7 @@ Linux (links in the PR description and the issue).
 ```sh
 tools/usd-sdk-differential/run.sh          # SDK legs run when usdcat/usdchecker are installed
 tools/usd-sdk-differential/run.sh --no-sdk # oracle legs only; prints an explicit no-claim banner
+tools/usd-sdk-differential/run.sh --digest # LEW-05: write the fixed-identity stack, print its layer digests
 ```
 
 The harness builds `beamcraft-usd-oracle` from the committed source (`cargo build --locked`),
