@@ -129,17 +129,54 @@ any row beyond the five-percent bound.
 - `beamcraft-commands` `library::tests::the_brazil_and_usa_libraries_resolve_one_shape_under_both_designation_forms`:
   one row answers under the producers' metric designation through the `brazil` pack and under
   the EDI inch form through the `usa` pack, with the same catalogue area.
+- `beamcraft-commands` `library::tests::the_shipped_brazil_nbr_7007_materials_library_reads_with_every_entry_admitted`:
+  the four grades admitted, the declared edition and density on every row, and the refused
+  grades (compact spellings, BR 190, the unlisted strength levels, the ASTM names).
 - `beamcraft-cli` `tests/cli.rs` `brazil_environment::`: the listing with provenance on two
   pages, the warning present and absent on named rows, and a project created from the
-  environment resolving «W 310 x 60,0» and the other metric designations through the project
-  copy, with every refused designation and grade refusing `NOT_FOUND`.
+  environment resolving «W 310 x 60,0» under the AR 350 grade and the other metric designations
+  through the project copy, with every refused designation and grade refusing `NOT_FOUND`.
+
+## The grades
+
+`environments/brazil/materials-nbr-7007.usda` ships four NBR 7007 grade rows — MR 250, AR 350,
+AR 350 COR and AR 415 — each carrying `steel:material:standard = "ABNT NBR 7007:2022"` and the
+7850 kg/m3 density of EN 1991-1-1. NBR 7007 ("Aços-carbono e aços microligados para barras e
+perfis laminados a quente para uso estrutural - Requisitos") was admitted for this pack by the
+owner decision of 2026-11-24, per the EN 10365/CEN precedent: the shipped packs already
+re-enter facts — route (a), BeamCraft's own data, no text or table copied, values from public
+copies — from standards owned by private associations (CEN for the EN 10365 packs, BIS for the
+IS packs, Standards Australia for the AS/NZS packs), so NBR 7007 is the same class and the
+same footing as every shipped pack, and the 2026-11-23 state-owned principle governs the
+upstream coverage mandate, not the pack data practice. The official text was not purchased,
+and the grades are the standard's own designation system — the strength prefix (MR medium, AR
+high, COR atmospheric-corrosion resistance) with the minimum yield strength in MPa.
+
+- **The edition.** The 2022 edition (October 2022, vigente) is the one the public listings of
+  the ABNT catalogue name (the Busca Normas listing, buscanormas.com.br, is derived from
+  abntcatalogo.com.br and prints "Edição: 10/2022"; the current ArcelorMittal producer
+  documentation cites NBR 7007:2022 the same way). Older editions cited in the wild (2002,
+  2011 — the latter in Gerdau's 2018 table) precede it; the designation system and the grade
+  names are the standard's own and the shipped rows declare the current edition.
+- **The grade set.** The public sources corroborate four designations: Simec's quality page
+  (gruposimec.com.br/padrao-de-qualidade, retrieved 2026-11-24) names MR 250 / ASTM A36, AR 350
+  or AR 415 / ASTM A572, and AR 350 COR / ASTM A588; TotalMateria's public NBR 7007 standards
+  page (totalmateria.com, retrieved 2026-11-24) lists AR 350, AR 350 COR, AR 415 and MR 250
+  (and BR 190); Gerdau's prints map AR 350 to ASTM A572 Grade 50 (the 09/26 catalog) and AR 350
+  COR to AÇO COR 500 per NBR 7007:2011 (the 2018 table). The ASTM relations are the
+  standard's/producer mappings, not aliases: the ASTM names stay `NOT_FOUND` here, as in the
+  NCh203 pack.
+- **Designation form.** The spaced print («AR 350», «MR 250»), the form the listings and
+  Gerdau's 2018 table print. Gerdau's current 09/26 catalog runs the prefix and the number
+  together ("AR350"); the compact spellings stay `NOT_FOUND`.
+- **BR 190 stays out.** The light serralheria grade is named by the TotalMateria listing alone;
+  no producer print corroborates it, and its presence in the 2022 edition is unverified —
+  `NOT_FOUND` under the standing discipline (as are AR 345, AR 500 and MR 325, which no public
+  listing carries).
+- **Not here:** fasteners, and the ASTM/A588 designations (the `usa` environment carries those
+  grades for its own pack).
 
 ## Not in this slice
-
-- **Materials.** The producer documents name the steels (ASTM A572 Grade 50 standard; its NBR
-  7007 designation AR 350). The research named NBR 7007 a candidate, but the owner has not
-  admitted a national grade source, so the environment ships no material library and every
-  grade is `NOT_FOUND` (`AR350`, `A572 Grade 50`, all others).
 - **Angles, flat bars, channels, S and M shapes**: no admitted source; the A6 annex's sloped
   families need the slope decision the `usa` slice also left open.
 - **The 27 shapes of newer editions** of A6/A6M (the Nucor-Yamato size list names them), and

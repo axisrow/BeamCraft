@@ -1,0 +1,44 @@
+#usda 1.0
+(
+    doc = "BeamCraft Brazil structural steel grades: the NBR 7007 designations the open sources corroborate — the carbon grade MR 250 (the ASTM A36 neighbour), the microalloyed AR 350 and AR 415 (the ASTM A572 Grade 50 and 60 neighbours) and the weathering AR 350 COR — in the standard's own designation system: the strength prefix (MR medium, AR high, COR corrosion) with the minimum yield strength in MPa. Admitted by the owner decision of 2026-11-24 per the EN 10365/CEN precedent — the shipped packs already re-enter facts (own data, no table copied, public-copy values) from standards owned by private associations (CEN, BIS, Standards Australia) — so NBR 7007 is the same footing as every shipped pack; the official text is unpurchased and the 2022 edition is the one the public listings name. BR 190 stays out: one standards-database listing names it, no producer print does. Re-entered by hand as our own data. The density is the 7850 kg/m3 of EN 1991-1-1, as every shipped pack weighs with. Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "brazil-nbr-7007-materials"
+        string "bim:library:title" = "NBR 7007 structural steel grades (ABNT NBR 7007:2022)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standard NBR 7007 grade designations, edition 10/2022 per public listings, cross-checked against the Gerdau and Simec producer prints; density is the 7850 kg/m3 of EN 1991-1-1 and of the shipped profile packs"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Materials"
+    {
+        def Scope "AR_350"
+        {
+            string steel:material:grade = "AR 350"
+            string steel:material:standard = "ABNT NBR 7007:2022"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "AR_350_COR"
+        {
+            string steel:material:grade = "AR 350 COR"
+            string steel:material:standard = "ABNT NBR 7007:2022"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "AR_415"
+        {
+            string steel:material:grade = "AR 415"
+            string steel:material:standard = "ABNT NBR 7007:2022"
+            double steel:material:densityKgM3 = 7850
+        }
+        def Scope "MR_250"
+        {
+            string steel:material:grade = "MR 250"
+            string steel:material:standard = "ABNT NBR 7007:2022"
+            double steel:material:densityKgM3 = 7850
+        }
+    }
+}

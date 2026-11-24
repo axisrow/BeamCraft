@@ -3,16 +3,16 @@
 // The shipped Brazil environment holds the real ASTM A6/A6M-05a W and HP nominal dimensions (the
 // standard's own SI column, the rows of the `usa` pack), re-entered as our own data under the
 // designations the regional producers print and the ABNT NBR 15980 standard they declare, with
-// the Nucor-Yamato catalog as the radius source and cross-check; provenance and licence are in
-// `ATTRIBUTION.md` and in the library's own metadata. The expected areas and masses in this file
-// are the standard's published values.
+// the Nucor-Yamato catalog as the radius source and cross-check, and the NBR 7007 grades the
+// open public listings corroborate; provenance and licence are in `ATTRIBUTION.md` and in the
+// libraries' own metadata. The expected areas and masses in this file are the standard's
+// published values.
 
 //! The regional `brazil` environment end to end through the real `beamcraft` binary (#710): it
 //! is listed with its provenance, a project created with it resolves the producers' metric
-//! designations through the copy in the project folder, the declared catalogue figures drive
-//! the quantities, and a designation or grade the pack does not ship is refused instead of
-//! silently substituted. The environment lists no material library: the ABNT grades (NBR 7007)
-//! are an open owner decision and every grade is `NOT_FOUND`.
+//! designations and the shipped NBR 7007 grades through the copy in the project folder, the
+//! declared catalogue figures drive the quantities, and a designation or grade the pack does
+//! not ship is refused instead of silently substituted.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -94,9 +94,9 @@ fn the_shipped_brazil_environment_lists_its_sections_and_provenance() {
         listed_libraries("libraries"),
         [Json::text("profiles-abnt-nbr-15980.usda")]
     );
-    assert!(
-        listed_libraries("material_libraries").is_empty(),
-        "the pack ships no material grades: the ABNT grade decision is open"
+    assert_eq!(
+        listed_libraries("material_libraries"),
+        [Json::text("materials-nbr-7007.usda")]
     );
     let libraries = at(&listed, &["libraries"]).array().unwrap();
     assert_eq!(libraries.len(), 1);
@@ -189,19 +189,21 @@ fn a_project_created_with_the_brazil_environment_resolves_its_designations() {
         "brazil",
     ]);
     let store = text(at(&created, &["project"]), "path");
-    assert!(
-        std::path::Path::new(&store)
-            .join("environment")
-            .join("profiles-abnt-nbr-15980.usda")
-            .is_file(),
-        "the project copy holds the ABNT NBR 15980 W and HP library"
-    );
+    for library in ["profiles-abnt-nbr-15980.usda", "materials-nbr-7007.usda"] {
+        assert!(
+            std::path::Path::new(&store)
+                .join("environment")
+                .join(library)
+                .is_file(),
+            "the project copy holds {library}"
+        );
+    }
 
     // The designation round rides one process: the producers' metric designation resolves
     // through the project's own environment copy, with no --library option naming any file,
-    // and every catalogue figure below is the standard's published value. No material library
-    // ships, so every member weighs with the neutral Steel.
-    // profile, kind, start, end, catalogue area mm2, mass kg (area x length x 7850).
+    // and every catalogue figure below is the standard's published value. The first member
+    // takes the NBR 7007 grade the pack ships; the others weigh with the neutral Steel.
+    // profile, kind, start, end, material, catalogue area mm2, mass kg (area x length x 7850).
     type Designation = (
         &'static str,
         &'static str,
@@ -217,7 +219,7 @@ fn a_project_created_with_the_brazil_environment_resolves_its_designations() {
             "beam",
             "0,0,0",
             "6000,0,0",
-            "Steel",
+            "AR 350",
             7610.0,
             358.431,
         ),
@@ -264,9 +266,10 @@ fn a_project_created_with_the_brazil_environment_resolves_its_designations() {
     // the EDI inch form of a shipped row (the library has no aliases; it resolves through the
     // `usa` pack), not a mangled designation, not the two light W 150 rows Gerdau rolls outside
     // both standards, not the angle and flat-bar families of the regional producers, not an EN
-    // designation; and no grade at all — the ABNT grades (NBR 7007, AR 350) ride an open owner
-    // decision and the ASTM grades of the producer pages are no rows of this environment.
-    let absent: [(&str, &str); 7] = [
+    // designation; and no grade the library does not carry — not the compact spelling the
+    // current Gerdau print runs together, not the light grade one standards-database listing
+    // names and no producer corroborates, not the ASTM names of the producers' pages.
+    let absent: [(&str, &str); 8] = [
         ("profile", "W12X40"),
         ("profile", "W 310 x 60"),
         ("profile", "W 150 x 9,2"),
@@ -274,6 +277,7 @@ fn a_project_created_with_the_brazil_environment_resolves_its_designations() {
         ("profile", "BT 100 x 10"),
         ("profile", "IPE300"),
         ("material", "AR350"),
+        ("material", "BR 190"),
     ];
     let member = |scripted: fn(&[&str]) -> Scripted,
                   kind: &str,
@@ -349,6 +353,16 @@ fn a_project_created_with_the_brazil_environment_resolves_its_designations() {
         "NOT_FOUND",
         "A572 Grade 50"
     );
+
+    // The pinned definition is the catalogue entry itself: the grade, the edition the public
+    // listings name and the density ride into the model.
+    let pinned = f.ok(&["definitions", "--store", &store, "--name", "AR 350"]);
+    let grades = list(&pinned, "definitions");
+    assert_eq!(grades.len(), 1);
+    assert_eq!(text(&grades[0], "kind"), "material");
+    assert_eq!(text(&grades[0], "grade"), "AR 350");
+    assert_eq!(text(&grades[0], "standard"), "ABNT NBR 7007:2022");
+    assert_eq!(at(&grades[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
 
     // The spent designations leave the picker list; the other 279 stay offered, beside the
     // nineteen generic profiles of the `blank` fallback layer every chain reaches. The listing
