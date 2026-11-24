@@ -4,6 +4,58 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-24
+
+- **The Philippines pack is the A6 geometry alias plus the ESC-verified grade bindings.**
+  Decision of 2026-11-24 on the Philippines regional pack (#713, part of #649), taken under the
+  standing pack discipline and the sourcing principle once the USA admission decisions it waits
+  on had landed (2026-10-18 profile route, in force since the `usa` A6 slice): the
+  `philippines` environment ships the thin alias the issue anticipates — the 285 ASTM
+  A6/A6M-05a W and HP rows of the `usa` pack re-declared unchanged (EDI inch designations,
+  Nucor-Yamato radii) — beside one material library binding the grade designations the ESC
+  Steel Philippines wide-flange page names (escsteelstructures.ph): ASTM A36 and the complete
+  A572 strength-grade set under the `usa` pack's editions (A36/A36M-19, A572/A572M-21), the EN
+  10025-2:2019 grade set the `europe` pack re-entered (ESC names the BS publication of the same
+  EN), SS400 of JIS G 3101:2015, SM400A/B/C, SM490A/B/C and SM490YA/YB of JIS G 3106:2020 (the
+  edition the public English copy prints; its foreword replaces G 3106:2017), and SN400A/B/C
+  and SN490B/C of JIS G 3136:2012 — that standard's complete set, SN490A is no grade of it.
+  The geometry stays the A6 facts because ESC, the regional evidence, prints no section
+  designations and no dimension tables (verified 2026-11-24): it is the verification of the
+  environment, never a table source, and nothing is invented for the region. ESC prints no
+  editions either, so every row declares the best publicly documented edition of its standard
+  on the GOST 26020-83 stance (a provenance statement, not a currency claim); a designation
+  whose standard has no publicly documented edition ships no row. The KS D 3503 (SS400) and
+  KS D 3515 (SM400A, SM400B, SM490A, SM490B) the page names carry the same designation strings
+  the JIS rows ship, so they would add no row, and their editions had no public documentation
+  at the retrieval date — no KS row is declared, and the fact is recorded here and in
+  `ATTRIBUTION.md`. Not in the pack: A992 (ESC does not name it for the region), the SM520 and
+  SM570 and SS330/SS490/SS540 grades the full JIS sets carry but ESC does not name, S450J0
+  (deleted in the 2019 EN revision), the metric designation forms of the shipped rows and
+  fasteners (#708 carries the fastener set). NSCP referencing stays an engineering-rule matter:
+  the code names the sections, it is no catalogue source.
+- **The Brazil pack ships the A6 assortment under the producers' metric designations and the
+  national standard they declare; the producers stay cross-check-only.** The 2026-11-23 Brazil
+  route (the sourcing principle and the A6 decision above, applied to #710) lands as the
+  `brazil` environment's first slice: the W and HP shapes of the A6/A6M-05a Annex A2
+  assortment — the `usa` pack's verified rows, value for value — declared `ABNT NBR 15980:2024`
+  on every row, the current edition of the national standard whose W/HP content is that
+  assortment and which both regional producers print for these dimensions (verified against
+  Gerdau's own catalog of 09/26, which declares the dimensions per "ABNT NBR 15980 e ASTM
+  A6/A6M" and maps A6 table A2.1 to NBR 15980 table A.4, and Gerdau's 2018 table naming the
+  2011 edition of the same declaration; ArcelorMittal Brasil names the 2024 edition per the
+  #877 research, and its JS-gated catalogue PDF was not downloaded or read). The producer
+  catalogs grant no reproduction right (ArcelorMittal reserves its content; Gerdau grants
+  none): they are designation-form, availability and cross-check sources only, and no table is
+  copied from them. Nothing is purchased: the official NBR 15980:2024 text stays buy-deferred
+  until a slice needs NBR-specific content. The designations take the producers' print form
+  «W 310 x 60,0» (one decimal, decimal comma), which Gerdau's own tables confirm byte for byte
+  on the 106 rows they roll. The annex prints one SI designation for two of its shapes (W920
+  X 345 for W36X231 and W36X232); the designation names W36X232 — the shape the Nucor-Yamato
+  size list rolls and prints under it — and W36X231 stays `NOT_FOUND` until a source
+  distinguishes them. Materials are not in the slice: NBR 7007 is a named candidate, no
+  national grade source is admitted, the environment lists no material library and every grade
+  is `NOT_FOUND`. [Design note](../design/brazil-abnt-nbr-15980-profiles.md).
+
 ## 2026-11-23
 
 - **The Middle East pack is a curated EN+ASTM mix, re-entered from the declared standards.**
