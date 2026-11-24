@@ -5,7 +5,8 @@
     customLayerData = {
         string "bim:environment:id" = "south-america"
         string "bim:environment:version" = "1"
-        string "bim:environment:title" = "South America (Chile NCh203 material grades)"
+        string "bim:environment:title" = "South America (Chile NCh203 material grades, ASTM A6 W shapes)"
+        string[] "bim:environment:libraries" = ["profiles-astm-a6-w.usda"]
         string[] "bim:environment:material-libraries" = ["materials-nch203.usda"]
     }
 )
