@@ -65,7 +65,9 @@ saved setting.
   2026-11-23, a profile library with the W and HP shapes of ASTM A6/A6M-05a (285 rows of the
   standard's own SI column, the root radius from the Nucor-Yamato catalog that permits its
   use; the declared-area warning is expected on 150 of them; see `usa-astm-a6-profiles.md`)
-  — the environment lists no fastener library yet — and `environments/canada/`
+  and, since 2026-11-24, a fastener library with the RCSC 2025 structural bolt set (the
+  F3125 A325 and A490 heavy hex bolts, 1/2 to 1-1/2 in, each row declaring the standard
+  hole of Table 3.1; see `usa-rcsc-fasteners.md`) — and `environments/canada/`
   (2026-11-15) is grades-only the same way: the complete weldable category of
   CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W). `environments/south-america/`
   (2026-11-23, #711) is grades-only as well, and national: the complete grade set of NCh203.Of2006,
