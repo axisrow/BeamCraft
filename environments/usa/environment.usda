@@ -5,8 +5,9 @@
     customLayerData = {
         string "bim:environment:id" = "usa"
         string "bim:environment:version" = "1"
-        string "bim:environment:title" = "USA (ASTM A6/A6M W and HP shapes, A36, A992, A572 material grades)"
+        string "bim:environment:title" = "USA (ASTM A6/A6M W and HP shapes, F3125 A325 and A490 structural bolts, A36, A992, A572 material grades)"
         string[] "bim:environment:libraries" = ["profiles-astm-a6-w-hp.usda"]
+        string[] "bim:environment:fastener-libraries" = ["fasteners-rcsc-2025.usda"]
         string[] "bim:environment:material-libraries" = ["materials-astm.usda"]
     }
 )
