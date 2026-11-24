@@ -17,7 +17,9 @@ saved setting.
   prefers it when no environment is saved. These profiles first shipped as a separate `starter`
   environment next to an empty `blank`; the two were merged on 2026-11-01 so that the base
   environment is usable on its own. Regional environments ship beside it since 2026-11-14:
-  `environments/europe/` holds the real EN 10365:2017 IPE, HEA and HEB nominal dimensions, the
+  `environments/europe/` holds the real EN 10365:2017 IPE, HEA and HEB nominal dimensions
+  (HEA and HEB running to 1000 since the #790 extension of 2026-11-24) with the HL, HLZ, HD and
+  HP extra-wide flange series beside them, the
   parallel-flange UPE channel series and, since 2026-11-15, a second profile library with the
   EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
   the hollow closed-form area) and, since 2026-11-15, the DIN hex-bolt fastener set completed
@@ -88,12 +90,14 @@ saved setting.
   carries, since 2026-11-16, a material library with the AS/NZS 3678-2016 base grades
   (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from),
   and `environments/middle-east/` (2026-11-23, the curated mix of the owner decision of that
-  day) holds one profile library with the EN 10365:2017 IPE, HEA and HEB rows of the `europe`
-  pack, sizes 100 to 600 (fifty-five rows carried over unchanged), and a material library with
+  day) holds one profile library with the EN 10365:2017 IPE, HEA, HEB, HL, HLZ, HD and HP rows
+  of the `europe` pack, IPE sizes 100 to 600 and HEA/HEB sizes 100 to 1000 (one hundred
+  seventy-five rows carried over unchanged, the #790 extension of 2026-11-24 included), and a
+  material library with
   the ASTM grades A36, A992 and the complete A572 Grade 42–65 set of the `usa` pack, each
   declared with the edition the regional producer prints (A36/A36M-19, A572/A572M-21,
-  A992/A992M-20); the HL, HD and HP series and the sizes above 600 stay `NOT_FOUND`, the
-  channels and the BS, American and Australian series are outside the mix, and the environment
+  A992/A992M-20); the HEM series and the channels stay `NOT_FOUND`, the
+  BS, American and Australian series are outside the mix, and the environment
   lists no fastener library (see `ATTRIBUTION.md`). `environments/south-africa/` (2026-11-23,
   #714) holds a profile library with the EN 10365:2017 IPE series (IPE 100 to IPE 600, the
   `europe` pack's IPE rows, declared against the live EN string because EN 10365 superseded
