@@ -7,18 +7,24 @@
 //! by supplying the placement inputs and a fastener). With `--hole-mode generate` the group
 //! also writes one group-owned hole record per crossing fastener on every connected plate
 //! (A14.4); `--hole-mode none` (a screw's default) writes no part. The A05 `create-bolt` token
-//! is retired: stored annotation groups stay readable and upgradable, `bolts` lists them. The
-//! commands call the engine API through `beamcraft_commands::bolt` and print one JSON object with
-//! the same error shape and exit codes as the weld commands.
+//! is retired: stored annotation groups stay readable and upgradable, `bolts` lists them. A
+//! fastener is named by designation, which resolves through the one creation resolver of #628
+//! (`beamcraft_commands::library::resolve`), the model first and then the project's chain, or by
+//! `--fastener-digest`. The commands call the engine API through `beamcraft_commands::bolt` and
+//! print one JSON object with the same error shape and exit codes as the weld commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
-use crate::plate_cmd::{footprint_json, id_error, revision_json};
+use crate::plate_cmd::{
+    Lookups, ambiguity_diagnostics, digest_option, fastener_chain, footprint_json, id_error,
+    revision_json, with_lookups,
+};
+use crate::report::report_with;
 use beamcraft_commands::bolt::{
     BoltContext, BoltGroupView, BoltView, GroupChange, bolt_groups, bolt_listing, bolts,
     create_bolt_group, update_bolt_group,
 };
 use beamcraft_commands::definition::{DefinitionRecord, head_definitions};
-use beamcraft_commands::library::{Lookup, Source, load_fastener};
+use beamcraft_commands::library::{Namespace, Resolution, resolve};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -47,7 +53,9 @@ fn invalid(message: &'static str) -> Refusal {
 
 /// Runs one bolt command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    crate::report::report(run(args))
+    let mut candidates = Vec::new();
+    let result = run(args, &mut candidates);
+    report_with(result, candidates)
 }
 
 /// Parses `X,Y,Z` as three finite numbers of millimetres.
@@ -247,7 +255,78 @@ fn change_json(subject: ElementId, op_id: OpId, change: &GroupChange) -> Json {
     ])
 }
 
-fn run(args: &[OsString]) -> Run<Json> {
+/// A digest names a fastener definition the head holds exactly; it follows no library.
+fn by_digest(store: &RevisionStore, text: &str) -> Run<DefinitionRecord> {
+    let digest = digest_option(text)?;
+    match head_definitions(store)?.remove(&digest) {
+        Some(record @ DefinitionRecord::Fastener { .. }) => Ok(record),
+        Some(_) => Err(invalid("the digest does not name a fastener")),
+        None => Err(Refusal {
+            rule_id: None,
+            code: ErrorCode::NotFound,
+            message: "no fastener definition in the head has this digest",
+        }),
+    }
+}
+
+/// The fastener definition a designation names, through the one creation resolver of #628
+/// (`beamcraft_commands::library::resolve`). With `model`, a fastener the head already defines
+/// answers first, then the fastener libraries of the project's own environment copy
+/// (`create-project --environment`, BC-ENV-002), the firm layer and the neutral environment. A
+/// `--fastener-library` file the command names answers alone, whatever the model holds: it is
+/// the user's override of the chain. A repin follows the current library entry and passes
+/// `model` false. The entry carries every value, so the model never needs the library again; the
+/// answering layer is noted in `lookups` for the reply.
+fn designated(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+    model: bool,
+    lookups: &mut Lookups,
+) -> Run<DefinitionRecord> {
+    let designation = options
+        .get("--designation")
+        .ok_or_else(|| invalid("--designation is required"))?;
+    let model = if model && !options.contains_key("--fastener-library") {
+        Some(head_definitions(store)?)
+    } else {
+        None
+    };
+    // A project whose chain declares no fastener library keeps the explicit `--fastener-library`
+    // file requirement.
+    let mut no_library = false;
+    let chain = || {
+        let chain = fastener_chain(options)?;
+        no_library = chain.fastener_lookup.is_none();
+        Ok(chain)
+    };
+    let found = match resolve(model.as_ref(), chain, Namespace::Fastener, designation)? {
+        Resolution::Found(found) => found,
+        Resolution::NotFound if no_library => {
+            return Err(invalid("--fastener-library is required"));
+        }
+        Resolution::NotFound => {
+            return Err(Refusal {
+                rule_id: None,
+                code: ErrorCode::NotFound,
+                message: "no fastener definition in the head or in any library of the lookup has this designation",
+            });
+        }
+        Resolution::Ambiguous(found) => {
+            candidates.extend(ambiguity_diagnostics(&found));
+            return Err(invalid(
+                "the designation matches more than one fastener definition in the head; the diagnostics name their digests, give --fastener-digest",
+            ));
+        }
+    };
+    if !matches!(found.record, DefinitionRecord::Fastener { .. }) {
+        return Err(invalid("the designation does not name a fastener"));
+    }
+    lookups.note(designation, &found);
+    Ok(found.record)
+}
+
+fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
         .map(|a| {
@@ -265,6 +344,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "--new-id",
         "--parts",
         "--fastener-library",
+        "--fastener-digest",
         "--designation",
         "--point1",
         "--point2",
@@ -403,32 +483,15 @@ fn run(args: &[OsString]) -> Run<Json> {
             .transpose()
     };
     let optional_flag = |key: &str| -> Run<Option<bool>> { given(key).map(boolean).transpose() };
-    // The definition travels by designation: through the fastener libraries of the project's
-    // own environment copy (`create-project --environment`, BC-ENV-002), or through one
-    // `--fastener-library` file when the project has none or names it explicitly. The entry
-    // carries every value, so the model never needs the library file again.
-    let library_definition = |options: &BTreeMap<&str, &str>| -> Run<DefinitionRecord> {
-        let designation = options
-            .get("--designation")
-            .ok_or_else(|| invalid("--designation is required"))?;
-        let lookup = match options.get("--fastener-library") {
-            Some(path) => {
-                let library = load_fastener(path)?;
-                Lookup::new(vec![Source {
-                    path: (*path).to_owned(),
-                    library,
-                    layer: beamcraft_commands::library::LAYER_LIBRARY,
-                }])
-            }
-            None => crate::plate_cmd::project_fastener_lookup(options)?
-                .ok_or_else(|| invalid("--fastener-library is required"))?,
-        };
-        let (_, entry) = lookup.find(designation)?;
-        match &entry.record {
-            record @ DefinitionRecord::Fastener { .. } => Ok(record.clone()),
-            _ => Err(invalid("the designation does not name a fastener")),
-        }
-    };
+    // The definition is named one way: by digest, or by designation (through the model and the
+    // chain, or the named file).
+    if options.contains_key("--fastener-digest")
+        && (options.contains_key("--designation") || options.contains_key("--fastener-library"))
+    {
+        return Err(invalid(
+            "give --fastener-digest, or --designation with --fastener-library, not both",
+        ));
+    }
     let element = |key: &str, missing: &'static str| -> Run<ElementId> {
         ElementId::parse(required(key, missing)?).map_err(id_error)
     };
@@ -527,7 +590,11 @@ fn run(args: &[OsString]) -> Run<Json> {
                 &mut fresh,
             )?),
         };
-        let definition = library_definition(&options)?;
+        let mut lookups = Lookups::default();
+        let definition = match given("--fastener-digest") {
+            Some(text) => by_digest(&store, text)?,
+            None => designated(&store, &options, candidates, true, &mut lookups)?,
+        };
         let DefinitionRecord::Fastener { spec } = &definition else {
             return Err(invalid("the designation does not name a fastener"));
         };
@@ -556,7 +623,10 @@ fn run(args: &[OsString]) -> Run<Json> {
         };
         let subject = command.new_id;
         let change = create_bolt_group(&store, &context, &command, &definition, &mut NoFault)?;
-        return Ok(change_json(subject, context.op_id, &change));
+        return Ok(with_lookups(
+            change_json(subject, context.op_id, &change),
+            &lookups,
+        ));
     }
     // update-bolt: the complete new inputs replace the stored ones; an absent input keeps the
     // stored value, and a stored A05 group is upgraded from its parts plus the given inputs.
@@ -573,33 +643,43 @@ fn run(args: &[OsString]) -> Run<Json> {
         Some("false") => false,
         Some(_) => return Err(invalid("--repin is true or false")),
     };
-    let from_library = given("--fastener-library").is_some() || given("--designation").is_some();
-    // A repin always names the library entry it follows; a library without a repin on a stored
-    // group would silently follow a changed definition, which only --repin may do. The upgrade
-    // of an A05 annotation group is different: it has no definition yet, so naming the library
-    // entry is the only way. A retry of an already accepted operation skips the guard and
-    // reaches the adapter's replay comparison, whose verdict names the real state.
-    if repin != from_library
+    let named = ["--fastener-library", "--designation", "--fastener-digest"]
+        .iter()
+        .any(|key| options.contains_key(*key));
+    // A repin always names the definition it follows, a library entry or a digest of the head; a
+    // library without a repin on a stored group would silently follow a changed definition,
+    // which only --repin may do. The upgrade of an A05 annotation group is different: it has no
+    // definition yet, so naming a fastener is the only way. A retry of an already accepted
+    // operation skips the guard and reaches the adapter's replay comparison, whose verdict names
+    // the real state.
+    if repin != named
         && current.is_some()
         && !beamcraft_commands::bolt::op_accepted(&store, &context.op_id)?
     {
         return Err(invalid(
-            "--repin needs --designation (through the project environment or --fastener-library)",
+            "--repin needs --designation (through the project environment or --fastener-library) or --fastener-digest",
         ));
     }
-    let definition = match (&current, repin || from_library) {
-        (_, true) => library_definition(&options)?,
-        (Some(group), false) => {
-            // No repin: the group keeps its pinned definition, whatever the library says now.
-            let pinned = head_definitions(&store)?;
-            pinned.get(&group.spec.fastener).cloned().ok_or_else(|| {
-                invalid("the pinned definition of the group is not in the head revision")
-            })?
-        }
-        (None, false) => {
-            return Err(invalid(
-                "upgrading an A05 annotation group needs --designation (through the project environment or --fastener-library)",
-            ));
+    let mut lookups = Lookups::default();
+    let definition = if let Some(text) = given("--fastener-digest") {
+        by_digest(&store, text)?
+    } else {
+        match (&current, repin || named) {
+            // A repin follows the current library entry, so it never consults the model; the
+            // upgrade of an A05 annotation group is a creation and resolves the model first.
+            (_, true) => designated(&store, &options, candidates, !repin, &mut lookups)?,
+            (Some(group), false) => {
+                // No repin: the group keeps its pinned definition, whatever the library says now.
+                let pinned = head_definitions(&store)?;
+                pinned.get(&group.spec.fastener).cloned().ok_or_else(|| {
+                    invalid("the pinned definition of the group is not in the head revision")
+                })?
+            }
+            (None, false) => {
+                return Err(invalid(
+                    "upgrading an A05 annotation group needs --designation (through the project environment or --fastener-library) or --fastener-digest",
+                ));
+            }
         }
     };
     let DefinitionRecord::Fastener { spec } = &definition else {
@@ -760,5 +840,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         },
     };
     let change = update_bolt_group(&store, &context, &command, &definition, &mut NoFault)?;
-    Ok(change_json(target, context.op_id, &change))
+    Ok(with_lookups(
+        change_json(target, context.op_id, &change),
+        &lookups,
+    ))
 }

@@ -60,6 +60,12 @@
 //! the library provenance is reported with the entry
 //! but not stored in the definition; the layer engine runs in this process (no LEW-03
 //! containment), as for every other command.
+//!
+//! A creation command resolves a name through one resolver, [`resolve`], in the lookup order
+//! of #628 for profiles, fasteners and materials alike: the model first, then the project's
+//! chain. It answers with the layer and the library that resolved the name, the entries the
+//! weaker libraries declare under it and the lost environment the chain reports, so a command
+//! reports and warns instead of silently substituting ([`Resolved`]).
 
 use crate::definition::{DefinitionRecord, field};
 use crate::plate::{decode_polygon, decode_polygons, number, text};
@@ -107,6 +113,9 @@ pub const LAYER_ENVIRONMENT: &str = "environment";
 /// The layer of the shipped neutral environment: the built-in fallback every project chain
 /// ends with.
 pub const LAYER_NEUTRAL: &str = "neutral";
+/// The layer of a definition the model already holds: the strongest layer of every lookup a
+/// creation command makes ([`resolve`]).
+pub const LAYER_MODEL: &str = "model";
 
 /// What the library file declares about itself and what was read.
 #[derive(Debug, Clone, PartialEq)]
@@ -1469,6 +1478,105 @@ pub fn project_library_chain(
     })
 }
 
+/// What answered the name of a creation command, and what was shadowed or lost under it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    /// The complete definition the command pins; `digest` is the digest of its canonical layer.
+    pub record: DefinitionRecord,
+    /// The digest of `record`.
+    pub digest: ContentDigest,
+    /// The layer that answered: [`LAYER_MODEL`], or the layer of the answering library.
+    pub layer: &'static str,
+    /// The library that answered; `None` for the model layer.
+    pub library: Option<LibraryInfo>,
+    /// The weaker libraries of the chain that declare the same name, strongest first; empty for
+    /// the model layer, which is consulted before any library.
+    pub shadowed: Vec<Shadowed>,
+    /// The project's lost environment, when the chain that answered reports one (#628).
+    pub environment_lost: Option<EnvironmentCopyLost>,
+}
+
+/// What the name of a creation command selected.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Resolution {
+    /// Exactly one definition answers. The record is boxed: it holds the whole definition and
+    /// dwarfs the other two outcomes, which a command only matches on.
+    Found(Box<Resolved>),
+    /// No layer declares the name; nothing is substituted.
+    NotFound,
+    /// The model holds more than one definition of the name; none is chosen. Every candidate
+    /// travels with the refusal, so a command can name the digests and its digest option.
+    Ambiguous(Vec<(ContentDigest, DefinitionRecord)>),
+}
+
+/// Resolves the name of a creation command in one `namespace`, strongest layer first (#628): the
+/// definitions of the model ([`LAYER_MODEL`]), then the libraries of the chain `chain` builds —
+/// project, firm, neutral. Profiles, fasteners and materials take the same walk.
+///
+/// `model` is the model's definitions by digest, or `None` when the model is not consulted: a
+/// repin follows the current library entry, and a library file named on the command line
+/// answers alone. The chain is built only when the model has no answer, so a name the model
+/// defines needs no library file: a project whose environment copy is lost or cannot be read
+/// still places every definition it pinned. The model layer therefore reports neither shadows
+/// nor a lost environment; nothing was substituted under it.
+///
+/// * One definition of the model has the name: it answers.
+/// * More than one has it — two generations of one designation, since definitions are
+///   content-addressed and nothing makes a designation unique in a model: [`Resolution::Ambiguous`]
+///   with every candidate. A definition is never chosen for the user.
+/// * No layer declares the name: [`Resolution::NotFound`].
+/// * Otherwise the first library that declares the name answers ([`Lookup::find`]), with the
+///   shadow records of that name and the lost environment of the chain.
+pub fn resolve(
+    model: Option<&BTreeMap<ContentDigest, DefinitionRecord>>,
+    chain: impl FnOnce() -> Result<ProjectChain, Refusal>,
+    namespace: Namespace,
+    name: &str,
+) -> Result<Resolution, Refusal> {
+    if let Some(model) = model {
+        let found: Vec<(&ContentDigest, &DefinitionRecord)> = model
+            .iter()
+            .filter(|(_, record)| record.namespace() == namespace)
+            .filter(|(_, record)| record.selectable_names().contains(&name))
+            .collect();
+        if let [(digest, record)] = found.as_slice() {
+            return Ok(Resolution::Found(Box::new(Resolved {
+                record: (*record).clone(),
+                digest: **digest,
+                layer: LAYER_MODEL,
+                library: None,
+                shadowed: Vec::new(),
+                environment_lost: None,
+            })));
+        }
+        if !found.is_empty() {
+            return Ok(Resolution::Ambiguous(
+                found
+                    .into_iter()
+                    .map(|(digest, record)| (*digest, record.clone()))
+                    .collect(),
+            ));
+        }
+    }
+    let chain = chain()?;
+    let Some(lookup) = chain.lookup_of(namespace) else {
+        return Ok(Resolution::NotFound);
+    };
+    let (source, entry) = match lookup.find(name) {
+        Ok(found) => found,
+        Err(error) if error.code == ErrorCode::NotFound => return Ok(Resolution::NotFound),
+        Err(error) => return Err(error),
+    };
+    Ok(Resolution::Found(Box::new(Resolved {
+        digest: entry.record.resource()?.digest,
+        record: entry.record.clone(),
+        layer: source.layer,
+        library: Some(source.library.info.clone()),
+        shadowed: lookup.shadowed_for(name),
+        environment_lost: chain.environment_lost.clone(),
+    })))
+}
+
 /// The identity of a library that [`add_entry`] creates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewLibrary {
@@ -2238,6 +2346,153 @@ mod tests {
             assert!(lookup.shadowed().is_empty(), "{namespace:?}");
         }
         assert!(chain.lookup_of(Namespace::Material).is_none());
+    }
+
+    #[test]
+    fn a_creation_name_resolves_through_the_model_then_the_chain_in_its_own_namespace() {
+        let profile = |designation: &str, width: f64| {
+            DefinitionRecord::RectangleProfile {
+                width_mm: width,
+                height_mm: 100.0,
+                section: SectionProperties {
+                    designation: Some(designation.into()),
+                    ..SectionProperties::default()
+                },
+            }
+            .named(None)
+        };
+        let material = |density: f64| {
+            DefinitionRecord::Material {
+                density_kg_m3: Some(density),
+                grade: Some("S355".into()),
+                standard: None,
+                display_name: None,
+            }
+            .named(None)
+        };
+        let bolt = load_fastener_bytes(
+            fastener_library(&[fastener_entry("A", "M12", BOLT_BODY)]).into_bytes(),
+        )
+        .unwrap()
+        .entries[0]
+            .record
+            .clone();
+        // Two generations of one designation: definitions are content-addressed, so a model
+        // may hold several of one name.
+        let records = [
+            profile("A", 10.0),
+            profile("A", 20.0),
+            profile("B", 30.0),
+            material(7850.0),
+            material(7800.0),
+            bolt,
+        ];
+        let model: BTreeMap<_, _> = records
+            .iter()
+            .map(|r| (r.resource().unwrap().digest, r.clone()))
+            .collect();
+        let lost = EnvironmentCopyLost {
+            path: "environment/environment.usda".into(),
+            message: "the copy is lost".into(),
+        };
+        let chain = || {
+            Ok(ProjectChain {
+                lookup: Lookup::new(vec![
+                    source("a", "strong", &[("P", "X-1")]),
+                    source("b", "weak", &[("P", "X-1")]),
+                ]),
+                fastener_lookup: None,
+                material_lookup: None,
+                environment: None,
+                environment_lost: Some(lost.clone()),
+                firm_refused: Vec::new(),
+            })
+        };
+        let answers = |model, namespace, name| match resolve(model, chain, namespace, name).unwrap()
+        {
+            Resolution::Found(found) => found,
+            other => panic!("{name:?} did not resolve: {other:?}"),
+        };
+        let digest_of = |record: &DefinitionRecord| record.resource().unwrap().digest;
+        // The candidates travel in the model's digest order.
+        let mut generations: Vec<ContentDigest> = records[..2].iter().map(&digest_of).collect();
+        generations.sort();
+
+        // The model answers by its digest and the chain is never built, so it reports no
+        // shadow and no lost environment: nothing was substituted.
+        let pinned = resolve(
+            Some(&model),
+            || -> Result<ProjectChain, Refusal> {
+                panic!("the chain was built although the model answers")
+            },
+            Namespace::Profile,
+            "B",
+        )
+        .unwrap();
+        let Resolution::Found(pinned) = pinned else {
+            panic!("one profile is named B");
+        };
+        assert_eq!(pinned.layer, LAYER_MODEL);
+        assert_eq!(pinned.digest, digest_of(&records[2]));
+        assert!(pinned.library.is_none());
+        assert!(pinned.shadowed.is_empty() && pinned.environment_lost.is_none());
+
+        // Two generations of one name are an ambiguity with every candidate, never a choice;
+        // a name selects by display name or catalogue label, exactly and inside its namespace.
+        let Resolution::Ambiguous(candidates) =
+            resolve(Some(&model), chain, Namespace::Profile, "A").unwrap()
+        else {
+            panic!("two profiles are named A");
+        };
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|(digest, _)| *digest)
+                .collect::<Vec<_>>(),
+            generations
+        );
+        assert!(matches!(
+            resolve(Some(&model), chain, Namespace::Material, "S355").unwrap(),
+            Resolution::Ambiguous(_)
+        ));
+        assert!(matches!(
+            resolve(Some(&model), chain, Namespace::Profile, "b").unwrap(),
+            Resolution::NotFound
+        ));
+        assert_eq!(
+            answers(Some(&model), Namespace::Fastener, "M12").digest,
+            digest_of(&records[5])
+        );
+        assert!(matches!(
+            resolve(Some(&model), chain, Namespace::Profile, "M12").unwrap(),
+            Resolution::NotFound
+        ));
+
+        // A name the model does not have falls through to the chain: the strongest library
+        // answers, with the weaker entry of the same name and the chain's lost environment.
+        let from_chain = answers(Some(&model), Namespace::Profile, "X-1");
+        assert_eq!(from_chain.layer, LAYER_LIBRARY);
+        assert_eq!(
+            from_chain.library.as_ref().map(|l| l.id.as_str()),
+            Some("strong")
+        );
+        assert_eq!(from_chain.shadowed.len(), 1);
+        assert_eq!(from_chain.shadowed[0].shadowed_library, "weak");
+        assert_eq!(from_chain.environment_lost, Some(lost.clone()));
+        // Without the model the chain answers alone, and a namespace no layer declares, or a
+        // name none declares, resolves nothing.
+        assert_eq!(
+            answers(None, Namespace::Profile, "X-1").layer,
+            LAYER_LIBRARY
+        );
+        assert!(matches!(
+            resolve(None, chain, Namespace::Profile, "B").unwrap(),
+            Resolution::NotFound
+        ));
+        assert!(matches!(
+            resolve(None, chain, Namespace::Material, "S355").unwrap(),
+            Resolution::NotFound
+        ));
     }
 
     #[test]

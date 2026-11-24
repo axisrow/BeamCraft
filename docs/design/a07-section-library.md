@@ -571,6 +571,115 @@ the exact lookup inside its namespace, the three refusals, the unchanged reply w
 `--namespace`, a lost environment copy reported in every namespace) and the `library` unit tests
 of `beamcraft-commands` (tokens, `lookup_of`, the fold table).
 
+## 14. One resolver for creation (#628)
+
+The lookup order of #628 — "Target lookup order, strongest first: model, project, firm,
+environment, built-in neutral fallback; report shadowed entries" — was written twice in the CLI,
+and each copy kept half of it. `create-member`, `create-polybeam`, `create-curved-beam`,
+`create-plate`, `create-lofted-plate` and `update-element` resolved a profile or material name
+against the definitions of the head first and then through the project's chain; `create-bolt-group`
+and `update-bolt-group` started a fastener designation at the chain, so a fastener the model
+already held was never consulted. Neither walk said which layer answered, whether a weaker entry
+was shadowed, or whether the chain had resolved without the project's environment:
+`environment_lost` reached `list-library` and `show-library` alone, so the row "when the recorded
+environment is absent, warn rather than silently substituting sections" held for reading a
+catalogue and not for placing a section.
+
+```text
+create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,...
+    (--fastener-digest SHA256 | --designation TEXT) [--fastener-library FILE] --point1 X,Y,Z ...
+update-bolt-group --store ROOT --target GROUP_UUID ... [--fastener-digest SHA256] [--designation TEXT]
+    [--fastener-library FILE] [--repin true]
+```
+
+The engine side is one function, `beamcraft_commands::library::resolve`: a name, its namespace and
+the definitions of the model go in, and a `Resolved` record comes out with the definition and its
+digest, the layer and the library that answered, the shadow records of that name and the lost
+environment of the chain. The CLI's name selection (`selected`) and the designation of the bolt
+commands are wrappers over it. The walk is the same for profiles, fasteners and materials:
+
+1. **The model first.** The one definition of the head whose display name or catalogue label
+   equals the name answers with the layer `model`. The chain is not built for it: a name the
+   model defines needs no library file, so a project whose environment copy is lost or cannot be
+   read still places every definition it pinned (section 12).
+2. **Two generations refuse.** When more than one definition of the head carries the name,
+   nothing is chosen: `INVALID_ARGUMENT`, with every candidate (digest, kind, display name,
+   names) in `diagnostics`.
+3. **Then the chain.** Project, firm, neutral, strongest first; the first library that declares
+   the name answers, a refused entry of a stronger library answers with its refusal, and the
+   shadow records of the name and the chain's `environment_lost` travel with the answer.
+4. **Nothing declares the name:** `NOT_FOUND` — never a near match, never another namespace.
+
+**The precedent, and the choice.** Rules 1 to 4 are what profiles and materials already did. A
+store can hold two definitions of one designation: definitions are content-addressed, an edited
+library entry pinned again is a second definition under the same name, and nothing makes a
+designation unique in a model. That case refused with the candidates and pointed at the digest
+option, and it still does. Fasteners join that behaviour unchanged: the chain answers exactly
+where it answered before whenever the model holds no fastener of that name, and a model that
+holds exactly one now answers first. What fasteners lacked was the escape — `create-bolt-group`
+had no digest option, so rule 2 would have refused with no way out — so `--fastener-digest` names
+a fastener definition of the head exactly, on both bolt commands.
+
+**What a creation reply says.** Beside its own fields, and only for names that went through the
+walk:
+
+* `lookups`: one record per name, in the order the command resolved them — `namespace`, `name`,
+  `layer` (`model`, `project`, `firm`, `neutral` or `library`), `library` (the answering
+  `bim:library:id`, null for the model layer) and `shadowed` (the records of `show-library`: the
+  weaker libraries that declare the same name).
+* `environment_lost`: the record of the listing commands, `path` and `message`, when a chain
+  consulted for one of the names reports the project's environment lost. The reply still carries
+  the result, as section 12 decides that the loss is a warning, not a refusal.
+
+```json
+{
+  "lookups": [
+    { "layer": "project", "library": "europe-en-10365-profiles", "name": "IPE300", "namespace": "profile",
+      "shadowed": [ { "designation": "IPE300", "used_library": "europe-en-10365-profiles", "used_layer": "project",
+                      "shadowed_library": "mine", "shadowed_layer": "firm" } ] },
+    { "layer": "model", "library": null, "name": "Steel", "namespace": "material", "shadowed": [] }
+  ],
+  "outcome": "member_created"
+}
+```
+
+Limits, recorded rather than hidden:
+
+* **A repin still follows the current library.** `update-bolt-group --repin true --designation`
+  takes the chain alone and never consults the model: its meaning is to follow a library entry
+  that changed, and a model-first walk would answer with the definition the group already pins.
+  It is therefore never ambiguous, and it carries `environment_lost` when its chain does. The
+  upgrade of an A05 annotation group is a creation and takes the model first.
+* **A named file answers alone.** `--fastener-library FILE` is the user's override of the chain,
+  as before: the file answers with the layer `library`, whatever the model holds.
+* **The model layer reports no chain.** When the model answers, no shadow is reported and no lost
+  environment: the chain is not read, and nothing was substituted.
+* **`NOT_FOUND` carries no warning.** The refusal is loud by itself and the error shape has no
+  field for it; the warning rides the replies that resolved from a fallback layer.
+* **`firm_refused` still reaches the listing commands only.** A firm file that does not read is
+  skipped by a creation lookup without a word in the reply.
+* **Two ways of pinning, unchanged.** A profile or a material a chain answers is defined in a
+  revision of its own before the element is created; a fastener definition is pinned in the same
+  transaction as its group (A14.3).
+
+A name now resolves strictly inside its namespace. Before, a fastener counted as a profile for
+name selection, so `create-member --profile M20` in a model holding the bolt M20 reached the
+engine, which refused it as a fastener (`INVALID_ARGUMENT`); it is now `NOT_FOUND`, the answer of
+every other name no profile declares.
+
+Nothing is stored, so no schema, digest or store changes; `geom`, `model` and `kernel` are
+untouched.
+
+Evidence: `cargo test -p beamcraft-cli --test cli -- catalog_namespaces::` (real binary, a
+project created from the shipped europe environment beside one mixed firm file and a second from
+the russia environment: every namespace creating through the model first and then through
+project, firm and neutral with the answering layer, library and shadows in the reply; the lost
+environment reported by the creation replies and absent when the model answers; two generations
+of one designation refusing with both digests until `--fastener-digest` names one; a repin
+following the firm library; the namespaces kept apart) and the `resolve` unit test of
+`beamcraft-commands` (the model answering without a chain, the ambiguity, the namespace
+separation, the chain answering with its shadows and its lost environment).
+
 ## Provenance
 
 Section families and their parameters are generic engineering geometry described in public
