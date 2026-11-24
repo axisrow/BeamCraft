@@ -5,7 +5,8 @@
     customLayerData = {
         string "bim:environment:id" = "canada"
         string "bim:environment:version" = "1"
-        string "bim:environment:title" = "Canada (CSA G40.21 material grades, weldable category)"
+        string "bim:environment:title" = "Canada (ASTM A6/A6M W and HP shapes, CSA G40.20/G40.21 material grades)"
+        string[] "bim:environment:libraries" = ["profiles-astm-a6-w-hp.usda"]
         string[] "bim:environment:material-libraries" = ["materials-csa-g4021.usda"]
     }
 )

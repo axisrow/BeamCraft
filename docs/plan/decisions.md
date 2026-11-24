@@ -100,6 +100,27 @@ Open questions are at the end.
 
 ## 2026-11-23
 
+- **Canada is the ASTM A6/A6M assortment under metric designations; CISC is not a source.**
+  Owner decision of 2026-11-23 on the Canada pack (#709), from the data-source decision memo of
+  the same date: the `canada` environment's W and HP libraries carry the same ASTM A6/A6M-05a
+  rows as the `usa` environment, re-entered by hand as BeamCraft's own data from the same two
+  public copies of the standard, with the Nucor-Yamato catalog as the root-radius source, and
+  every row declares `ASTM A6/A6M-05a`. The designations are the metric form the standard's
+  Annex A2 prints for each row (W310x60 — the table's designation with its spaces dropped and
+  the separator spelled in the lowercase form Canadian practice and the Nucor-Yamato catalog
+  print), and the EDI inch designation ships beside it as the alias entry of the same row, so
+  both names resolve; the library format has no alias field, so a row is one entry per name
+  ([design note](../design/canada-astm-a6-profiles.md)). The declared tables print W920 X 345
+  for two distinct rows (W36X231 and W36X232); the metric name is carried once, for the row the
+  table prints first, and W36X232 answers through its inch alias. CISC publications and web
+  content are not an admitted source: the [CISC Terms of Use](https://www.cisc-icca.ca/terms-of-use)
+  state that "no one has permission to copy, redistribute, reproduce or republish in any form"
+  its information; CISC material may be read to learn which shapes the Canadian market stocks,
+  never for values. No producer availability cross-check is admitted yet; it follows in a later
+  slice if a Canadian producer's public catalogue is admitted. CSA G40.20/G40.21 remains the
+  steel, shipped as the #702 material pack; no grade rows ship in this slice. Canadian HSS and
+  the Canadian bolt and hole rules are a separate decision.
+
 - **The Middle East pack is a curated EN+ASTM mix, re-entered from the declared standards.**
   Owner decision of 2026-11-23, resolving the content question of the Middle East regional pack
   (#712, part of #649) in the direction of upstream #877 (comment 7087135753): the `middle-east`

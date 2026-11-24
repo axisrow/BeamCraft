@@ -96,12 +96,16 @@ fn the_canada_environment_lists_and_carries_its_material_library() {
         "the project copy holds the CSA material library"
     );
 
-    // The listing and the store round ride one process (#738 P7): the library listing, the
-    // offered-grade reads, the two plates whose mass math uses the catalogue density, and
-    // the refusals in their authored order.
-    let mut lines = vec![
-        // The grades-only environment names its material library and no other library.
-        Scripted::ok(&["list-library", "--environment", ENVIRONMENT]),
+    // The listing and the store round ride one process (#738 P7). Every `definitions` reply
+    // carries the environment's whole picker listing (the #709 profile library puts 588
+    // profiles there), and a run-script summary envelope holds one such listing, so the
+    // round is split into three script invocations, each with at most one. The library
+    // listing reads one entry (--limit 1): the full 569-entry listing is paged through in
+    // `canada_environment`.
+    // Script one: the library listing, the offered grades, the 350W plate.
+    let lines_a = vec![
+        // The environment names its profile library and its material library.
+        Scripted::ok(&["list-library", "--environment", ENVIRONMENT, "--limit", "1"]),
         // Every shipped grade is listed for pickers until the model defines it: the metric
         // W series, first and last in the loader's designation order.
         Scripted::ok(&["definitions", "--store", &store]),
@@ -123,11 +127,13 @@ fn the_canada_environment_lists_and_carries_its_material_library() {
             "--actor-id",
             ACTOR,
         ]),
-        // The pinned definition is the catalogue entry itself: the declared grade, standard
-        // and density ride into the model, which never needs the library file again.
+    ];
+    let replies_a = f.script(&store, &lines_a);
+    // Script two: the pinned 350W definition and the neutral Steel plate. The pinned
+    // definition is the catalogue entry itself: the declared grade, standard and density ride
+    // into the model, which never needs the library file again.
+    let lines_b = vec![
         Scripted::ok(&["definitions", "--store", &store, "--name", "350W"]),
-        // The spent grade is no longer offered to pickers; the other six still are.
-        Scripted::ok(&["definitions", "--store", &store]),
         // The seeded constants stay the neutral fallback: Steel still answers by name.
         Scripted::ok(&[
             "create-plate",
@@ -144,8 +150,11 @@ fn the_canada_environment_lists_and_carries_its_material_library() {
             "--actor-id",
             ACTOR,
         ]),
-        Scripted::ok(&["definitions", "--store", &store, "--name", "Steel"]),
     ];
+    let replies_b = f.script(&store, &lines_b);
+    // Script three: the spent grade is no longer offered to pickers (the other six still
+    // are), and the refusals in their authored order.
+    let mut lines_c = vec![Scripted::ok(&["definitions", "--store", &store])];
     // A grade the set does not publish stays NOT_FOUND, never a near match: no bare strength
     // level, no imperial-ksi designation of the same grade, no other category of the same
     // strength level, no lowercase and no strength level outside the standard's set.
@@ -153,7 +162,7 @@ fn the_canada_environment_lists_and_carries_its_material_library() {
         "350", "50W", "44W", "350WT", "350A", "350R", "w350", "600W", "700W",
     ];
     for designation in absent {
-        lines.push(Scripted::refused(&[
+        lines_c.push(Scripted::refused(&[
             "create-plate",
             "--store",
             &store,
@@ -169,50 +178,61 @@ fn the_canada_environment_lists_and_carries_its_material_library() {
             ACTOR,
         ]));
     }
-    let replies = f.script(&store, &lines);
-    let listed = &replies[0];
+    let replies_c = f.script(&store, &lines_c);
+    // Script four: the pinned Steel, read in its own envelope.
+    let replies_d = f.script(
+        &store,
+        &[Scripted::ok(&[
+            "definitions",
+            "--store",
+            &store,
+            "--name",
+            "Steel",
+        ])],
+    );
+    let listed = &replies_a[0];
     assert_eq!(
         at(listed, &["environment", "material_libraries"])
             .array()
             .unwrap(),
         [Json::text("materials-csa-g4021.usda")]
     );
-    let available = list(&replies[1], "environment_materials");
+    let available = list(&replies_a[1], "environment_materials");
     assert_eq!(available.len(), 7);
     assert_eq!(text(&available[0], "grade"), "260W");
     assert_eq!(text(&available[6], "grade"), "550W");
-    let plate = &replies[2];
+    let plate = &replies_a[2];
     let mass = at(plate, &["plate", "quantities", "mass"]);
     assert_eq!(text(mass, "status"), "current");
     let kg = at(mass, &["kg"]).float().unwrap();
     assert!((kg - 47.1).abs() < 0.001, "mass {kg} kg");
-    let pinned = list(&replies[3], "definitions");
+    let pinned = list(&replies_b[0], "definitions");
     assert_eq!(pinned.len(), 1);
     assert_eq!(text(&pinned[0], "kind"), "material");
     assert_eq!(text(&pinned[0], "grade"), "350W");
     assert_eq!(text(&pinned[0], "standard"), "CSA G40.20-13/G40.21-13");
     assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
-    let remaining = list(&replies[4], "environment_materials");
+    let steel_plate = &replies_b[1];
+    let steel_mass = at(steel_plate, &["plate", "quantities", "mass"]);
+    let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
+    assert!((steel_kg - 47.1).abs() < 0.001, "Steel mass {steel_kg} kg");
+    let remaining = list(&replies_c[0], "environment_materials");
     assert_eq!(remaining.len(), 6);
     assert!(
         remaining.iter().all(|g| text(g, "grade") != "350W"),
         "350W is spent"
     );
-    let steel_plate = &replies[5];
-    let steel_mass = at(steel_plate, &["plate", "quantities", "mass"]);
-    let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
-    assert!((steel_kg - 47.1).abs() < 0.001, "Steel mass {steel_kg} kg");
-    let pinned_steel = list(&replies[6], "definitions");
+    let pinned_steel = list(&replies_d[0], "definitions");
     assert_eq!(pinned_steel.len(), 1);
     assert!(
         at(&pinned_steel[0], &["grade"]).string().is_err(),
         "the neutral Steel declares no grade"
     );
 
-    // Replies 7..16 carry the refusals in the authored order.
+    // Replies 1..10 of the third script carry the refusals in the authored order.
     for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            text(&replies[7 + index], "code"),
+            text(&replies_c[1 + index], "code"),
             "NOT_FOUND",
             "{designation}"
         );
