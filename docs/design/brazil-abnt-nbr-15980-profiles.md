@@ -142,11 +142,15 @@ any row beyond the five-percent bound.
 `environments/brazil/materials-nbr-7007.usda` ships four NBR 7007 grade rows — MR 250, AR 350,
 AR 350 COR and AR 415 — each carrying `steel:material:standard = "ABNT NBR 7007:2022"` and the
 7850 kg/m3 density of EN 1991-1-1. NBR 7007 ("Aços-carbono e aços microligados para barras e
-perfis laminados a quente para uso estrutural - Requisitos") is a national standard admitted
-under the owner decision of 2026-11-23 (ABNT is the state-recognised national body the
-principle names); its official text was not purchased, and the grades are the standard's own
-designation system — the strength prefix (MR medium, AR high, COR atmospheric-corrosion
-resistance) with the minimum yield strength in MPa.
+perfis laminados a quente para uso estrutural - Requisitos") was admitted for this pack by the
+owner decision of 2026-11-24, per the EN 10365/CEN precedent: the shipped packs already
+re-enter facts — route (a), BeamCraft's own data, no text or table copied, values from public
+copies — from standards owned by private associations (CEN for the EN 10365 packs, BIS for the
+IS packs, Standards Australia for the AS/NZS packs), so NBR 7007 is the same class and the
+same footing as every shipped pack, and the 2026-11-23 state-owned principle governs the
+upstream coverage mandate, not the pack data practice. The official text was not purchased,
+and the grades are the standard's own designation system — the strength prefix (MR medium, AR
+high, COR atmospheric-corrosion resistance) with the minimum yield strength in MPa.
 
 - **The edition.** The 2022 edition (October 2022, vigente) is the one the public listings of
   the ABNT catalogue name (the Busca Normas listing, buscanormas.com.br, is derived from
