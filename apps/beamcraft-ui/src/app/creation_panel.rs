@@ -179,7 +179,7 @@ impl App {
         if self.beam_mode {
             return self.beam.start();
         }
-        if let Some(two) = self.two_point {
+        if let Some(two) = &self.two_point {
             return two.from;
         }
         if self.bench == super::workbench::Bench::Bolt && self.bolt.point2.is_none() {
@@ -540,7 +540,7 @@ impl App {
             Ok(point) => {
                 self.ctrl_reference = Some(point);
                 self.tool_note = Some(Ok(format!(
-                    "Reference {}. Aim, type offset in mm and press Enter, or click next point (Esc clears).",
+                    "Reference {}. Aim and type a distance, or type X-800, Y+500 or Z-200. Enter accepts the point.",
                     super::PointText(point)
                 )));
             }
@@ -566,7 +566,7 @@ impl App {
             } else {
                 self.beam
                     .start()
-                    .or_else(|| self.two_point.and_then(|t| t.from))
+                    .or_else(|| self.two_point.as_ref().and_then(|t| t.from))
                     .or_else(|| self.grid_line_start_point())
             }
         });
@@ -583,23 +583,23 @@ impl App {
             )
             .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.message))?;
         }
-        let distance = if self.distance_input.is_empty() {
-            None
+        let resolved = if self.distance_input.is_empty() {
+            beamcraft_engine::coordinate::construction_step(
+                reference,
+                aim,
+                None,
+                self.selection.orthogonal,
+                self.tools.plane,
+            )
         } else {
-            Some(self.distance_input.parse::<f64>().map_err(|_| {
-                ToolError::local(
-                    "INVALID_ARGUMENT",
-                    "Enter a positive distance in millimetres.",
-                )
-            })?)
-        };
-        let resolved = beamcraft_engine::coordinate::construction_step(
-            reference,
-            aim,
-            distance,
-            self.selection.orthogonal,
-            self.tools.plane,
-        )
+            beamcraft_engine::coordinate::typed_step(
+                reference,
+                Some(aim),
+                &self.distance_input,
+                self.selection.orthogonal,
+                self.tools.plane,
+            )
+        }
         .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.message))?;
         let same = resolved
             .iter()
@@ -627,7 +627,7 @@ impl App {
             || self.grid_line.click.is_some();
         let has_ref = (self.plate_mode && !self.plate_draft.points().is_empty())
             || (self.beam_mode && self.beam.start().is_some())
-            || self.two_point.and_then(|t| t.from).is_some()
+            || self.two_point.as_ref().and_then(|t| t.from).is_some()
             || self.grid_line_start_point().is_some()
             || self.ctrl_reference.is_some();
         let events = ctx.input(|i| i.events.clone());
@@ -644,9 +644,13 @@ impl App {
                 }
                 egui::Event::Text(text) if has_ref && typing_mode => {
                     if !text.is_empty()
-                        && text
-                            .chars()
-                            .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '+'))
+                        && text.chars().all(|c| {
+                            c.is_ascii_digit()
+                                || matches!(
+                                    c.to_ascii_uppercase(),
+                                    'X' | 'Y' | 'Z' | '.' | ',' | '-' | '+'
+                                )
+                        })
                         && self.distance_input.len().saturating_add(text.len()) <= 64
                     {
                         if self.distance_input.is_empty() {
@@ -709,34 +713,28 @@ impl App {
                     } else if self.grid_line.click == Some(true) {
                         self.grid_line_start_point()
                     } else {
-                        self.two_point.and_then(|t| t.from)
+                        self.two_point.as_ref().and_then(|t| t.from)
                     }
                 })
                 .ok_or_else(|| {
                     "Pick the first point (or Ctrl+click a reference point).".to_owned()
                 })?;
-            let aim = self
-                .distance_aim
-                .or(if self.plate_mode {
-                    self.plate_hover
-                } else {
-                    self.beam_hover.or(self.member_cursor)
-                })
-                .ok_or_else(|| {
-                    "Aim in the next segment direction before entering a distance.".to_owned()
-                })?;
-            let distance = self
-                .distance_input
-                .parse::<f64>()
-                .map_err(|_| "Enter a positive distance in millimetres.".to_owned())?;
-            let point = beamcraft_engine::coordinate::construction_step(
+            let aim = self.distance_aim.or(if self.plate_mode {
+                self.plate_hover
+            } else {
+                self.beam_hover.or(self.member_cursor)
+            });
+            let point = beamcraft_engine::coordinate::typed_step(
                 reference,
                 aim,
-                Some(distance),
+                &self.distance_input,
                 self.selection.orthogonal,
                 self.tools.plane,
             )
-            .map_err(|e| e.message.to_owned())?;
+            .map_err(|_| {
+                "Enter a length in mm along the cursor direction, or an axis offset such as X-800."
+                    .to_owned()
+            })?;
             if chain {
                 self.ctrl_reference = Some(point);
                 return Ok::<bool, String>(true);
@@ -928,7 +926,11 @@ impl App {
             && let Some(last) = self.plate_draft.points().last()
             && let (Some(a), Some(b)) = (project(*last), project(hover))
         {
-            painter.line_segment([a, b], stroke);
+            if self.ctrl_reference.is_some()
+                || !self.paint_axis_dimension(&painter, [a, b], *last, hover)
+            {
+                painter.line_segment([a, b], stroke);
+            }
             if self.plate_draft.points().len() >= 2
                 && let Some(first) = self.plate_draft.points().first().and_then(|p| project(*p))
             {
@@ -976,10 +978,63 @@ impl App {
             && let (Some(a), Some(b)) = (project(start), project(end))
         {
             let painter = ui.painter_at(rect);
+            if self.ctrl_reference.is_none()
+                && self.paint_axis_dimension(&painter, [a, b], start, end)
+            {
+                return;
+            }
             painter.line_segment([a, b], egui::Stroke::new(2.0, color));
             painter.circle_filled(a, 4.0, color);
             painter.circle_filled(b, 4.0, color);
         }
+    }
+
+    /// Draw an axial distance in the same work frame used to resolve the placement.
+    pub(super) fn paint_axis_dimension(
+        &self,
+        painter: &egui::Painter,
+        [a, b]: [egui::Pos2; 2],
+        from: [f64; 3],
+        to: [f64; 3],
+    ) -> bool {
+        let typed_axis = self
+            .distance_input
+            .starts_with(['x', 'X', 'y', 'Y', 'z', 'Z']);
+        if !self.selection.orthogonal && !typed_axis {
+            return false;
+        }
+        let frame = self.tools.plane.unwrap_or_default();
+        let (Ok([x, y, z]), Ok([tx, ty, tz])) = (frame.to_local(from), frame.to_local(to)) else {
+            return false;
+        };
+        let axes = [
+            ("X", tx - x, egui::Color32::from_rgb(245, 88, 86)),
+            ("Y", ty - y, egui::Color32::from_rgb(66, 196, 99)),
+            ("Z", tz - z, egui::Color32::from_rgb(69, 148, 255)),
+        ];
+        let mut active = axes.into_iter().filter(|(_, v, _)| v.abs() > 1e-6);
+        let Some((axis, value, color)) = active.next() else {
+            return false;
+        };
+        if active.next().is_some() {
+            return false;
+        }
+        painter.add(egui::Shape::dashed_line(
+            &[a, b],
+            egui::Stroke::new(2.0, color),
+            6.0,
+            3.0,
+        ));
+        painter.circle_filled(a, 3.0, color);
+        painter.circle_stroke(b, 5.0, egui::Stroke::new(1.5, color));
+        painter.text(
+            a.lerp(b, 0.5) - egui::vec2(0.0, 8.0),
+            egui::Align2::CENTER_BOTTOM,
+            format!("{axis} {value:+.1} mm"),
+            egui::FontId::proportional(13.0),
+            color,
+        );
+        true
     }
 
     pub(super) fn paint_ctrl_reference(
@@ -1027,6 +1082,9 @@ impl App {
         if let Some(target) = hover
             && let Some(target_px) = project(target)
         {
+            if self.paint_axis_dimension(&painter, [at, target_px], ref_pt, target) {
+                return;
+            }
             painter.add(egui::Shape::dashed_line(
                 &[at, target_px],
                 egui::Stroke::new(1.5, accent),
@@ -1235,13 +1293,6 @@ impl App {
                 _ => {}
             }
         });
-        if busy {
-            ui.spinner();
-            // Only the creation's own write says saving; another command running is just busy.
-            if self.tools.busy() {
-                ui.label("Saving element…");
-            }
-        }
         // Its outcome is told in the status bar (`App::status_note`).
     }
 }

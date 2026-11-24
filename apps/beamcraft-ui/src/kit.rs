@@ -20,6 +20,8 @@ pub const SPACE_M: f32 = 12.0;
 pub const SPACE_L: f32 = 16.0;
 /// The height of one row of a properties grid, a group bar or a tree row.
 pub const ROW_HEIGHT: f32 = 24.0;
+/// Room for a pinned editor action row, its separator and its frame.
+pub const ACTION_BAR_HEIGHT: f32 = 64.0;
 /// The width of the label column of a properties grid. Wide enough for the longest row label
 /// with its unit ("On plane offset, mm"), so the ellipsis never hides a unit.
 pub const LABEL_WIDTH: f32 = 136.0;

@@ -385,7 +385,8 @@ impl App {
     /// Bottom action bar for `Bench::Reference`.
     pub(crate) fn reference_actions(&mut self, ui: &mut egui::Ui) {
         let busy = self.reference.busy() || self.other_command_running();
-        let done = crate::kit::actions(ui, "Attach reference", !busy, "Cancel", busy);
+        let has_path = !self.reference.source_path.trim().is_empty();
+        let done = crate::kit::actions(ui, "Attach reference", has_path, "Cancel", busy);
         if done.primary {
             match attach_args(
                 &self.source.store,
@@ -434,11 +435,10 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.reference.source_path)
-                            .desired_width((ui.available_width() - 68.0).max(60.0))
+                            .desired_width((ui.available_width() - 34.0).max(20.0))
                             .hint_text("path/to/model.usda"),
                     );
-                    if ui
-                        .add_enabled(!busy, egui::Button::new("Browse…").small())
+                    if theme::icon_button(ui, Icon::Folder, "Browse for a USD reference", !busy)
                         .clicked()
                     {
                         let start = self.source.store.parent().filter(|d| d.is_dir());
@@ -560,7 +560,7 @@ impl App {
                         &[("Z", "Z up"), ("Y", "Y up")],
                     );
                     kit::prop_row(ui, "Units", |ui| {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add_enabled(!busy, egui::Button::new("Apply units").small())
                                 .clicked()

@@ -213,15 +213,26 @@ fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32, accent: Co
 }
 
 fn button(ui: &mut Ui, label: &str, glyph: Glyph, active: bool, enabled: bool) -> Response {
+    sized_button(ui, label, glyph, active, enabled, SIZE)
+}
+
+fn sized_button(
+    ui: &mut Ui,
+    label: &str,
+    glyph: Glyph,
+    active: bool,
+    enabled: bool,
+    size: f32,
+) -> Response {
     let palette = Palette::current(ui);
     let response = ui
         .scope(|ui| {
-            ui.spacing_mut().interact_size = vec2(SIZE, SIZE);
+            ui.spacing_mut().interact_size = vec2(size, size);
             ui.spacing_mut().button_padding = egui::Vec2::ZERO;
             ui.add_enabled(
                 enabled,
                 egui::Button::new("")
-                    .min_size(vec2(SIZE, SIZE))
+                    .min_size(vec2(size, size))
                     .fill(if active { palette.select } else { palette.head })
                     .stroke(Stroke::new(
                         1.0,
@@ -231,7 +242,7 @@ fn button(ui: &mut Ui, label: &str, glyph: Glyph, active: bool, enabled: bool) -
             )
         })
         .inner;
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, active, label));
     let ink = if enabled { palette.text } else { palette.muted };
     paint(
         ui.painter(),
@@ -243,6 +254,11 @@ fn button(ui: &mut Ui, label: &str, glyph: Glyph, active: bool, enabled: bool) -
     response
         .on_hover_text(label)
         .on_disabled_hover_text(format!("{label} — not available yet (UI only)"))
+}
+
+/// A selection scope switch in the status row.
+pub(super) fn scope_button(ui: &mut Ui, icon: Icon, label: &str, active: bool) -> Response {
+    sized_button(ui, label, Glyph::Existing(icon), active, true, 20.0)
 }
 
 /// Cursor feedback uses the same original symbol vocabulary as the toolbar.

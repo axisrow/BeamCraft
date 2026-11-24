@@ -1186,35 +1186,6 @@ impl App {
                     ],
                     Stroke::new(1.0, palette.rule),
                 );
-                // No panel carries a text heading: each starts with its own type row (an icon
-                // and the kind), which says what is shown. Only an element's properties keep
-                // their reload button, at the right.
-                if self.bench == Bench::Select
-                    && self.grid_edit.is_none()
-                    && self.props.selected().is_some()
-                {
-                    let row = egui::vec2(ui.available_width(), 26.0);
-                    ui.allocate_ui_with_layout(
-                        row,
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if theme::icon_button(
-                                ui,
-                                Icon::Refresh,
-                                "Reload properties",
-                                // A source window reads no properties from a store: the facts
-                                // panel follows the file's own refresh (issue 614 review).
-                                !self.source.read_only()
-                                    && !self.other_command_running()
-                                    && !self.props.busy(),
-                            )
-                            .clicked()
-                            {
-                                self.reread();
-                            }
-                        },
-                    );
-                }
                 if self.bench == Bench::Grid
                     || self.bench == Bench::Select && self.grid_edit.is_some()
                 {
@@ -1251,6 +1222,14 @@ impl App {
                         | Bench::Colour
                 ) {
                     egui::Panel::bottom("tool-actions")
+                        .min_size(
+                            crate::kit::ACTION_BAR_HEIGHT
+                                + if self.other_command_running() {
+                                    crate::kit::ROW_HEIGHT
+                                } else {
+                                    0.0
+                                },
+                        )
                         .frame(
                             egui::Frame::new()
                                 .fill(palette.surface)
@@ -1503,12 +1482,10 @@ impl App {
                     });
                 });
                 ui.horizontal(|ui| {
-                    // Tekla-style Part vs. Assembly selection mode toggle.
                     let asm_mode = self.selection.assembly_select_mode();
-                    if ui
-                        .selectable_label(!asm_mode, RichText::new("Parts").size(10.0))
-                        .on_hover_text("Select individual parts")
-                        .clicked()
+                    if super::switches::scope_button(
+                        ui, Icon::Plate, "Select individual parts", !asm_mode,
+                    ).clicked()
                     {
                         self.selection.assembly_mode = false;
                         self.selection.set(
@@ -1516,10 +1493,9 @@ impl App {
                             true,
                         );
                     }
-                    if ui
-                        .selectable_label(asm_mode, RichText::new("Assemblies").size(10.0))
-                        .on_hover_text("Select whole assemblies (highlights all member parts)")
-                        .clicked()
+                    if super::switches::scope_button(
+                        ui, Icon::Assembly, "Select whole assemblies (highlights all member parts)", asm_mode,
+                    ).clicked()
                     {
                         self.selection.assembly_mode = true;
                         self.selection.set(
@@ -2194,6 +2170,10 @@ impl App {
                         _ => {}
                     }
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    if self.menu_section == MenuSection::Import {
+                        ui.label("IFC files can be opened read-only. Importing IFC elements into this model is unavailable.");
+                        ui.add_space(8.0);
+                    }
                     for label in self.menu_section.commands() {
                         // The IFC row belongs to the Export page only: the Import page lists the
                         // same label and its import command does not exist yet.
@@ -2351,6 +2331,94 @@ mod tests {
             assert_eq!(bench.edit(), None);
         }
         assert_eq!(Bench::default(), Bench::Select);
+    }
+
+    #[test]
+    fn column_creation_draws_one_progress_indicator_in_the_inspector() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        app.set_bench(Bench::Column);
+        let (_pending, job) = std::sync::mpsc::channel();
+        app.job = Some(job);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                time: Some(1.0),
+                ..Default::default()
+            },
+            |ui| app.inspector(ui),
+        );
+        let indicators = output
+            .shapes
+            .iter()
+            .filter(|item| {
+                matches!(&item.shape, egui::Shape::Path(path)
+                if !path.closed && path.stroke.width == 3.0 && path.points.len() >= 8)
+            })
+            .count();
+        let running_visible = output.shapes.iter().any(|item| {
+            matches!(&item.shape, egui::Shape::Text(text)
+                if text.galley.text() == "Running…"
+                && item.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(indicators, 1);
+        assert!(running_visible);
+    }
+
+    #[test]
+    fn tool_actions_stay_visible_on_a_compact_workbench() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        for bench in [
+            Bench::Grid,
+            Bench::Column,
+            Bench::Beam,
+            Bench::Plate,
+            Bench::Bolt,
+            Bench::Weld,
+            Bench::Assembly,
+            Bench::Move,
+            Bench::Copy,
+            Bench::Delete,
+            Bench::Array,
+            Bench::Cut,
+            Bench::Fit,
+            Bench::Hole,
+            Bench::Numbering,
+            Bench::Reference,
+        ] {
+            app.set_bench(bench);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                },
+            );
+            let visible = output.shapes.iter().any(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return false;
+                };
+                let bounds = egui::Rect::from_min_size(text.pos, text.galley.size());
+                text.galley.text() == "Cancel"
+                    && shape.clip_rect.contains_rect(bounds)
+                    && screen.contains_rect(bounds)
+            });
+            output.drop_without_applying_deltas();
+            assert!(visible, "{bench:?} must keep its Cancel action visible");
+        }
     }
 
     #[test]

@@ -680,7 +680,7 @@ impl App {
                 ui.add_space(4.0);
                 ui.separator();
 
-                egui::ScrollArea::vertical()
+                egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         egui::Grid::new("numbering-preview-table")

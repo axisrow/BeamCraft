@@ -127,6 +127,46 @@ pub fn resolve(text: &str, reference: [f64; 3], lock: AxisLock) -> Result<[f64; 
     lock.constrain(reference, point)
 }
 
+/// Resolve a typed distance or a signed axis offset such as `X-800` from a picked point.
+pub fn typed_step(
+    reference: [f64; 3],
+    aim: Option<[f64; 3]>,
+    input: &str,
+    orthogonal: bool,
+    frame: Option<crate::work_plane::WorkPlane>,
+) -> Result<[f64; 3], CommandError> {
+    if input.len() > 64 {
+        return Err(invalid());
+    }
+    let input = input.trim();
+    if let Some(axis) = input.as_bytes().first().map(u8::to_ascii_uppercase)
+        && matches!(axis, b'X' | b'Y' | b'Z')
+    {
+        let value = input
+            .get(1..)
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .ok_or_else(invalid)?;
+        if !value.is_finite() || value.abs() > beamcraft_model::limits::COORDINATE_CAP_MM {
+            return Err(invalid());
+        }
+        let frame = frame.unwrap_or_default();
+        let [x, y, z] = frame.to_local(reference)?;
+        return frame.to_world(match axis {
+            b'X' => [x + value, y, z],
+            b'Y' => [x, y + value, z],
+            _ => [x, y, z + value],
+        });
+    }
+    let distance = input.parse::<f64>().map_err(|_| invalid())?;
+    construction_step(
+        reference,
+        aim.ok_or_else(invalid)?,
+        Some(distance),
+        orthogonal,
+        frame,
+    )
+}
+
 /// Resolve a construction step toward a 3D cursor point. An optional length replaces the
 /// cursor distance; orthogonal mode chooses the dominant X/Y/Z component in `frame`.
 pub fn construction_step(
@@ -160,7 +200,8 @@ pub fn construction_step(
         if !distance.is_finite() {
             return Err(non_finite());
         }
-        if distance <= 0.0 || distance > COORDINATE_CAP_MM {
+        if distance == 0.0 || (!orthogonal && distance < 0.0) || distance.abs() > COORDINATE_CAP_MM
+        {
             return Err(invalid());
         }
         let length = delta.iter().map(|n| n * n).sum::<f64>().sqrt();
@@ -168,7 +209,8 @@ pub fn construction_step(
             return Err(invalid());
         }
         for value in &mut delta {
-            *value = *value / length * distance;
+            let direction = if distance < 0.0 { value.abs() } else { *value };
+            *value = direction / length * distance;
         }
     }
     let [dx, dy, dz] = delta;
@@ -361,6 +403,31 @@ mod tests {
         }
         assert!(resolve("@1e308,0,0", [1e308, 0., 0.], AxisLock::Y).is_err());
         assert!(resolve(&"0".repeat(129), [0.; 3], AxisLock::None).is_err());
+    }
+
+    #[test]
+    fn signed_offsets_use_the_picked_origin_and_work_axes() {
+        let from = [100., 200., 300.];
+        assert_eq!(
+            typed_step(from, None, "X-800", false, None).unwrap(),
+            [-700., 200., 300.]
+        );
+        assert_eq!(
+            typed_step(from, None, "y+50", true, None).unwrap(),
+            [100., 250., 300.]
+        );
+        for aim in [[100., 200., 500.], [100., 200., -500.]] {
+            assert_eq!(
+                typed_step(from, Some(aim), "-800", true, None).unwrap(),
+                [100., 200., -500.]
+            );
+        }
+        let plane = crate::work_plane::WorkPlane::new(from, [0., 1., 0.], [-1., 0., 0.]).unwrap();
+        assert_eq!(
+            typed_step(from, None, "X-800", false, Some(plane)).unwrap(),
+            [100., -600., 300.]
+        );
+        assert!(typed_step(from, None, "X-", true, None).is_err());
     }
 
     #[test]

@@ -113,12 +113,13 @@ struct Loaded {
 }
 
 /// A copy or move by two points in progress (Ctrl+C / Ctrl+M).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TwoPoint {
     /// `Copy` or `Move`.
     pub(crate) kind: EditKind,
     /// The origin point, once picked.
     pub(crate) from: Option<[f64; 3]>,
+    endpoint: Option<(String, crate::edit::AxisEnd)>,
 }
 
 /// The window state.
@@ -409,6 +410,20 @@ impl Default for Preset {
 }
 
 impl Preset {
+    fn orbit_drag(
+        self,
+        primary: bool,
+        secondary: bool,
+        middle: bool,
+        ctrl: bool,
+        shift: bool,
+    ) -> bool {
+        match self {
+            Self::Mouse => middle && ctrl,
+            Self::Trackpad => primary && !shift && !secondary,
+        }
+    }
+
     /// The stored spelling of this preset in the settings file.
     const fn stored(self) -> CameraPreference {
         match self {
@@ -484,26 +499,15 @@ fn navigation(
     let pan = [-pointer_delta.x * factor, pointer_delta.y * factor];
     // Drag the visible model with the pointer; the orbit camera moves the other way.
     let orbit = [-pointer_delta.x * 0.008, pointer_delta.y * 0.008];
-    let (orbit, pan) = match preset {
-        // The left button is reserved for selection: a primary drag never moves the camera.
-        Preset::Mouse => {
-            if middle && ctrl {
-                (orbit, [0.0; 2])
-            } else if middle {
-                ([0.0; 2], pan)
-            } else {
-                ([0.0; 2], [0.0; 2])
-            }
-        }
-        Preset::Trackpad => {
-            if (primary && shift) || secondary {
-                ([0.0; 2], pan)
-            } else if primary {
-                (orbit, [0.0; 2])
-            } else {
-                ([0.0; 2], [0.0; 2])
-            }
-        }
+    let (orbit, pan) = if preset.orbit_drag(primary, secondary, middle, ctrl, shift) {
+        (orbit, [0.0; 2])
+    } else if match preset {
+        Preset::Mouse => middle,
+        Preset::Trackpad => (primary && shift) || secondary,
+    } {
+        ([0.0; 2], pan)
+    } else {
+        ([0.0; 2], [0.0; 2])
     };
     let scroll = if hovered {
         scroll_y * 0.002 * sign
@@ -2238,7 +2242,29 @@ impl App {
             self.edit_note = Some(Err("Select an element first.".into()));
             return;
         }
-        self.two_point = Some(TwoPoint { kind, from: None });
+        if kind == EditKind::Move
+            && let Some((axis, end)) = self.editor.axis_point()
+            && let Some(selected) = self.editor.selected()
+        {
+            self.distance_input.clear();
+            self.distance_aim = None;
+            self.ctrl_reference = None;
+            self.two_point = Some(TwoPoint {
+                kind,
+                from: Some(axis.world(end)),
+                endpoint: Some((selected.id.clone(), end)),
+            });
+            self.edit_note = Some(Ok(format!(
+                "Move {} point: pick its destination or enter an offset (e.g. X-800).",
+                end.label()
+            )));
+            return;
+        }
+        self.two_point = Some(TwoPoint {
+            kind,
+            from: None,
+            endpoint: None,
+        });
         self.edit_note = Some(Ok(format!(
             "{}: pick the origin point (Esc cancels).",
             if kind == EditKind::Move {
@@ -2267,7 +2293,9 @@ impl App {
 
     /// Accepts a resolved world point for a two-point move or copy (from click or distance+Enter).
     pub(super) fn accept_two_point(&mut self, point: [f64; 3]) {
-        let Some(armed) = self.two_point else { return };
+        let Some(armed) = self.two_point.take() else {
+            return;
+        };
         let Some(from) = armed.from else {
             self.two_point = Some(TwoPoint {
                 from: Some(point),
@@ -2281,7 +2309,6 @@ impl App {
             ));
             return;
         };
-        self.two_point = None;
         self.distance_input.clear();
         self.distance_aim = None;
         self.ctrl_reference = None;
@@ -2295,6 +2322,23 @@ impl App {
             store: &self.source.store,
             workspace: self.source.workspace.as_deref(),
         };
+        if let Some((id, end)) = armed.endpoint {
+            if let Some((axis, selected_end)) = self.editor.axis_point()
+                && selected_end == end
+                && axis.world(end) == from
+                && self.editor.selected().is_some_and(|s| s.id == id)
+            {
+                match self.editor.begin_axis_move(&axis, end, point, target) {
+                    Ok(Some(edit)) => self.spawn_edit(edit),
+                    Ok(None) => {}
+                    Err(error) => self.edit_note = Some(Err(error.to_string())),
+                }
+            } else {
+                self.edit_note =
+                    Some(Err("The selected endpoint changed. Select it again.".into()));
+            }
+            return;
+        }
         let ids = self.selection_ids();
         if ids.len() > 1 {
             let commands: Result<Vec<_>, _> = ids
@@ -2373,6 +2417,9 @@ impl App {
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.two_point = None;
+            self.distance_input.clear();
+            self.distance_aim = None;
+            self.ctrl_reference = None;
             self.edit_note = Some(Ok("Cancelled.".into()));
         }
         if !ctx.egui_wants_keyboard_input() && ctx.input(|input| input.key_pressed(egui::Key::F8)) {
@@ -2896,6 +2943,18 @@ impl App {
         }
         let editable = self.props.head_known() && matches!(state, Some(State::Current));
         let busy = self.props.busy() || self.other_command_running();
+        if !editable
+            && state.is_some()
+            && crate::theme::button(
+                ui,
+                crate::theme::Kind::Secondary,
+                "Reload properties",
+                !busy,
+            )
+            .clicked()
+        {
+            self.reread();
+        }
         if let Some(details) = self.props.details().cloned() {
             if let Some((_, count)) = &details.shared_definition {
                 ui.label(format!("Shape and material edits affect all {count} shared parts. Name, position and level affect this part."));
@@ -3736,7 +3795,7 @@ impl App {
         let action = self.editor.action();
         ui.add_enabled_ui(selected, |ui| match action {
             EditKind::Move => {
-                if let Some(two) = self.two_point.filter(|t| t.kind == EditKind::Move) {
+                if let Some(two) = self.two_point.as_ref().filter(|t| t.kind == EditKind::Move) {
                     ui.label(if let Some(from) = two.from {
                         format!(
                             "Origin: {} — pick destination point in 3D view (snap, O, or distance + Enter).",
@@ -3758,7 +3817,7 @@ impl App {
                 point_fields(ui, &mut self.editor.move_to);
             }
             EditKind::Copy => {
-                if let Some(two) = self.two_point.filter(|t| t.kind == EditKind::Copy) {
+                if let Some(two) = self.two_point.as_ref().filter(|t| t.kind == EditKind::Copy) {
                     ui.label(if let Some(from) = two.from {
                         format!(
                             "Origin: {} — pick destination point in 3D view (snap, O, or distance + Enter).",
@@ -9129,8 +9188,18 @@ pub(crate) mod tests {
                 }
                 _ => None,
             });
+            let scopes: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.rect.size() == egui::Vec2::splat(20.0) => {
+                        Some(rect.rect.center())
+                    }
+                    _ => None,
+                })
+                .collect();
             output.drop_without_applying_deltas();
-            (rects, snap)
+            (rects, snap, scopes)
         };
         let click = |pos| {
             vec![
@@ -9149,8 +9218,13 @@ pub(crate) mod tests {
                 },
             ]
         };
-        let (rects, snap) = draw(&mut app, vec![]);
+        let (rects, snap, scopes) = draw(&mut app, vec![]);
         assert_eq!(rects.len(), 34);
+        assert_eq!(scopes.len(), 2);
+        draw(&mut app, click(scopes[1]));
+        assert!(app.selection.assembly_select_mode());
+        draw(&mut app, click(scopes[0]));
+        assert!(!app.selection.assembly_select_mode());
         draw(&mut app, click(rects[2].center()));
         draw(&mut app, click(rects[7].center()));
         use beamcraft_engine::query::pick::{SelectionClass, SnapKind};
@@ -12533,10 +12607,7 @@ mod navigation_tests {
         for clipped in &output.shapes {
             if let egui::Shape::Rect(rect) = &clipped.shape {
                 let r = rect.rect;
-                if r.top() >= band_top
-                    && (16.0..=40.0).contains(&r.width())
-                    && (r.width() - r.height()).abs() < 1.0
-                {
+                if r.top() >= band_top && r.size() == egui::Vec2::splat(24.0) {
                     buttons.push(r);
                 }
             }
@@ -12620,7 +12691,7 @@ mod navigation_tests {
             match &clipped.shape {
                 egui::Shape::Rect(rect) if rect.rect.top() >= band_top => {
                     let r = rect.rect;
-                    if (16.0..=40.0).contains(&r.width()) && (r.width() - r.height()).abs() < 1.0 {
+                    if r.size() == egui::Vec2::splat(24.0) {
                         buttons.push(r);
                     } else {
                         others.push(r);
@@ -12679,6 +12750,17 @@ mod navigation_tests {
             let toggle = strips
                 .snap_toggle
                 .unwrap_or_else(|| panic!("the Snap toggle at {size:?}: {:?}", strips.others));
+            let scopes: Vec<_> = strips
+                .others
+                .iter()
+                .filter(|r| r.size() == egui::Vec2::splat(20.0))
+                .collect();
+            assert_eq!(scopes.len(), 2, "part and assembly scope switches");
+            assert!(
+                scopes
+                    .iter()
+                    .all(|r| r.top() >= switches_bottom && r.bottom() <= size[1])
+            );
             assert!(
                 toggle.top() - switches_bottom >= 2.0,
                 "at {size:?} the Snap toggle starts at {} but the switches reach {switches_bottom}",
@@ -13536,16 +13618,135 @@ mod navigation_tests {
     }
 
     #[test]
+    fn ctrl_m_moves_only_the_selected_column_end_by_a_signed_axis_offset() {
+        let mut app = headless().expect("a native or software adapter is required");
+        let store = app.source.config_dir.clone().unwrap().join("column-point");
+        std::fs::create_dir(&store).unwrap();
+        app.source.store = store.clone();
+        app.source.cli = crate::app::tests::workspace_cli();
+        let cli = app.source.cli.clone();
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .args(args)
+                .arg("--store")
+                .arg(&store)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        let profile = run(&["define-profile", "--width", "100", "--height", "100"]);
+        let digest = profile
+            .get("definition")
+            .unwrap()
+            .get("digest")
+            .unwrap()
+            .string()
+            .unwrap();
+        run(&[
+            "create-member",
+            "--kind",
+            "column",
+            "--start",
+            "100,200,0",
+            "--end",
+            "100,200,3000",
+            "--profile-digest",
+            digest,
+        ]);
+        let before = run(&["inspect-elements"]);
+        let member = &before.get("members").unwrap().array().unwrap()[0];
+        app.editor
+            .select_id(member.get("element_id").unwrap().string().unwrap().into());
+        app.editor.select_axis_point(
+            crate::edit::MemberAxis {
+                points: [[100., 200., 0.], [100., 200., 3000.]],
+                translation_mm: [0.; 3],
+                orientation_xyzw: [0., 0., 0., 1.],
+            },
+            crate::edit::AxisEnd::End,
+        );
+        let ctx = egui::Context::default();
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        ctx.run_ui(
+            egui::RawInput {
+                events: vec![key(egui::Key::M, egui::Modifiers::COMMAND)],
+                ..Default::default()
+            },
+            |ui| app.selection_shortcuts(ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(
+            app.two_point.as_ref().and_then(|t| t.from),
+            Some([100., 200., 3000.])
+        );
+        ctx.run_ui(
+            egui::RawInput {
+                events: vec![
+                    egui::Event::Text("Z-800".into()),
+                    key(egui::Key::Enter, egui::Modifiers::NONE),
+                ],
+                ..Default::default()
+            },
+            |ui| app.construction_keyboard(ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        assert!(app.edit_job.is_some(), "{:?}", app.edit_note);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.edit_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_edit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let after = run(&["inspect-elements"]);
+        let member = &after.get("members").unwrap().array().unwrap()[0];
+        let axis = member.get("axis_points_mm").unwrap().array().unwrap();
+        for (point, expected) in axis.iter().zip([[100., 200., 0.], [100., 200., 2200.]]) {
+            let xyz: [f64; 3] = std::array::from_fn(|i| point.array().unwrap()[i].float().unwrap());
+            assert_eq!(xyz, expected);
+        }
+        assert_eq!(
+            before
+                .get("snapshot")
+                .unwrap()
+                .get("elements")
+                .unwrap()
+                .array()
+                .unwrap()[0]
+                .get("placement_mm")
+                .unwrap(),
+            after
+                .get("snapshot")
+                .unwrap()
+                .get("elements")
+                .unwrap()
+                .array()
+                .unwrap()[0]
+                .get("placement_mm")
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn move_and_copy_arm_snapping_for_first_and_second_points() {
         let Some(mut app) = headless() else { return };
         app.editor
             .select_id("019a7bf0-0000-7000-8000-000000000001".into());
         app.set_bench(super::workbench::Bench::Move);
         assert_eq!(
-            app.two_point.map(|t| t.kind),
+            app.two_point.as_ref().map(|t| t.kind),
             Some(crate::edit::EditKind::Move)
         );
-        assert_eq!(app.two_point.and_then(|t| t.from), None);
+        assert_eq!(app.two_point.as_ref().and_then(|t| t.from), None);
         assert!(
             app.picking_point(),
             "Move arms snap picking for the 1st point"
@@ -13553,7 +13754,7 @@ mod navigation_tests {
 
         app.accept_two_point([100.0, 200.0, 0.0]);
         assert_eq!(
-            app.two_point.and_then(|t| t.from),
+            app.two_point.as_ref().and_then(|t| t.from),
             Some([100.0, 200.0, 0.0])
         );
         assert!(
@@ -13563,7 +13764,7 @@ mod navigation_tests {
 
         app.set_bench(super::workbench::Bench::Copy);
         assert_eq!(
-            app.two_point.map(|t| t.kind),
+            app.two_point.as_ref().map(|t| t.kind),
             Some(crate::edit::EditKind::Copy)
         );
         assert!(

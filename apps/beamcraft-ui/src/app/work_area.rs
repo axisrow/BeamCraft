@@ -983,12 +983,15 @@ impl App {
             )
         });
         let (zoom_in, zoom_out) = keys.unwrap_or((false, false));
+        let primary = response.dragged_by(egui::PointerButton::Primary);
+        let secondary = response.dragged_by(egui::PointerButton::Secondary);
+        let middle = response.dragged_by(egui::PointerButton::Middle);
         let (orbit, pan, zoom) = navigation(
             self.preset,
             delta,
-            response.dragged_by(egui::PointerButton::Primary),
-            response.dragged_by(egui::PointerButton::Secondary),
-            response.dragged_by(egui::PointerButton::Middle),
+            primary,
+            secondary,
+            middle,
             ctrl,
             shift,
             pane.camera.distance(),
@@ -1010,7 +1013,8 @@ impl App {
         };
         // A contour grip holding the pointer takes the primary drag from the camera (V18): a
         // trackpad's primary drag would otherwise orbit while the grip is being dragged.
-        let (orbit, pan) = if self.contour.holds_pointer() || self.member_grips.holds_pointer() {
+        let grip_holds_pointer = self.contour.holds_pointer() || self.member_grips.holds_pointer();
+        let (orbit, pan) = if grip_holds_pointer {
             ([0.0; 2], [0.0; 2])
         } else {
             (orbit, pan)
@@ -1126,6 +1130,20 @@ impl App {
                 pane.pivot = Some(point);
             }
         }
+        let rotating = !pane.camera.is_aligned()
+            && !grip_holds_pointer
+            && !self.rotation_locked
+            && (orbit != [0.0; 2]
+                || self
+                    .preset
+                    .orbit_drag(primary, secondary, middle, ctrl, shift));
+        let rotation_point = rotating.then(|| {
+            pivot.unwrap_or_else(|| {
+                let [x, y, z] = pane.camera.target();
+                let [ox, oy, oz] = display_origin;
+                [ox + f64::from(x), oy + f64::from(y), oz + f64::from(z)]
+            })
+        });
         // The same clear colours `screenshot-view` answers with (issue 562 item 36): the dark
         // theme sits on the renderer's dark background, the light one on the paper tone.
         let background = if dark {
@@ -1319,10 +1337,6 @@ impl App {
                 };
                 annotation_panel::paint(ui, response.rect, &view, l.summary.origin_mm, rows, keep);
             }
-            // The rotation point, seen while it is in effect.
-            if let Some(point) = pivot {
-                paint_pivot(ui, response.rect, &view, l.summary.origin_mm, point);
-            }
             // The rest of an area selection, outlined like the primary element.
             let ids = self.selection_ids();
             if ids.len() > 1 {
@@ -1410,6 +1424,9 @@ impl App {
                 painter.rect_stroke(badge, 3, Stroke::new(1.5, theme::BRAND), StrokeKind::Inside);
                 painter.galley(badge.min + vec2(5.0, 2.5), galley, palette.text);
             }
+        }
+        if let Some(point) = rotation_point {
+            paint_pivot(ui, response.rect, &view, display_origin, point);
         }
         Some(PaneDraw {
             key,
@@ -1643,7 +1660,7 @@ impl App {
                 self.member_cursor = None;
             }
             self.paint_ctrl_reference(ui, response.rect, view, hover_hit.map(|(p, _)| p));
-            if let Some(from) = self.two_point.and_then(|t| t.from)
+            if let Some(from) = self.two_point.as_ref().and_then(|t| t.from)
                 && let Some(start) = crate::grid::project(from, response.rect, view, origin_mm)
             {
                 let target_px = hover_hit
@@ -1651,7 +1668,12 @@ impl App {
                     .or_else(|| response.hover_pos());
                 let painter = ui.painter_at(response.rect);
                 painter.circle_filled(start, 4.0, theme::BRAND);
-                if let Some(end_px) = target_px {
+                if let Some(end_px) = target_px
+                    && !hover_hit.is_some_and(|(point, _)| {
+                        self.ctrl_reference.is_none()
+                            && self.paint_axis_dimension(&painter, [start, end_px], from, point)
+                    })
+                {
                     painter.add(egui::Shape::dashed_line(
                         &[start, end_px],
                         Stroke::new(1.5, theme::BRAND),
@@ -1818,6 +1840,62 @@ impl App {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_3d_view_marks_its_rotation_point_only_during_a_drag() {
+        let Some(mut app) = super::super::tests::headless() else {
+            return;
+        };
+        app.preset = super::super::Preset::Trackpad;
+        let pane = app.views.active_pane().unwrap();
+        let key = pane.key;
+        assert!(pane.pivot.is_none());
+        assert!(app.editor.selected().is_none());
+        let ctx = egui::Context::default();
+        let body = egui::Rect::from_min_size(egui::pos2(30.0, 40.0), vec2(400.0, 300.0));
+        let mut draw = |events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(body.expand(20.0)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.interact(
+                        body,
+                        egui::Id::unique("rotation-marker-test"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    app.draw_pane(ui, key, body, response, Some((false, false)))
+                        .unwrap();
+                },
+            );
+            let mark = output.shapes.iter().find_map(|item| match &item.shape {
+                egui::Shape::Circle(ring)
+                    if ring.radius == 7.0 && ring.stroke.color == theme::BRAND =>
+                {
+                    Some(ring.center)
+                }
+                _ => None,
+            });
+            output.drop_without_applying_deltas();
+            mark
+        };
+        let start = body.center() + vec2(30.0, 20.0);
+        let end = start + vec2(18.0, 12.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: egui::Modifiers::NONE,
+        };
+        assert_eq!(draw(vec![egui::Event::PointerMoved(start)]), None);
+        assert_eq!(draw(vec![button(start, true)]), None);
+        let mark = draw(vec![egui::Event::PointerMoved(end)]).unwrap();
+        assert!(mark.distance(body.center()) < 0.01);
+        assert_eq!(draw(vec![]), Some(mark));
+        assert_eq!(draw(vec![button(end, false)]), None);
+    }
 
     #[test]
     fn a_window_takes_what_is_inside_and_a_crossing_what_it_touches() {

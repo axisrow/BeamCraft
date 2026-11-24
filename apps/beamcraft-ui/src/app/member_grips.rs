@@ -179,6 +179,9 @@ impl App {
         response: &Response,
         view: &crate::camera::View,
     ) -> bool {
+        if self.two_point.is_some() {
+            return false;
+        }
         let Some(axis) = self.grip_axis() else {
             self.member_grips.drag = None;
             return false;

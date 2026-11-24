@@ -368,35 +368,81 @@ impl App {
             .is_none_or(|edit| edit.original != self.grid_form);
         let drawn = self.grid_drawn;
         let line_editable = self.grid_edit.as_ref().is_none_or(|e| !e.stale);
-        crate::kit::type_box(
-            ui,
-            theme::Icon::Grid,
-            if editing { "Grid" } else { "New grid" },
-        );
-        if self.grid_edit.as_ref().is_some_and(|edit| edit.stale) {
-            ui.colored_label(Palette::current(ui).error, "This grid changed while you were editing. Select it again before applying changes.");
-        }
-        // The kind is chosen once, when the grid is made: a regular grid (positions by
-        // spacing) and a drawn grid (lines one by one) never convert into each other, so an
-        // existing grid opens in its own kind's tools, never in the other's, which the engine
-        // would refuse.
-        if !editing {
-            crate::kit::prop_choice(
-                ui,
-                "grid-kind",
-                "Kind",
-                &mut self.grid_drawn,
-                &[(false, "Regular grid"), (true, "Drawn grid")],
-            );
-        }
-        ui.add_space(8.0);
-        // The action bar keeps one height; the outcome goes to the status bar.
-        let footer = 120.0;
+        egui::Panel::bottom("grid-actions")
+            .min_size(
+                crate::kit::ACTION_BAR_HEIGHT
+                    + if editing {
+                        crate::kit::ROW_HEIGHT + crate::kit::SPACE_S
+                    } else {
+                        0.0
+                    },
+            )
+            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 4)))
+            .show(ui, |ui| {
+                let done = crate::kit::actions(
+                    ui,
+                    if editing {
+                        "Apply changes"
+                    } else {
+                        "Create grid"
+                    },
+                    if drawn {
+                        line_editable
+                    } else {
+                        editable && changed
+                    },
+                    "Cancel",
+                    busy || self.grid_job.is_some(),
+                );
+                if done.primary {
+                    self.start_grid();
+                }
+                // An existing grid is deleted from the panel itself, not only with the Delete key.
+                if editing {
+                    ui.horizontal(|ui| {
+                        let free = !busy && self.grid_job.is_none() && editable;
+                        if theme::button(ui, theme::Kind::Secondary, "Delete grid", free)
+                            .on_hover_text("Delete this grid (Ctrl+Z restores it)")
+                            .clicked()
+                        {
+                            self.delete_selection();
+                        }
+                    });
+                }
+                if done.cancel {
+                    self.grid_edit = None;
+                    self.grid_line = crate::grid::DrawLineForm::default();
+                    self.grid_form = crate::grid::GridForm::default();
+                    self.grid_note = None;
+                    self.set_bench(Bench::Select);
+                }
+            });
         egui::ScrollArea::vertical()
             .id_salt("grid-form")
-            .max_height((ui.available_height() - footer).max(0.0))
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                crate::kit::type_box(
+                    ui,
+                    theme::Icon::Grid,
+                    if editing { "Grid" } else { "New grid" },
+                );
+                if self.grid_edit.as_ref().is_some_and(|edit| edit.stale) {
+                    ui.colored_label(Palette::current(ui).error, "This grid changed while you were editing. Select it again before applying changes.");
+                }
+                // The kind is chosen once, when the grid is made: a regular grid (positions by
+                // spacing) and a drawn grid (lines one by one) never convert into each other, so an
+                // existing grid opens in its own kind's tools, never in the other's, which the engine
+                // would refuse.
+                if !editing {
+                    crate::kit::prop_choice(
+                        ui,
+                        "grid-kind",
+                        "Kind",
+                        &mut self.grid_drawn,
+                        &[(false, "Regular grid"), (true, "Drawn grid")],
+                    );
+                }
+                ui.add_space(8.0);
                 ui.add_enabled_ui(!busy && (editable || drawn && line_editable), |ui| {
                     if !drawn || !editing || self.grid_line.action == "update-grid" {
                         field(ui, "Name", &mut self.grid_form.name, "Grid name");
@@ -416,43 +462,6 @@ impl App {
                     }
                 });
             });
-        let done = crate::kit::actions(
-            ui,
-            if editing {
-                "Apply changes"
-            } else {
-                "Create grid"
-            },
-            if drawn {
-                line_editable
-            } else {
-                editable && changed
-            },
-            "Cancel",
-            busy || self.grid_job.is_some(),
-        );
-        if done.primary {
-            self.start_grid();
-        }
-        // An existing grid is deleted from the panel itself, not only with the Delete key.
-        if editing {
-            ui.horizontal(|ui| {
-                let free = !busy && self.grid_job.is_none() && editable;
-                if theme::button(ui, theme::Kind::Secondary, "Delete grid", free)
-                    .on_hover_text("Delete this grid (Ctrl+Z restores it)")
-                    .clicked()
-                {
-                    self.delete_selection();
-                }
-            });
-        }
-        if done.cancel {
-            self.grid_edit = None;
-            self.grid_line = crate::grid::DrawLineForm::default();
-            self.grid_form = crate::grid::GridForm::default();
-            self.grid_note = None;
-            self.set_bench(Bench::Select);
-        }
         // Its outcome is told in the status bar (`App::status_note`).
     }
 

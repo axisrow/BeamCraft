@@ -2478,6 +2478,28 @@ impl App {
                         });
                 });
                 text(ui, "Name", &mut filter.name);
+                if let Some(name) = &previous {
+                    let name = name.to_lowercase();
+                    let views = self
+                        .views
+                        .book
+                        .views()
+                        .iter()
+                        .filter(|view| {
+                            view.overrides
+                                .iter()
+                                .any(|item| item.filter.to_lowercase() == name)
+                        })
+                        .map(|view| view.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    crate::kit::prop_info(
+                        ui,
+                        "Used in views",
+                        Some(if views.is_empty() { "None" } else { &views }),
+                        "—",
+                    );
+                }
                 row(ui, "Elements", |ui| {
                     // Wrapped: two toggles exceed the value cell on a narrow panel, and an
                     // unwrapped row would break the second label into letters.
@@ -2490,7 +2512,7 @@ impl App {
                     let mut remove = None;
                     for (at, condition) in filter.conditions.iter_mut().enumerate() {
                         ui.push_id(("filter-row", at), |ui| {
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 let current = match &condition.field {
                                     FilterField::Type => "type",
                                     FilterField::Name => "name",
