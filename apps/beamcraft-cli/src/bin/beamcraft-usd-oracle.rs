@@ -11,6 +11,7 @@
 //! - `beamcraft-usd-oracle revision ROOT_LAYER EXPECTATION_JSON` (expectation: an array of
 //!   plate/member entries)
 //! - `beamcraft-usd-oracle reference ROOT_LAYER EXPECTATION_JSON` (expectation: one object)
+//! - `beamcraft-usd-oracle digest FILE [FILE ...]` (one `sha256sum`-style line per file)
 //!
 //! The directory of ROOT_LAYER holds the layers named in the revision manifest (root.usda,
 //! authored.usda, derived.usda and any external layers). The oracle parses the layer text with
@@ -26,6 +27,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use beamcraft_json::{Json, Limits};
+use beamcraft_model::digest::Sha256;
 
 /// The owned layers, strongest first, exactly as the writer composes a revision.
 const OWNED_STACK: [&str; 3] = ["root.usda", "authored.usda", "derived.usda"];
@@ -48,11 +50,16 @@ const MAX_NAME_BYTES: usize = 512;
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     let mode = args.next().unwrap_or_default();
+    if mode == "digest" {
+        let files: Vec<String> = args.collect();
+        return digest_files(&files);
+    }
     let root = args.next().unwrap_or_default();
     let expect = args.next();
     if !matches!(mode.as_str(), "revision" | "reference" | "marks") {
         eprintln!("usage: beamcraft-usd-oracle revision|reference ROOT_LAYER EXPECTATION_JSON");
         eprintln!("       beamcraft-usd-oracle marks ROOT_LAYER");
+        eprintln!("       beamcraft-usd-oracle digest FILE [FILE ...]");
         return std::process::ExitCode::from(2);
     }
     let marks_only = mode == "marks";
@@ -87,6 +94,41 @@ fn main() -> std::process::ExitCode {
         eprintln!("{} oracle FAILED: {} failures", mode, messages.len());
     }
     std::process::ExitCode::FAILURE
+}
+
+/// The lowercase hex SHA-256 of one file's bytes, hashed exactly as read: no line-ending
+/// translation, no trailing-newline normalization. The LEW-05 cross-platform digest run
+/// compares layer bytes through this, so two platforms compare the files exactly as the
+/// writer wrote them; the LF policy itself is asserted in the layer engine, never normalized
+/// away here.
+fn hash_file(path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let digest = Sha256::digest(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    Ok(digest.to_string())
+}
+
+/// Prints one `sha256sum`-style line (`<hex>  <path>`) per named file. A file that cannot be
+/// read or hashed prints a FAIL line and fails the run; nothing is skipped silently.
+fn digest_files(files: &[String]) -> std::process::ExitCode {
+    if files.is_empty() {
+        eprintln!("usage: beamcraft-usd-oracle digest FILE [FILE ...]");
+        return std::process::ExitCode::from(2);
+    }
+    let mut failed = false;
+    for file in files {
+        match hash_file(file) {
+            Ok(hex) => println!("{hex}  {file}"),
+            Err(message) => {
+                eprintln!("FAIL {message}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
+    }
 }
 
 /// Runs all checks for `mode`; `Ok` carries the JSON report. In the `marks` mode the report is
@@ -2375,6 +2417,40 @@ mod tests {
         assert!(Parser::layer(&layers.0.join("root.usda")).is_err());
         layers.write("bad.usda", "#usda 2.0\n");
         assert!(Parser::layer(&layers.0.join("bad.usda")).is_err());
+    }
+
+    #[test]
+    fn digest_hashes_the_bytes_exactly_as_written() {
+        let layers = Layers::new("digest");
+        // The NIST "abc" vector.
+        layers.write("abc.usda", "abc");
+        assert_eq!(
+            hash_file(layers.0.join("abc.usda").to_string_lossy().as_ref())
+                .ok()
+                .as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+        );
+        // CRLF bytes hash as written: the digest mode normalizes nothing away.
+        layers.write("crlf.usda", "a\r\nb\r\n");
+        assert_eq!(
+            hash_file(layers.0.join("crlf.usda").to_string_lossy().as_ref())
+                .ok()
+                .as_deref(),
+            Some("58055bdcc73787eb88c78d36f0b4939e9c5dc1c3ad17e25cc85a6833cf1a0cab"),
+        );
+        // The two-block NIST vector.
+        layers.write(
+            "blocks.usda",
+            "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+        );
+        assert_eq!(
+            hash_file(layers.0.join("blocks.usda").to_string_lossy().as_ref())
+                .ok()
+                .as_deref(),
+            Some("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
+        );
+        // An unreadable file is an error, never a silent skip.
+        assert!(hash_file(layers.0.join("absent.usda").to_string_lossy().as_ref()).is_err());
     }
 
     #[test]
