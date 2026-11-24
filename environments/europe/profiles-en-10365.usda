@@ -556,7 +556,7 @@ def Scope "Library"
             double steel:profile:bMm = 300
             double steel:profile:twMm = 15
             double steel:profile:tfMm = 28
-            double steel:profile:rMm = 27
+            double steel:profile:rMm = 30
             double steel:profile:areaMm2 = 28583
             double steel:profile:massPerMeterKg = 224.4
             string steel:profile:standard = "EN 10365:2017"
@@ -570,7 +570,7 @@ def Scope "Library"
             double steel:profile:bMm = 300
             double steel:profile:twMm = 16
             double steel:profile:tfMm = 30
-            double steel:profile:rMm = 27
+            double steel:profile:rMm = 30
             double steel:profile:areaMm2 = 32053
             double steel:profile:massPerMeterKg = 251.6
             string steel:profile:standard = "EN 10365:2017"
@@ -584,7 +584,7 @@ def Scope "Library"
             double steel:profile:bMm = 300
             double steel:profile:twMm = 16.5
             double steel:profile:tfMm = 31
-            double steel:profile:rMm = 27
+            double steel:profile:rMm = 30
             double steel:profile:areaMm2 = 34685
             double steel:profile:massPerMeterKg = 272.3
             string steel:profile:standard = "EN 10365:2017"
@@ -892,7 +892,7 @@ def Scope "Library"
             double steel:profile:bMm = 300
             double steel:profile:twMm = 17.5
             double steel:profile:tfMm = 33
-            double steel:profile:rMm = 27
+            double steel:profile:rMm = 30
             double steel:profile:areaMm2 = 33418
             double steel:profile:massPerMeterKg = 262.3
             string steel:profile:standard = "EN 10365:2017"
@@ -906,7 +906,7 @@ def Scope "Library"
             double steel:profile:bMm = 300
             double steel:profile:twMm = 18.5
             double steel:profile:tfMm = 35
-            double steel:profile:rMm = 27
+            double steel:profile:rMm = 30
             double steel:profile:areaMm2 = 37128
             double steel:profile:massPerMeterKg = 291.5
             string steel:profile:standard = "EN 10365:2017"
@@ -920,7 +920,7 @@ def Scope "Library"
             double steel:profile:bMm = 300
             double steel:profile:twMm = 19
             double steel:profile:tfMm = 36
-            double steel:profile:rMm = 27
+            double steel:profile:rMm = 30
             double steel:profile:areaMm2 = 40005
             double steel:profile:massPerMeterKg = 314
             string steel:profile:standard = "EN 10365:2017"

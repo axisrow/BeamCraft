@@ -3137,7 +3137,7 @@ mod tests {
         else {
             panic!("HEA1000 is not a parametric section");
         };
-        assert_eq!(p.values(), [990.0, 300.0, 16.5, 31.0, 27.0]);
+        assert_eq!(p.values(), [990.0, 300.0, 16.5, 31.0, 30.0]);
         assert_eq!(section.area_mm2, Some(34685.0));
         assert_eq!(section.mass_per_meter_kg, Some(272.3));
         for absent in [
@@ -4957,7 +4957,7 @@ mod tests {
                 29720.0,
                 231.0,
             ),
-            ("HEA1000", [990.0, 300.0, 16.5, 31.0, 27.0], 34685.0, 272.3),
+            ("HEA1000", [990.0, 300.0, 16.5, 31.0, 30.0], 34685.0, 272.3),
         ] {
             let DefinitionRecord::SectionProfile {
                 shape: SectionShape::Parametric(p),
