@@ -397,12 +397,12 @@ fn all_namespaces_page_as_one_position_space() {
     let store = f.create("Paged", "europe");
 
     // The three listings the `all` listing concatenates, and the `all` listing walked a page of
-    // one entry at a time: the pages tile the three ranges exactly, in namespace order.
+    // one entry at a time: the pages tile the three ranges exactly, in namespace order. The
+    // profile range outgrew one page of 256 when #790 doubled the europe catalog, so the three
+    // ranges are walked page by page exactly as the `all` chain is.
     let expected: Vec<String> = ["profile", "fastener", "material"]
         .into_iter()
-        .flat_map(|namespace| {
-            designations(&f.listing(&store, &["--namespace", namespace, "--limit", "256"]))
-        })
+        .flat_map(|namespace| walk(&f, &store, namespace))
         .collect();
     assert_eq!(walk(&f, &store, "all"), expected);
     let first = f.listing(&store, &["--namespace", "all", "--limit", "1"]);
