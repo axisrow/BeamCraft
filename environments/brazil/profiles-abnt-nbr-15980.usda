@@ -1,0 +1,3996 @@
+#usda 1.0
+(
+    doc = "BeamCraft Brazil environment: the hot-rolled wide-flange W shapes and bearing-pile HP shapes of the ASTM A6/A6M assortment, whose tables ABNT NBR 15980 carries as its own W and HP content. The nominal dimensions, areas and masses are the standard's own SI values, the rows of the shipped usa pack re-entered as our own data; no text or table is copied and nothing is converted. Designations are in the form the regional producers print (W 310 x 60,0), the mass the nominal SI mass of the designation. The root radius, which the standards do not print, is the fillet radius of the Nucor-Yamato catalog for the shapes it rolls and zero (a sharp corner) for the others. Reference data for modelling; it is not a substitute for the standard itself."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "brazil-abnt-nbr-15980-profiles"
+        string "bim:library:title" = "Brazil hot-rolled sections (ABNT NBR 15980: W, HP)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "ASTM A6/A6M-05a Annex A2 SI facts and SI designations, the rows of the shipped usa pack, under the producers' metric designations; cross-checked against the Gerdau and Nucor-Yamato catalogs; no table copied"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+
+        def Scope "W1100x499_0"
+        {
+            string steel:profile:designation = "W 1100 x 499,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1118
+            double steel:profile:bMm = 405
+            double steel:profile:twMm = 26
+            double steel:profile:tfMm = 45
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 63500
+            double steel:profile:massPerMeterKg = 499
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1100x433_0"
+        {
+            string steel:profile:designation = "W 1100 x 433,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1108
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 22
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55100
+            double steel:profile:massPerMeterKg = 433
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1100x390_0"
+        {
+            string steel:profile:designation = "W 1100 x 390,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1100
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 20
+            double steel:profile:tfMm = 36
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49700
+            double steel:profile:massPerMeterKg = 390
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1100x343_0"
+        {
+            string steel:profile:designation = "W 1100 x 343,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1090
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 43600
+            double steel:profile:massPerMeterKg = 343
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x883_0"
+        {
+            string steel:profile:designation = "W 1000 x 883,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1092
+            double steel:profile:bMm = 424
+            double steel:profile:twMm = 45.5
+            double steel:profile:tfMm = 82
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 112500
+            double steel:profile:massPerMeterKg = 883
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x748_0"
+        {
+            string steel:profile:designation = "W 1000 x 748,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1068
+            double steel:profile:bMm = 417
+            double steel:profile:twMm = 39
+            double steel:profile:tfMm = 70
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 95300
+            double steel:profile:massPerMeterKg = 748
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x642_0"
+        {
+            string steel:profile:designation = "W 1000 x 642,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1048
+            double steel:profile:bMm = 412
+            double steel:profile:twMm = 34
+            double steel:profile:tfMm = 60
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 81800
+            double steel:profile:massPerMeterKg = 642
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x591_0"
+        {
+            string steel:profile:designation = "W 1000 x 591,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1040
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 75300
+            double steel:profile:massPerMeterKg = 591
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x554_0"
+        {
+            string steel:profile:designation = "W 1000 x 554,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1032
+            double steel:profile:bMm = 408
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 52
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 70600
+            double steel:profile:massPerMeterKg = 554
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x539_0"
+        {
+            string steel:profile:designation = "W 1000 x 539,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1030
+            double steel:profile:bMm = 407
+            double steel:profile:twMm = 28.4
+            double steel:profile:tfMm = 51.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 68700
+            double steel:profile:massPerMeterKg = 539
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x483_0"
+        {
+            string steel:profile:designation = "W 1000 x 483,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1020
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 25.4
+            double steel:profile:tfMm = 46
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 61500
+            double steel:profile:massPerMeterKg = 483
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x443_0"
+        {
+            string steel:profile:designation = "W 1000 x 443,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1012
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 23.6
+            double steel:profile:tfMm = 41.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 56400
+            double steel:profile:massPerMeterKg = 443
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x412_0"
+        {
+            string steel:profile:designation = "W 1000 x 412,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1008
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 52500
+            double steel:profile:massPerMeterKg = 412
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x371_0"
+        {
+            string steel:profile:designation = "W 1000 x 371,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1000
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 36.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 47300
+            double steel:profile:massPerMeterKg = 371
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x321_0"
+        {
+            string steel:profile:designation = "W 1000 x 321,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 990
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40800
+            double steel:profile:massPerMeterKg = 321
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x296_0"
+        {
+            string steel:profile:designation = "W 1000 x 296,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 982
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 27.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 37700
+            double steel:profile:massPerMeterKg = 296
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x584_0"
+        {
+            string steel:profile:designation = "W 1000 x 584,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1056
+            double steel:profile:bMm = 314
+            double steel:profile:twMm = 36
+            double steel:profile:tfMm = 64
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 74400
+            double steel:profile:massPerMeterKg = 584
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x494_0"
+        {
+            string steel:profile:designation = "W 1000 x 494,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1036
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 54
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 62900
+            double steel:profile:massPerMeterKg = 494
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x486_0"
+        {
+            string steel:profile:designation = "W 1000 x 486,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1036
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 30
+            double steel:profile:tfMm = 54.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 61900
+            double steel:profile:massPerMeterKg = 486
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x438_0"
+        {
+            string steel:profile:designation = "W 1000 x 438,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1026
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 49
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55600
+            double steel:profile:massPerMeterKg = 438
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x415_0"
+        {
+            string steel:profile:designation = "W 1000 x 415,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1020
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 26
+            double steel:profile:tfMm = 46
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 52800
+            double steel:profile:massPerMeterKg = 415
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x393_0"
+        {
+            string steel:profile:designation = "W 1000 x 393,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1016
+            double steel:profile:bMm = 303
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 50100
+            double steel:profile:massPerMeterKg = 393
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x350_0"
+        {
+            string steel:profile:designation = "W 1000 x 350,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1008
+            double steel:profile:bMm = 302
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44600
+            double steel:profile:massPerMeterKg = 350
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x314_0"
+        {
+            string steel:profile:designation = "W 1000 x 314,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1000
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 19.1
+            double steel:profile:tfMm = 35.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40000
+            double steel:profile:massPerMeterKg = 314
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x272_0"
+        {
+            string steel:profile:designation = "W 1000 x 272,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 990
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 34600
+            double steel:profile:massPerMeterKg = 272
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x249_0"
+        {
+            string steel:profile:designation = "W 1000 x 249,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 980
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 26
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 31700
+            double steel:profile:massPerMeterKg = 249
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W1000x222_0"
+        {
+            string steel:profile:designation = "W 1000 x 222,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 970
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 21.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28200
+            double steel:profile:massPerMeterKg = 222
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x1191_0"
+        {
+            string steel:profile:designation = "W 920 x 1191,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1081
+            double steel:profile:bMm = 457
+            double steel:profile:twMm = 60.5
+            double steel:profile:tfMm = 109
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 152500
+            double steel:profile:massPerMeterKg = 1191
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x970_0"
+        {
+            string steel:profile:designation = "W 920 x 970,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1043
+            double steel:profile:bMm = 446
+            double steel:profile:twMm = 50
+            double steel:profile:tfMm = 89.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 124100
+            double steel:profile:massPerMeterKg = 970
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x787_0"
+        {
+            string steel:profile:designation = "W 920 x 787,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1011
+            double steel:profile:bMm = 437
+            double steel:profile:twMm = 40.9
+            double steel:profile:tfMm = 73.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 100700
+            double steel:profile:massPerMeterKg = 787
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x725_0"
+        {
+            string steel:profile:designation = "W 920 x 725,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 999
+            double steel:profile:bMm = 434
+            double steel:profile:twMm = 38.1
+            double steel:profile:tfMm = 68.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 92700
+            double steel:profile:massPerMeterKg = 725
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x656_0"
+        {
+            string steel:profile:designation = "W 920 x 656,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 987
+            double steel:profile:bMm = 431
+            double steel:profile:twMm = 34.5
+            double steel:profile:tfMm = 62
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 84000
+            double steel:profile:massPerMeterKg = 656
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x588_0"
+        {
+            string steel:profile:designation = "W 920 x 588,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 975
+            double steel:profile:bMm = 427
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 75700
+            double steel:profile:massPerMeterKg = 588
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x537_0"
+        {
+            string steel:profile:designation = "W 920 x 537,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 965
+            double steel:profile:bMm = 425
+            double steel:profile:twMm = 28.4
+            double steel:profile:tfMm = 51.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 68700
+            double steel:profile:massPerMeterKg = 537
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x491_0"
+        {
+            string steel:profile:designation = "W 920 x 491,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 957
+            double steel:profile:bMm = 422
+            double steel:profile:twMm = 25.9
+            double steel:profile:tfMm = 47
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 62800
+            double steel:profile:massPerMeterKg = 491
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x449_0"
+        {
+            string steel:profile:designation = "W 920 x 449,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 948
+            double steel:profile:bMm = 423
+            double steel:profile:twMm = 24
+            double steel:profile:tfMm = 42.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 57600
+            double steel:profile:massPerMeterKg = 449
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x420_0"
+        {
+            string steel:profile:designation = "W 920 x 420,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 943
+            double steel:profile:bMm = 422
+            double steel:profile:twMm = 22.5
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 53800
+            double steel:profile:massPerMeterKg = 420
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x390_0"
+        {
+            string steel:profile:designation = "W 920 x 390,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 936
+            double steel:profile:bMm = 420
+            double steel:profile:twMm = 21.3
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49900
+            double steel:profile:massPerMeterKg = 390
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x368_0"
+        {
+            string steel:profile:designation = "W 920 x 368,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 931
+            double steel:profile:bMm = 419
+            double steel:profile:twMm = 20.3
+            double steel:profile:tfMm = 34.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 47000
+            double steel:profile:massPerMeterKg = 368
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x381_0"
+        {
+            string steel:profile:designation = "W 920 x 381,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 951
+            double steel:profile:bMm = 310
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 48600
+            double steel:profile:massPerMeterKg = 381
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x345_0"
+        {
+            string steel:profile:designation = "W 920 x 345,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 943
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44000
+            double steel:profile:massPerMeterKg = 345
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x313_0"
+        {
+            string steel:profile:designation = "W 920 x 313,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 932
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 34.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 39900
+            double steel:profile:massPerMeterKg = 313
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x289_0"
+        {
+            string steel:profile:designation = "W 920 x 289,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 927
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 19.4
+            double steel:profile:tfMm = 32
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36800
+            double steel:profile:massPerMeterKg = 289
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x271_0"
+        {
+            string steel:profile:designation = "W 920 x 271,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 923
+            double steel:profile:bMm = 307
+            double steel:profile:twMm = 18.4
+            double steel:profile:tfMm = 30
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 34600
+            double steel:profile:massPerMeterKg = 271
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x253_0"
+        {
+            string steel:profile:designation = "W 920 x 253,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 919
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 27.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32300
+            double steel:profile:massPerMeterKg = 253
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x238_0"
+        {
+            string steel:profile:designation = "W 920 x 238,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 915
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 25.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30300
+            double steel:profile:massPerMeterKg = 238
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x223_0"
+        {
+            string steel:profile:designation = "W 920 x 223,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 911
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 15.9
+            double steel:profile:tfMm = 23.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28500
+            double steel:profile:massPerMeterKg = 223
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W920x201_0"
+        {
+            string steel:profile:designation = "W 920 x 201,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 903
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 15.2
+            double steel:profile:tfMm = 20.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25600
+            double steel:profile:massPerMeterKg = 201
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x576_0"
+        {
+            string steel:profile:designation = "W 840 x 576,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 913
+            double steel:profile:bMm = 411
+            double steel:profile:twMm = 32
+            double steel:profile:tfMm = 57.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 73500
+            double steel:profile:massPerMeterKg = 576
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x527_0"
+        {
+            string steel:profile:designation = "W 840 x 527,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 903
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 67200
+            double steel:profile:massPerMeterKg = 527
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x473_0"
+        {
+            string steel:profile:designation = "W 840 x 473,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 893
+            double steel:profile:bMm = 406
+            double steel:profile:twMm = 26.4
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 60300
+            double steel:profile:massPerMeterKg = 473
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x433_0"
+        {
+            string steel:profile:designation = "W 840 x 433,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 885
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55200
+            double steel:profile:massPerMeterKg = 433
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x392_0"
+        {
+            string steel:profile:designation = "W 840 x 392,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 877
+            double steel:profile:bMm = 401
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49900
+            double steel:profile:massPerMeterKg = 392
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x359_0"
+        {
+            string steel:profile:designation = "W 840 x 359,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 868
+            double steel:profile:bMm = 403
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 35.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 45700
+            double steel:profile:massPerMeterKg = 359
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x329_0"
+        {
+            string steel:profile:designation = "W 840 x 329,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 862
+            double steel:profile:bMm = 401
+            double steel:profile:twMm = 19.7
+            double steel:profile:tfMm = 32.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 41900
+            double steel:profile:massPerMeterKg = 329
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x299_0"
+        {
+            string steel:profile:designation = "W 840 x 299,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 855
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 18.2
+            double steel:profile:tfMm = 29.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 38100
+            double steel:profile:massPerMeterKg = 299
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x251_0"
+        {
+            string steel:profile:designation = "W 840 x 251,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 859
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 31900
+            double steel:profile:massPerMeterKg = 251
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x226_0"
+        {
+            string steel:profile:designation = "W 840 x 226,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 851
+            double steel:profile:bMm = 294
+            double steel:profile:twMm = 16.1
+            double steel:profile:tfMm = 26.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28800
+            double steel:profile:massPerMeterKg = 226
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x210_0"
+        {
+            string steel:profile:designation = "W 840 x 210,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 846
+            double steel:profile:bMm = 293
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 24.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 26800
+            double steel:profile:massPerMeterKg = 210
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x193_0"
+        {
+            string steel:profile:designation = "W 840 x 193,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 840
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 14.7
+            double steel:profile:tfMm = 21.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24700
+            double steel:profile:massPerMeterKg = 193
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W840x176_0"
+        {
+            string steel:profile:designation = "W 840 x 176,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 835
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 18.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22400
+            double steel:profile:massPerMeterKg = 176
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x582_0"
+        {
+            string steel:profile:designation = "W 760 x 582,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 843
+            double steel:profile:bMm = 396
+            double steel:profile:twMm = 34.5
+            double steel:profile:tfMm = 62
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 74200
+            double steel:profile:massPerMeterKg = 582
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x531_0"
+        {
+            string steel:profile:designation = "W 760 x 531,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 833
+            double steel:profile:bMm = 393
+            double steel:profile:twMm = 31.5
+            double steel:profile:tfMm = 56.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 67600
+            double steel:profile:massPerMeterKg = 531
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x484_0"
+        {
+            string steel:profile:designation = "W 760 x 484,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 823
+            double steel:profile:bMm = 390
+            double steel:profile:twMm = 29
+            double steel:profile:tfMm = 52.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 61700
+            double steel:profile:massPerMeterKg = 484
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x434_0"
+        {
+            string steel:profile:designation = "W 760 x 434,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 813
+            double steel:profile:bMm = 387
+            double steel:profile:twMm = 25.9
+            double steel:profile:tfMm = 47
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55300
+            double steel:profile:massPerMeterKg = 434
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x389_0"
+        {
+            string steel:profile:designation = "W 760 x 389,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 803
+            double steel:profile:bMm = 385
+            double steel:profile:twMm = 23.6
+            double steel:profile:tfMm = 41.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49500
+            double steel:profile:massPerMeterKg = 389
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x350_0"
+        {
+            string steel:profile:designation = "W 760 x 350,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 795
+            double steel:profile:bMm = 382
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 38.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44500
+            double steel:profile:massPerMeterKg = 350
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x314_0"
+        {
+            string steel:profile:designation = "W 760 x 314,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 786
+            double steel:profile:bMm = 384
+            double steel:profile:twMm = 19.7
+            double steel:profile:tfMm = 33.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40000
+            double steel:profile:massPerMeterKg = 314
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x284_0"
+        {
+            string steel:profile:designation = "W 760 x 284,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 779
+            double steel:profile:bMm = 382
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 30.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36200
+            double steel:profile:massPerMeterKg = 284
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x257_0"
+        {
+            string steel:profile:designation = "W 760 x 257,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 773
+            double steel:profile:bMm = 381
+            double steel:profile:twMm = 16.6
+            double steel:profile:tfMm = 27.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32800
+            double steel:profile:massPerMeterKg = 257
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x220_0"
+        {
+            string steel:profile:designation = "W 760 x 220,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 779
+            double steel:profile:bMm = 266
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 30
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28100
+            double steel:profile:massPerMeterKg = 220
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x196_0"
+        {
+            string steel:profile:designation = "W 760 x 196,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 770
+            double steel:profile:bMm = 268
+            double steel:profile:twMm = 15.6
+            double steel:profile:tfMm = 25.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25100
+            double steel:profile:massPerMeterKg = 196
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x185_0"
+        {
+            string steel:profile:designation = "W 760 x 185,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 766
+            double steel:profile:bMm = 267
+            double steel:profile:twMm = 14.9
+            double steel:profile:tfMm = 23.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 23500
+            double steel:profile:massPerMeterKg = 185
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x173_0"
+        {
+            string steel:profile:designation = "W 760 x 173,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 762
+            double steel:profile:bMm = 267
+            double steel:profile:twMm = 14.4
+            double steel:profile:tfMm = 21.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22100
+            double steel:profile:massPerMeterKg = 173
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x161_0"
+        {
+            string steel:profile:designation = "W 760 x 161,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 758
+            double steel:profile:bMm = 266
+            double steel:profile:twMm = 13.8
+            double steel:profile:tfMm = 19.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 20500
+            double steel:profile:massPerMeterKg = 161
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x147_0"
+        {
+            string steel:profile:designation = "W 760 x 147,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 753
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 13.2
+            double steel:profile:tfMm = 17
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 18800
+            double steel:profile:massPerMeterKg = 147
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W760x134_0"
+        {
+            string steel:profile:designation = "W 760 x 134,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 750
+            double steel:profile:bMm = 264
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17000
+            double steel:profile:massPerMeterKg = 134
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x802_0"
+        {
+            string steel:profile:designation = "W 690 x 802,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 826
+            double steel:profile:bMm = 387
+            double steel:profile:twMm = 50
+            double steel:profile:tfMm = 89.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 102200
+            double steel:profile:massPerMeterKg = 802
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x548_0"
+        {
+            string steel:profile:designation = "W 690 x 548,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 772
+            double steel:profile:bMm = 372
+            double steel:profile:twMm = 35.1
+            double steel:profile:tfMm = 63
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 69800
+            double steel:profile:massPerMeterKg = 548
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x500_0"
+        {
+            string steel:profile:designation = "W 690 x 500,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 762
+            double steel:profile:bMm = 369
+            double steel:profile:twMm = 32
+            double steel:profile:tfMm = 57.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 63700
+            double steel:profile:massPerMeterKg = 500
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x457_0"
+        {
+            string steel:profile:designation = "W 690 x 457,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 752
+            double steel:profile:bMm = 367
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 58200
+            double steel:profile:massPerMeterKg = 457
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x419_0"
+        {
+            string steel:profile:designation = "W 690 x 419,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 744
+            double steel:profile:bMm = 364
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 49
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 53300
+            double steel:profile:massPerMeterKg = 419
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x384_0"
+        {
+            string steel:profile:designation = "W 690 x 384,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 736
+            double steel:profile:bMm = 362
+            double steel:profile:twMm = 24.9
+            double steel:profile:tfMm = 45
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 48900
+            double steel:profile:massPerMeterKg = 384
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x350_0"
+        {
+            string steel:profile:designation = "W 690 x 350,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 728
+            double steel:profile:bMm = 360
+            double steel:profile:twMm = 23.1
+            double steel:profile:tfMm = 40.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44600
+            double steel:profile:massPerMeterKg = 350
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x323_0"
+        {
+            string steel:profile:designation = "W 690 x 323,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 722
+            double steel:profile:bMm = 359
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 38.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 41100
+            double steel:profile:massPerMeterKg = 323
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x289_0"
+        {
+            string steel:profile:designation = "W 690 x 289,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 714
+            double steel:profile:bMm = 356
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 34
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36800
+            double steel:profile:massPerMeterKg = 289
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x265_0"
+        {
+            string steel:profile:designation = "W 690 x 265,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 706
+            double steel:profile:bMm = 358
+            double steel:profile:twMm = 18.4
+            double steel:profile:tfMm = 30.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33700
+            double steel:profile:massPerMeterKg = 265
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x240_0"
+        {
+            string steel:profile:designation = "W 690 x 240,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 701
+            double steel:profile:bMm = 356
+            double steel:profile:twMm = 16.8
+            double steel:profile:tfMm = 27.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30600
+            double steel:profile:massPerMeterKg = 240
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x217_0"
+        {
+            string steel:profile:designation = "W 690 x 217,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 695
+            double steel:profile:bMm = 355
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 24.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27700
+            double steel:profile:massPerMeterKg = 217
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x192_0"
+        {
+            string steel:profile:designation = "W 690 x 192,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 702
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 15.5
+            double steel:profile:tfMm = 27.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24400
+            double steel:profile:massPerMeterKg = 192
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x170_0"
+        {
+            string steel:profile:designation = "W 690 x 170,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 693
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 23.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 21600
+            double steel:profile:massPerMeterKg = 170
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x152_0"
+        {
+            string steel:profile:designation = "W 690 x 152,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 688
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 21.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19400
+            double steel:profile:massPerMeterKg = 152
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x140_0"
+        {
+            string steel:profile:designation = "W 690 x 140,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 684
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 12.4
+            double steel:profile:tfMm = 18.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17900
+            double steel:profile:massPerMeterKg = 140
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W690x125_0"
+        {
+            string steel:profile:designation = "W 690 x 125,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 678
+            double steel:profile:bMm = 253
+            double steel:profile:twMm = 11.7
+            double steel:profile:tfMm = 16.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 16000
+            double steel:profile:massPerMeterKg = 125
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x551_0"
+        {
+            string steel:profile:designation = "W 610 x 551,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 711
+            double steel:profile:bMm = 347
+            double steel:profile:twMm = 38.6
+            double steel:profile:tfMm = 69.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 70200
+            double steel:profile:massPerMeterKg = 551
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x498_0"
+        {
+            string steel:profile:designation = "W 610 x 498,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 699
+            double steel:profile:bMm = 343
+            double steel:profile:twMm = 35.1
+            double steel:profile:tfMm = 63
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 63500
+            double steel:profile:massPerMeterKg = 498
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x455_0"
+        {
+            string steel:profile:designation = "W 610 x 455,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 689
+            double steel:profile:bMm = 340
+            double steel:profile:twMm = 32
+            double steel:profile:tfMm = 57.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 57900
+            double steel:profile:massPerMeterKg = 455
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x415_0"
+        {
+            string steel:profile:designation = "W 610 x 415,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 679
+            double steel:profile:bMm = 338
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 52900
+            double steel:profile:massPerMeterKg = 415
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x372_0"
+        {
+            string steel:profile:designation = "W 610 x 372,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 669
+            double steel:profile:bMm = 335
+            double steel:profile:twMm = 26.4
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 47400
+            double steel:profile:massPerMeterKg = 372
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x341_0"
+        {
+            string steel:profile:designation = "W 610 x 341,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 661
+            double steel:profile:bMm = 333
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 43400
+            double steel:profile:massPerMeterKg = 341
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x307_0"
+        {
+            string steel:profile:designation = "W 610 x 307,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 653
+            double steel:profile:bMm = 330
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 39100
+            double steel:profile:massPerMeterKg = 307
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x285_0"
+        {
+            string steel:profile:designation = "W 610 x 285,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 647
+            double steel:profile:bMm = 329
+            double steel:profile:twMm = 20.6
+            double steel:profile:tfMm = 37.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36100
+            double steel:profile:massPerMeterKg = 285
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x262_0"
+        {
+            string steel:profile:designation = "W 610 x 262,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 641
+            double steel:profile:bMm = 327
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 34
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33300
+            double steel:profile:massPerMeterKg = 262
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x241_0"
+        {
+            string steel:profile:designation = "W 610 x 241,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 635
+            double steel:profile:bMm = 329
+            double steel:profile:twMm = 17.9
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30800
+            double steel:profile:massPerMeterKg = 241
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x217_0"
+        {
+            string steel:profile:designation = "W 610 x 217,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 628
+            double steel:profile:bMm = 328
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 27.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27700
+            double steel:profile:massPerMeterKg = 217
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x195_0"
+        {
+            string steel:profile:designation = "W 610 x 195,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 622
+            double steel:profile:bMm = 327
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 24.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24800
+            double steel:profile:massPerMeterKg = 195
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x174_0"
+        {
+            string steel:profile:designation = "W 610 x 174,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 616
+            double steel:profile:bMm = 325
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 21.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22200
+            double steel:profile:massPerMeterKg = 174
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x155_0"
+        {
+            string steel:profile:designation = "W 610 x 155,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 611
+            double steel:profile:bMm = 324
+            double steel:profile:twMm = 12.7
+            double steel:profile:tfMm = 19
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19700
+            double steel:profile:massPerMeterKg = 155
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x153_0"
+        {
+            string steel:profile:designation = "W 610 x 153,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 623
+            double steel:profile:bMm = 229
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 24.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19600
+            double steel:profile:massPerMeterKg = 153
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x140_0"
+        {
+            string steel:profile:designation = "W 610 x 140,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 617
+            double steel:profile:bMm = 230
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 22.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17900
+            double steel:profile:massPerMeterKg = 140
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x125_0"
+        {
+            string steel:profile:designation = "W 610 x 125,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 612
+            double steel:profile:bMm = 229
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 19.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 15900
+            double steel:profile:massPerMeterKg = 125
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x113_0"
+        {
+            string steel:profile:designation = "W 610 x 113,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 608
+            double steel:profile:bMm = 228
+            double steel:profile:twMm = 11.2
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 14500
+            double steel:profile:massPerMeterKg = 113
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x101_0"
+        {
+            string steel:profile:designation = "W 610 x 101,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 603
+            double steel:profile:bMm = 228
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 14.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 13000
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x92_0"
+        {
+            string steel:profile:designation = "W 610 x 92,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 603
+            double steel:profile:bMm = 179
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 15
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11700
+            double steel:profile:massPerMeterKg = 92
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W610x82_0"
+        {
+            string steel:profile:designation = "W 610 x 82,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 599
+            double steel:profile:bMm = 178
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 12.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x300_0"
+        {
+            string steel:profile:designation = "W 530 x 300,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 585
+            double steel:profile:bMm = 319
+            double steel:profile:twMm = 23.1
+            double steel:profile:tfMm = 41.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 38200
+            double steel:profile:massPerMeterKg = 300
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x272_0"
+        {
+            string steel:profile:designation = "W 530 x 272,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 577
+            double steel:profile:bMm = 317
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 37.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 34600
+            double steel:profile:massPerMeterKg = 272
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x248_0"
+        {
+            string steel:profile:designation = "W 530 x 248,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 571
+            double steel:profile:bMm = 315
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 34.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 31500
+            double steel:profile:massPerMeterKg = 248
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x219_0"
+        {
+            string steel:profile:designation = "W 530 x 219,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 560
+            double steel:profile:bMm = 318
+            double steel:profile:twMm = 18.3
+            double steel:profile:tfMm = 29.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27900
+            double steel:profile:massPerMeterKg = 219
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x196_0"
+        {
+            string steel:profile:designation = "W 530 x 196,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 554
+            double steel:profile:bMm = 316
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 26.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25000
+            double steel:profile:massPerMeterKg = 196
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x182_0"
+        {
+            string steel:profile:designation = "W 530 x 182,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 551
+            double steel:profile:bMm = 315
+            double steel:profile:twMm = 15.2
+            double steel:profile:tfMm = 24.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 23200
+            double steel:profile:massPerMeterKg = 182
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x165_0"
+        {
+            string steel:profile:designation = "W 530 x 165,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 546
+            double steel:profile:bMm = 313
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 22.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 21100
+            double steel:profile:massPerMeterKg = 165
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x150_0"
+        {
+            string steel:profile:designation = "W 530 x 150,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 543
+            double steel:profile:bMm = 312
+            double steel:profile:twMm = 12.7
+            double steel:profile:tfMm = 20.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19200
+            double steel:profile:massPerMeterKg = 150
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x138_0"
+        {
+            string steel:profile:designation = "W 530 x 138,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 549
+            double steel:profile:bMm = 214
+            double steel:profile:twMm = 14.7
+            double steel:profile:tfMm = 23.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 17600
+            double steel:profile:massPerMeterKg = 138
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x123_0"
+        {
+            string steel:profile:designation = "W 530 x 123,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 544
+            double steel:profile:bMm = 212
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 21.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 15700
+            double steel:profile:massPerMeterKg = 123
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x109_0"
+        {
+            string steel:profile:designation = "W 530 x 109,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 539
+            double steel:profile:bMm = 211
+            double steel:profile:twMm = 11.6
+            double steel:profile:tfMm = 18.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 13900
+            double steel:profile:massPerMeterKg = 109
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x101_0"
+        {
+            string steel:profile:designation = "W 530 x 101,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 537
+            double steel:profile:bMm = 210
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 17.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12900
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x92_0"
+        {
+            string steel:profile:designation = "W 530 x 92,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 533
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 10.2
+            double steel:profile:tfMm = 15.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11800
+            double steel:profile:massPerMeterKg = 92
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x82_0"
+        {
+            string steel:profile:designation = "W 530 x 82,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 528
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 9.5
+            double steel:profile:tfMm = 13.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x72_0"
+        {
+            string steel:profile:designation = "W 530 x 72,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 524
+            double steel:profile:bMm = 207
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9180
+            double steel:profile:massPerMeterKg = 72
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x85_0"
+        {
+            string steel:profile:designation = "W 530 x 85,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 535
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 10.3
+            double steel:profile:tfMm = 16.5
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10800
+            double steel:profile:massPerMeterKg = 85
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x74_0"
+        {
+            string steel:profile:designation = "W 530 x 74,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 529
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 9.7
+            double steel:profile:tfMm = 13.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 74
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W530x66_0"
+        {
+            string steel:profile:designation = "W 530 x 66,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 525
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 8.9
+            double steel:profile:tfMm = 11.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8390
+            double steel:profile:massPerMeterKg = 66
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x464_0"
+        {
+            string steel:profile:designation = "W 460 x 464,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 567
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 38.6
+            double steel:profile:tfMm = 69.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 59100
+            double steel:profile:massPerMeterKg = 464
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x421_0"
+        {
+            string steel:profile:designation = "W 460 x 421,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 555
+            double steel:profile:bMm = 302
+            double steel:profile:twMm = 35.6
+            double steel:profile:tfMm = 63.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 53700
+            double steel:profile:massPerMeterKg = 421
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x384_0"
+        {
+            string steel:profile:designation = "W 460 x 384,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 545
+            double steel:profile:bMm = 299
+            double steel:profile:twMm = 32.5
+            double steel:profile:tfMm = 58.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 49000
+            double steel:profile:massPerMeterKg = 384
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x349_0"
+        {
+            string steel:profile:designation = "W 460 x 349,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 535
+            double steel:profile:bMm = 296
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 44400
+            double steel:profile:massPerMeterKg = 349
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x315_0"
+        {
+            string steel:profile:designation = "W 460 x 315,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 525
+            double steel:profile:bMm = 293
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 48.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 40100
+            double steel:profile:massPerMeterKg = 315
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x286_0"
+        {
+            string steel:profile:designation = "W 460 x 286,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 517
+            double steel:profile:bMm = 291
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 44.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 36400
+            double steel:profile:massPerMeterKg = 286
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x260_0"
+        {
+            string steel:profile:designation = "W 460 x 260,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 509
+            double steel:profile:bMm = 289
+            double steel:profile:twMm = 22.6
+            double steel:profile:tfMm = 40.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 33100
+            double steel:profile:massPerMeterKg = 260
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x235_0"
+        {
+            string steel:profile:designation = "W 460 x 235,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 501
+            double steel:profile:bMm = 287
+            double steel:profile:twMm = 20.6
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 29900
+            double steel:profile:massPerMeterKg = 235
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x213_0"
+        {
+            string steel:profile:designation = "W 460 x 213,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 495
+            double steel:profile:bMm = 285
+            double steel:profile:twMm = 18.5
+            double steel:profile:tfMm = 33.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 27100
+            double steel:profile:massPerMeterKg = 213
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x193_0"
+        {
+            string steel:profile:designation = "W 460 x 193,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 489
+            double steel:profile:bMm = 283
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 30.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 24700
+            double steel:profile:massPerMeterKg = 193
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x177_0"
+        {
+            string steel:profile:designation = "W 460 x 177,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 482
+            double steel:profile:bMm = 286
+            double steel:profile:twMm = 16.6
+            double steel:profile:tfMm = 26.9
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 22600
+            double steel:profile:massPerMeterKg = 177
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x158_0"
+        {
+            string steel:profile:designation = "W 460 x 158,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 476
+            double steel:profile:bMm = 284
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 23.9
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 20100
+            double steel:profile:massPerMeterKg = 158
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x144_0"
+        {
+            string steel:profile:designation = "W 460 x 144,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 472
+            double steel:profile:bMm = 283
+            double steel:profile:twMm = 13.6
+            double steel:profile:tfMm = 22.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 18400
+            double steel:profile:massPerMeterKg = 144
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x128_0"
+        {
+            string steel:profile:designation = "W 460 x 128,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 467
+            double steel:profile:bMm = 282
+            double steel:profile:twMm = 12.2
+            double steel:profile:tfMm = 19.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 16300
+            double steel:profile:massPerMeterKg = 128
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x113_0"
+        {
+            string steel:profile:designation = "W 460 x 113,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 463
+            double steel:profile:bMm = 280
+            double steel:profile:twMm = 10.8
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 14400
+            double steel:profile:massPerMeterKg = 113
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x106_0"
+        {
+            string steel:profile:designation = "W 460 x 106,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 469
+            double steel:profile:bMm = 194
+            double steel:profile:twMm = 12.6
+            double steel:profile:tfMm = 20.6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 13400
+            double steel:profile:massPerMeterKg = 106
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x97_0"
+        {
+            string steel:profile:designation = "W 460 x 97,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 466
+            double steel:profile:bMm = 193
+            double steel:profile:twMm = 11.4
+            double steel:profile:tfMm = 19
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 12300
+            double steel:profile:massPerMeterKg = 97
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x89_0"
+        {
+            string steel:profile:designation = "W 460 x 89,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 463
+            double steel:profile:bMm = 192
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 17.7
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 11400
+            double steel:profile:massPerMeterKg = 89
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x82_0"
+        {
+            string steel:profile:designation = "W 460 x 82,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 460
+            double steel:profile:bMm = 191
+            double steel:profile:twMm = 9.9
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x74_0"
+        {
+            string steel:profile:designation = "W 460 x 74,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 457
+            double steel:profile:bMm = 190
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 14.5
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 74
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x68_0"
+        {
+            string steel:profile:designation = "W 460 x 68,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 459
+            double steel:profile:bMm = 154
+            double steel:profile:twMm = 9.1
+            double steel:profile:tfMm = 15.4
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 8710
+            double steel:profile:massPerMeterKg = 68
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x60_0"
+        {
+            string steel:profile:designation = "W 460 x 60,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 455
+            double steel:profile:bMm = 153
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 13.3
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 7610
+            double steel:profile:massPerMeterKg = 60
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W460x52_0"
+        {
+            string steel:profile:designation = "W 460 x 52,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 450
+            double steel:profile:bMm = 152
+            double steel:profile:twMm = 7.6
+            double steel:profile:tfMm = 10.8
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 6650
+            double steel:profile:massPerMeterKg = 52
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x149_0"
+        {
+            string steel:profile:designation = "W 410 x 149,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 431
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 14.9
+            double steel:profile:tfMm = 25
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 19000
+            double steel:profile:massPerMeterKg = 149
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x132_0"
+        {
+            string steel:profile:designation = "W 410 x 132,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 425
+            double steel:profile:bMm = 263
+            double steel:profile:twMm = 13.3
+            double steel:profile:tfMm = 22.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 16900
+            double steel:profile:massPerMeterKg = 132
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x114_0"
+        {
+            string steel:profile:designation = "W 410 x 114,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 420
+            double steel:profile:bMm = 261
+            double steel:profile:twMm = 11.6
+            double steel:profile:tfMm = 19.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 14600
+            double steel:profile:massPerMeterKg = 114
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x100_0"
+        {
+            string steel:profile:designation = "W 410 x 100,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 415
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 16.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12700
+            double steel:profile:massPerMeterKg = 100
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x85_0"
+        {
+            string steel:profile:designation = "W 410 x 85,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 417
+            double steel:profile:bMm = 181
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 18.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10800
+            double steel:profile:massPerMeterKg = 85
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x75_0"
+        {
+            string steel:profile:designation = "W 410 x 75,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 413
+            double steel:profile:bMm = 180
+            double steel:profile:twMm = 9.7
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 75
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x67_0"
+        {
+            string steel:profile:designation = "W 410 x 67,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 410
+            double steel:profile:bMm = 179
+            double steel:profile:twMm = 8.8
+            double steel:profile:tfMm = 14.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8580
+            double steel:profile:massPerMeterKg = 67
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x60_0"
+        {
+            string steel:profile:designation = "W 410 x 60,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 407
+            double steel:profile:bMm = 178
+            double steel:profile:twMm = 7.7
+            double steel:profile:tfMm = 12.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 7610
+            double steel:profile:massPerMeterKg = 60
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x53_0"
+        {
+            string steel:profile:designation = "W 410 x 53,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 403
+            double steel:profile:bMm = 177
+            double steel:profile:twMm = 7.5
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 6840
+            double steel:profile:massPerMeterKg = 53
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x46_1"
+        {
+            string steel:profile:designation = "W 410 x 46,1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 403
+            double steel:profile:bMm = 140
+            double steel:profile:twMm = 7
+            double steel:profile:tfMm = 11.2
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 5880
+            double steel:profile:massPerMeterKg = 46.1
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W410x38_8"
+        {
+            string steel:profile:designation = "W 410 x 38,8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 399
+            double steel:profile:bMm = 140
+            double steel:profile:twMm = 6.4
+            double steel:profile:tfMm = 8.8
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 4950
+            double steel:profile:massPerMeterKg = 38.8
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x1086_0"
+        {
+            string steel:profile:designation = "W 360 x 1086,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 569
+            double steel:profile:bMm = 454
+            double steel:profile:twMm = 78
+            double steel:profile:tfMm = 125
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 139000
+            double steel:profile:massPerMeterKg = 1086
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x990_0"
+        {
+            string steel:profile:designation = "W 360 x 990,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 550
+            double steel:profile:bMm = 448
+            double steel:profile:twMm = 71.9
+            double steel:profile:tfMm = 115
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 126000
+            double steel:profile:massPerMeterKg = 990
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x900_0"
+        {
+            string steel:profile:designation = "W 360 x 900,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 531
+            double steel:profile:bMm = 442
+            double steel:profile:twMm = 65.9
+            double steel:profile:tfMm = 106
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 115000
+            double steel:profile:massPerMeterKg = 900
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x818_0"
+        {
+            string steel:profile:designation = "W 360 x 818,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 514
+            double steel:profile:bMm = 437
+            double steel:profile:twMm = 60.5
+            double steel:profile:tfMm = 97
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 105000
+            double steel:profile:massPerMeterKg = 818
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x744_0"
+        {
+            string steel:profile:designation = "W 360 x 744,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 498
+            double steel:profile:bMm = 432
+            double steel:profile:twMm = 55.6
+            double steel:profile:tfMm = 88.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 94800
+            double steel:profile:massPerMeterKg = 744
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x677_0"
+        {
+            string steel:profile:designation = "W 360 x 677,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 483
+            double steel:profile:bMm = 428
+            double steel:profile:twMm = 51.2
+            double steel:profile:tfMm = 81.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 86500
+            double steel:profile:massPerMeterKg = 677
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x634_0"
+        {
+            string steel:profile:designation = "W 360 x 634,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 474
+            double steel:profile:bMm = 424
+            double steel:profile:twMm = 47.6
+            double steel:profile:tfMm = 77.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 80600
+            double steel:profile:massPerMeterKg = 634
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x592_0"
+        {
+            string steel:profile:designation = "W 360 x 592,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 465
+            double steel:profile:bMm = 421
+            double steel:profile:twMm = 45
+            double steel:profile:tfMm = 72.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 75500
+            double steel:profile:massPerMeterKg = 592
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x551_0"
+        {
+            string steel:profile:designation = "W 360 x 551,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 455
+            double steel:profile:bMm = 418
+            double steel:profile:twMm = 42
+            double steel:profile:tfMm = 67.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 70300
+            double steel:profile:massPerMeterKg = 551
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x509_0"
+        {
+            string steel:profile:designation = "W 360 x 509,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 446
+            double steel:profile:bMm = 416
+            double steel:profile:twMm = 39.1
+            double steel:profile:tfMm = 62.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 65200
+            double steel:profile:massPerMeterKg = 509
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x463_0"
+        {
+            string steel:profile:designation = "W 360 x 463,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 435
+            double steel:profile:bMm = 412
+            double steel:profile:twMm = 35.8
+            double steel:profile:tfMm = 57.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 59000
+            double steel:profile:massPerMeterKg = 463
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x421_0"
+        {
+            string steel:profile:designation = "W 360 x 421,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 425
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 32.8
+            double steel:profile:tfMm = 52.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 53700
+            double steel:profile:massPerMeterKg = 421
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x382_0"
+        {
+            string steel:profile:designation = "W 360 x 382,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 416
+            double steel:profile:bMm = 406
+            double steel:profile:twMm = 29.8
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 48800
+            double steel:profile:massPerMeterKg = 382
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x347_0"
+        {
+            string steel:profile:designation = "W 360 x 347,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 407
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 27.2
+            double steel:profile:tfMm = 43.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44200
+            double steel:profile:massPerMeterKg = 347
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x314_0"
+        {
+            string steel:profile:designation = "W 360 x 314,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 399
+            double steel:profile:bMm = 401
+            double steel:profile:twMm = 24.9
+            double steel:profile:tfMm = 39.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40000
+            double steel:profile:massPerMeterKg = 314
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x287_0"
+        {
+            string steel:profile:designation = "W 360 x 287,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 393
+            double steel:profile:bMm = 399
+            double steel:profile:twMm = 22.6
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36600
+            double steel:profile:massPerMeterKg = 287
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x262_0"
+        {
+            string steel:profile:designation = "W 360 x 262,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 387
+            double steel:profile:bMm = 398
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 33.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33400
+            double steel:profile:massPerMeterKg = 262
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x237_0"
+        {
+            string steel:profile:designation = "W 360 x 237,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 380
+            double steel:profile:bMm = 395
+            double steel:profile:twMm = 18.9
+            double steel:profile:tfMm = 30.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30100
+            double steel:profile:massPerMeterKg = 237
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x216_0"
+        {
+            string steel:profile:designation = "W 360 x 216,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 375
+            double steel:profile:bMm = 394
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 27.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27500
+            double steel:profile:massPerMeterKg = 216
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x196_0"
+        {
+            string steel:profile:designation = "W 360 x 196,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 372
+            double steel:profile:bMm = 374
+            double steel:profile:twMm = 16.4
+            double steel:profile:tfMm = 26.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25000
+            double steel:profile:massPerMeterKg = 196
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x179_0"
+        {
+            string steel:profile:designation = "W 360 x 179,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 368
+            double steel:profile:bMm = 373
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 23.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22800
+            double steel:profile:massPerMeterKg = 179
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x162_0"
+        {
+            string steel:profile:designation = "W 360 x 162,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 364
+            double steel:profile:bMm = 371
+            double steel:profile:twMm = 13.3
+            double steel:profile:tfMm = 21.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 20600
+            double steel:profile:massPerMeterKg = 162
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x147_0"
+        {
+            string steel:profile:designation = "W 360 x 147,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 370
+            double steel:profile:twMm = 12.3
+            double steel:profile:tfMm = 19.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 18800
+            double steel:profile:massPerMeterKg = 147
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x134_0"
+        {
+            string steel:profile:designation = "W 360 x 134,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 369
+            double steel:profile:twMm = 11.2
+            double steel:profile:tfMm = 18
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17100
+            double steel:profile:massPerMeterKg = 134
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x122_0"
+        {
+            string steel:profile:designation = "W 360 x 122,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 363
+            double steel:profile:bMm = 257
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 21.7
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 15500
+            double steel:profile:massPerMeterKg = 122
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x110_0"
+        {
+            string steel:profile:designation = "W 360 x 110,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 11.4
+            double steel:profile:tfMm = 19.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 14100
+            double steel:profile:massPerMeterKg = 110
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x101_0"
+        {
+            string steel:profile:designation = "W 360 x 101,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 357
+            double steel:profile:bMm = 255
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 18.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12900
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x91_0"
+        {
+            string steel:profile:designation = "W 360 x 91,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 353
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 9.5
+            double steel:profile:tfMm = 16.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11500
+            double steel:profile:massPerMeterKg = 91
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x79_0"
+        {
+            string steel:profile:designation = "W 360 x 79,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 354
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9.4
+            double steel:profile:tfMm = 16.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10100
+            double steel:profile:massPerMeterKg = 79
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x72_0"
+        {
+            string steel:profile:designation = "W 360 x 72,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 8.6
+            double steel:profile:tfMm = 15.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9100
+            double steel:profile:massPerMeterKg = 72
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x64_0"
+        {
+            string steel:profile:designation = "W 360 x 64,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 347
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 7.7
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8130
+            double steel:profile:massPerMeterKg = 64
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x58_0"
+        {
+            string steel:profile:designation = "W 360 x 58,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 358
+            double steel:profile:bMm = 172
+            double steel:profile:twMm = 7.9
+            double steel:profile:tfMm = 13.1
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 7230
+            double steel:profile:massPerMeterKg = 58
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x51_0"
+        {
+            string steel:profile:designation = "W 360 x 51,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 355
+            double steel:profile:bMm = 171
+            double steel:profile:twMm = 7.2
+            double steel:profile:tfMm = 11.6
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 6450
+            double steel:profile:massPerMeterKg = 51
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x44_6"
+        {
+            string steel:profile:designation = "W 360 x 44,6"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 352
+            double steel:profile:bMm = 171
+            double steel:profile:twMm = 6.9
+            double steel:profile:tfMm = 9.8
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 5710
+            double steel:profile:massPerMeterKg = 44.6
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x39_0"
+        {
+            string steel:profile:designation = "W 360 x 39,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 353
+            double steel:profile:bMm = 128
+            double steel:profile:twMm = 6.5
+            double steel:profile:tfMm = 10.7
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 4960
+            double steel:profile:massPerMeterKg = 39
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W360x32_9"
+        {
+            string steel:profile:designation = "W 360 x 32,9"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 349
+            double steel:profile:bMm = 127
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 8.5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 4190
+            double steel:profile:massPerMeterKg = 32.9
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x500_0"
+        {
+            string steel:profile:designation = "W 310 x 500,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 427
+            double steel:profile:bMm = 340
+            double steel:profile:twMm = 45.1
+            double steel:profile:tfMm = 75.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 63700
+            double steel:profile:massPerMeterKg = 500
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x454_0"
+        {
+            string steel:profile:designation = "W 310 x 454,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 415
+            double steel:profile:bMm = 336
+            double steel:profile:twMm = 41.3
+            double steel:profile:tfMm = 68.7
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 57800
+            double steel:profile:massPerMeterKg = 454
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x415_0"
+        {
+            string steel:profile:designation = "W 310 x 415,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 403
+            double steel:profile:bMm = 334
+            double steel:profile:twMm = 38.9
+            double steel:profile:tfMm = 62.7
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 52800
+            double steel:profile:massPerMeterKg = 415
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x375_0"
+        {
+            string steel:profile:designation = "W 310 x 375,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 391
+            double steel:profile:bMm = 330
+            double steel:profile:twMm = 35.4
+            double steel:profile:tfMm = 57.2
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 47800
+            double steel:profile:massPerMeterKg = 375
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x342_0"
+        {
+            string steel:profile:designation = "W 310 x 342,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 382
+            double steel:profile:bMm = 328
+            double steel:profile:twMm = 32.6
+            double steel:profile:tfMm = 52.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 43700
+            double steel:profile:massPerMeterKg = 342
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x313_0"
+        {
+            string steel:profile:designation = "W 310 x 313,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 374
+            double steel:profile:bMm = 325
+            double steel:profile:twMm = 30
+            double steel:profile:tfMm = 48.3
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 39900
+            double steel:profile:massPerMeterKg = 313
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x283_0"
+        {
+            string steel:profile:designation = "W 310 x 283,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 365
+            double steel:profile:bMm = 322
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 44.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 36000
+            double steel:profile:massPerMeterKg = 283
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x253_0"
+        {
+            string steel:profile:designation = "W 310 x 253,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 319
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 39.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 32300
+            double steel:profile:massPerMeterKg = 253
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x226_0"
+        {
+            string steel:profile:designation = "W 310 x 226,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 348
+            double steel:profile:bMm = 317
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 35.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 28800
+            double steel:profile:massPerMeterKg = 226
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x202_0"
+        {
+            string steel:profile:designation = "W 310 x 202,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 341
+            double steel:profile:bMm = 315
+            double steel:profile:twMm = 20.1
+            double steel:profile:tfMm = 31.8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 25700
+            double steel:profile:massPerMeterKg = 202
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x179_0"
+        {
+            string steel:profile:designation = "W 310 x 179,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 333
+            double steel:profile:bMm = 313
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 28.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 22800
+            double steel:profile:massPerMeterKg = 179
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x158_0"
+        {
+            string steel:profile:designation = "W 310 x 158,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 327
+            double steel:profile:bMm = 310
+            double steel:profile:twMm = 15.5
+            double steel:profile:tfMm = 25.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 20100
+            double steel:profile:massPerMeterKg = 158
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x143_0"
+        {
+            string steel:profile:designation = "W 310 x 143,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 323
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 22.9
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 18200
+            double steel:profile:massPerMeterKg = 143
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x129_0"
+        {
+            string steel:profile:designation = "W 310 x 129,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 318
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 20.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 16500
+            double steel:profile:massPerMeterKg = 129
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x117_0"
+        {
+            string steel:profile:designation = "W 310 x 117,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 314
+            double steel:profile:bMm = 307
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 18.7
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 15000
+            double steel:profile:massPerMeterKg = 117
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x107_0"
+        {
+            string steel:profile:designation = "W 310 x 107,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 311
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 17
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 13600
+            double steel:profile:massPerMeterKg = 107
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x97_0"
+        {
+            string steel:profile:designation = "W 310 x 97,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 308
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 9.9
+            double steel:profile:tfMm = 15.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 12300
+            double steel:profile:massPerMeterKg = 97
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x86_0"
+        {
+            string steel:profile:designation = "W 310 x 86,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 9.1
+            double steel:profile:tfMm = 16.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11000
+            double steel:profile:massPerMeterKg = 86
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x79_0"
+        {
+            string steel:profile:designation = "W 310 x 79,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 306
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 8.8
+            double steel:profile:tfMm = 14.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10100
+            double steel:profile:massPerMeterKg = 79
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x74_0"
+        {
+            string steel:profile:designation = "W 310 x 74,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9.4
+            double steel:profile:tfMm = 16.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 74
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x67_0"
+        {
+            string steel:profile:designation = "W 310 x 67,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 306
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 8.5
+            double steel:profile:tfMm = 14.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8520
+            double steel:profile:massPerMeterKg = 67
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x60_0"
+        {
+            string steel:profile:designation = "W 310 x 60,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 7.5
+            double steel:profile:tfMm = 13.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 7610
+            double steel:profile:massPerMeterKg = 60
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x52_0"
+        {
+            string steel:profile:designation = "W 310 x 52,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 317
+            double steel:profile:bMm = 167
+            double steel:profile:twMm = 7.6
+            double steel:profile:tfMm = 13.2
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 6650
+            double steel:profile:massPerMeterKg = 52
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x44_5"
+        {
+            string steel:profile:designation = "W 310 x 44,5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 313
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 11.2
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 5670
+            double steel:profile:massPerMeterKg = 44.5
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x38_7"
+        {
+            string steel:profile:designation = "W 310 x 38,7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 9.7
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4940
+            double steel:profile:massPerMeterKg = 38.7
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x32_7"
+        {
+            string steel:profile:designation = "W 310 x 32,7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 313
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 10.8
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4180
+            double steel:profile:massPerMeterKg = 32.7
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x28_3"
+        {
+            string steel:profile:designation = "W 310 x 28,3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 309
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 8.9
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 3590
+            double steel:profile:massPerMeterKg = 28.3
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x23_8"
+        {
+            string steel:profile:designation = "W 310 x 23,8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 305
+            double steel:profile:bMm = 101
+            double steel:profile:twMm = 5.6
+            double steel:profile:tfMm = 6.7
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 3040
+            double steel:profile:massPerMeterKg = 23.8
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W310x21_0"
+        {
+            string steel:profile:designation = "W 310 x 21,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303
+            double steel:profile:bMm = 101
+            double steel:profile:twMm = 5.1
+            double steel:profile:tfMm = 5.7
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2680
+            double steel:profile:massPerMeterKg = 21
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x167_0"
+        {
+            string steel:profile:designation = "W 250 x 167,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 289
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 19.2
+            double steel:profile:tfMm = 31.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 21200
+            double steel:profile:massPerMeterKg = 167
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x149_0"
+        {
+            string steel:profile:designation = "W 250 x 149,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 282
+            double steel:profile:bMm = 263
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 28.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 19000
+            double steel:profile:massPerMeterKg = 149
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x131_0"
+        {
+            string steel:profile:designation = "W 250 x 131,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 275
+            double steel:profile:bMm = 261
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 25.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 16700
+            double steel:profile:massPerMeterKg = 131
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x115_0"
+        {
+            string steel:profile:designation = "W 250 x 115,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 269
+            double steel:profile:bMm = 259
+            double steel:profile:twMm = 13.5
+            double steel:profile:tfMm = 22.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 14600
+            double steel:profile:massPerMeterKg = 115
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x101_0"
+        {
+            string steel:profile:designation = "W 250 x 101,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 264
+            double steel:profile:bMm = 257
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 19.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12900
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x89_0"
+        {
+            string steel:profile:designation = "W 250 x 89,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 260
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 10.7
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11400
+            double steel:profile:massPerMeterKg = 89
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x80_0"
+        {
+            string steel:profile:designation = "W 250 x 80,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 256
+            double steel:profile:bMm = 255
+            double steel:profile:twMm = 9.4
+            double steel:profile:tfMm = 15.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10200
+            double steel:profile:massPerMeterKg = 80
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x73_0"
+        {
+            string steel:profile:designation = "W 250 x 73,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 253
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 8.6
+            double steel:profile:tfMm = 14.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9290
+            double steel:profile:massPerMeterKg = 73
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x67_0"
+        {
+            string steel:profile:designation = "W 250 x 67,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 257
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 8.9
+            double steel:profile:tfMm = 15.7
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8580
+            double steel:profile:massPerMeterKg = 67
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x58_0"
+        {
+            string steel:profile:designation = "W 250 x 58,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 252
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 7420
+            double steel:profile:massPerMeterKg = 58
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x49_1"
+        {
+            string steel:profile:designation = "W 250 x 49,1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 247
+            double steel:profile:bMm = 202
+            double steel:profile:twMm = 7.4
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 6260
+            double steel:profile:massPerMeterKg = 49.1
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x44_8"
+        {
+            string steel:profile:designation = "W 250 x 44,8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 266
+            double steel:profile:bMm = 148
+            double steel:profile:twMm = 7.6
+            double steel:profile:tfMm = 13
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 5700
+            double steel:profile:massPerMeterKg = 44.8
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x38_5"
+        {
+            string steel:profile:designation = "W 250 x 38,5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 262
+            double steel:profile:bMm = 147
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 11.2
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4910
+            double steel:profile:massPerMeterKg = 38.5
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x32_7"
+        {
+            string steel:profile:designation = "W 250 x 32,7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 258
+            double steel:profile:bMm = 146
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 9.1
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4190
+            double steel:profile:massPerMeterKg = 32.7
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x28_4"
+        {
+            string steel:profile:designation = "W 250 x 28,4"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 260
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.4
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3630
+            double steel:profile:massPerMeterKg = 28.4
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x25_3"
+        {
+            string steel:profile:designation = "W 250 x 25,3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 257
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 8.4
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3220
+            double steel:profile:massPerMeterKg = 25.3
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x22_3"
+        {
+            string steel:profile:designation = "W 250 x 22,3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 254
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 6.9
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2850
+            double steel:profile:massPerMeterKg = 22.3
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W250x17_9"
+        {
+            string steel:profile:designation = "W 250 x 17,9"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 251
+            double steel:profile:bMm = 101
+            double steel:profile:twMm = 4.8
+            double steel:profile:tfMm = 5.3
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2280
+            double steel:profile:massPerMeterKg = 17.9
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x100_0"
+        {
+            string steel:profile:designation = "W 200 x 100,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 229
+            double steel:profile:bMm = 210
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 23.7
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 12700
+            double steel:profile:massPerMeterKg = 100
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x86_0"
+        {
+            string steel:profile:designation = "W 200 x 86,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 222
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 20.6
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 11000
+            double steel:profile:massPerMeterKg = 86
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x71_0"
+        {
+            string steel:profile:designation = "W 200 x 71,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 216
+            double steel:profile:bMm = 206
+            double steel:profile:twMm = 10.2
+            double steel:profile:tfMm = 17.4
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 9100
+            double steel:profile:massPerMeterKg = 71
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x59_0"
+        {
+            string steel:profile:designation = "W 200 x 59,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 210
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9.1
+            double steel:profile:tfMm = 14.2
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 7550
+            double steel:profile:massPerMeterKg = 59
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x52_0"
+        {
+            string steel:profile:designation = "W 200 x 52,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 206
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 7.9
+            double steel:profile:tfMm = 12.6
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 6650
+            double steel:profile:massPerMeterKg = 52
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x46_1"
+        {
+            string steel:profile:designation = "W 200 x 46,1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 203
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 7.2
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 5890
+            double steel:profile:massPerMeterKg = 46.1
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x41_7"
+        {
+            string steel:profile:designation = "W 200 x 41,7"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 205
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 7.2
+            double steel:profile:tfMm = 11.8
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 5320
+            double steel:profile:massPerMeterKg = 41.7
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x35_9"
+        {
+            string steel:profile:designation = "W 200 x 35,9"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 201
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 6.2
+            double steel:profile:tfMm = 10.2
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 4570
+            double steel:profile:massPerMeterKg = 35.9
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x31_3"
+        {
+            string steel:profile:designation = "W 200 x 31,3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 210
+            double steel:profile:bMm = 134
+            double steel:profile:twMm = 6.4
+            double steel:profile:tfMm = 10.2
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 3970
+            double steel:profile:massPerMeterKg = 31.3
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x26_6"
+        {
+            string steel:profile:designation = "W 200 x 26,6"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 207
+            double steel:profile:bMm = 133
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 8.4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 3390
+            double steel:profile:massPerMeterKg = 26.6
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x22_5"
+        {
+            string steel:profile:designation = "W 200 x 22,5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 206
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.2
+            double steel:profile:tfMm = 8
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2860
+            double steel:profile:massPerMeterKg = 22.5
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x19_3"
+        {
+            string steel:profile:designation = "W 200 x 19,3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 203
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 6.5
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2480
+            double steel:profile:massPerMeterKg = 19.3
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W200x15_0"
+        {
+            string steel:profile:designation = "W 200 x 15,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 4.3
+            double steel:profile:tfMm = 5.2
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 1910
+            double steel:profile:massPerMeterKg = 15
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W150x37_1"
+        {
+            string steel:profile:designation = "W 150 x 37,1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 162
+            double steel:profile:bMm = 154
+            double steel:profile:twMm = 8.1
+            double steel:profile:tfMm = 11.6
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 4740
+            double steel:profile:massPerMeterKg = 37.1
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W150x29_8"
+        {
+            string steel:profile:designation = "W 150 x 29,8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 157
+            double steel:profile:bMm = 153
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 9.3
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 3790
+            double steel:profile:massPerMeterKg = 29.8
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W150x22_5"
+        {
+            string steel:profile:designation = "W 150 x 22,5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 152
+            double steel:profile:bMm = 152
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 6.6
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 2860
+            double steel:profile:massPerMeterKg = 22.5
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W150x24_0"
+        {
+            string steel:profile:designation = "W 150 x 24,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 10.3
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 3060
+            double steel:profile:massPerMeterKg = 24
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W150x18_0"
+        {
+            string steel:profile:designation = "W 150 x 18,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 153
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 7.1
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 2290
+            double steel:profile:massPerMeterKg = 18
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W150x13_5"
+        {
+            string steel:profile:designation = "W 150 x 13,5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 4.3
+            double steel:profile:tfMm = 5.5
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1730
+            double steel:profile:massPerMeterKg = 13.5
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W150x13_0"
+        {
+            string steel:profile:designation = "W 150 x 13,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 148
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 4.3
+            double steel:profile:tfMm = 4.9
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1630
+            double steel:profile:massPerMeterKg = 13
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W130x28_1"
+        {
+            string steel:profile:designation = "W 130 x 28,1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 131
+            double steel:profile:bMm = 128
+            double steel:profile:twMm = 6.9
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3590
+            double steel:profile:massPerMeterKg = 28.1
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W130x23_8"
+        {
+            string steel:profile:designation = "W 130 x 23,8"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 127
+            double steel:profile:bMm = 127
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 9.1
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3040
+            double steel:profile:massPerMeterKg = 23.8
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "W100x19_3"
+        {
+            string steel:profile:designation = "W 100 x 19,3"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 106
+            double steel:profile:bMm = 103
+            double steel:profile:twMm = 7.1
+            double steel:profile:tfMm = 8.8
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2470
+            double steel:profile:massPerMeterKg = 19.3
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP360x174_0"
+        {
+            string steel:profile:designation = "HP 360 x 174,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 361
+            double steel:profile:bMm = 378
+            double steel:profile:twMm = 20.4
+            double steel:profile:tfMm = 20.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22200
+            double steel:profile:massPerMeterKg = 174
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP360x152_0"
+        {
+            string steel:profile:designation = "HP 360 x 152,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 376
+            double steel:profile:twMm = 17.9
+            double steel:profile:tfMm = 17.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19400
+            double steel:profile:massPerMeterKg = 152
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP360x132_0"
+        {
+            string steel:profile:designation = "HP 360 x 132,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 351
+            double steel:profile:bMm = 373
+            double steel:profile:twMm = 15.6
+            double steel:profile:tfMm = 15.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 16800
+            double steel:profile:massPerMeterKg = 132
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP360x108_0"
+        {
+            string steel:profile:designation = "HP 360 x 108,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 346
+            double steel:profile:bMm = 370
+            double steel:profile:twMm = 12.8
+            double steel:profile:tfMm = 12.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 13800
+            double steel:profile:massPerMeterKg = 108
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP310x125_0"
+        {
+            string steel:profile:designation = "HP 310 x 125,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 312
+            double steel:profile:bMm = 312
+            double steel:profile:twMm = 17.4
+            double steel:profile:tfMm = 17.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 15900
+            double steel:profile:massPerMeterKg = 125
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP310x110_0"
+        {
+            string steel:profile:designation = "HP 310 x 110,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 308
+            double steel:profile:bMm = 310
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 14100
+            double steel:profile:massPerMeterKg = 110
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP310x93_0"
+        {
+            string steel:profile:designation = "HP 310 x 93,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 13.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 11900
+            double steel:profile:massPerMeterKg = 93
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP310x79_0"
+        {
+            string steel:profile:designation = "HP 310 x 79,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 299
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 10000
+            double steel:profile:massPerMeterKg = 79
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP250x85_0"
+        {
+            string steel:profile:designation = "HP 250 x 85,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 254
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 14.4
+            double steel:profile:tfMm = 14.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10800
+            double steel:profile:massPerMeterKg = 85
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP250x62_0"
+        {
+            string steel:profile:designation = "HP 250 x 62,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 246
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 10.7
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8000
+            double steel:profile:massPerMeterKg = 62
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+
+        def Scope "HP200x53_0"
+        {
+            string steel:profile:designation = "HP 200 x 53,0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 204
+            double steel:profile:bMm = 207
+            double steel:profile:twMm = 11.3
+            double steel:profile:tfMm = 11.3
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 6840
+            double steel:profile:massPerMeterKg = 53
+            string steel:profile:standard = "ABNT NBR 15980:2024"
+        }
+    }
+}
