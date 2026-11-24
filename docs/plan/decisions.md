@@ -33,6 +33,28 @@ Open questions are at the end.
   (deleted in the 2019 EN revision), the metric designation forms of the shipped rows and
   fasteners (#708 carries the fastener set). NSCP referencing stays an engineering-rule matter:
   the code names the sections, it is no catalogue source.
+- **The Brazil pack ships the A6 assortment under the producers' metric designations and the
+  national standard they declare; the producers stay cross-check-only.** The 2026-11-23 Brazil
+  route (the sourcing principle and the A6 decision above, applied to #710) lands as the
+  `brazil` environment's first slice: the W and HP shapes of the A6/A6M-05a Annex A2
+  assortment — the `usa` pack's verified rows, value for value — declared `ABNT NBR 15980:2024`
+  on every row, the current edition of the national standard whose W/HP content is that
+  assortment and which both regional producers print for these dimensions (verified against
+  Gerdau's own catalog of 09/26, which declares the dimensions per "ABNT NBR 15980 e ASTM
+  A6/A6M" and maps A6 table A2.1 to NBR 15980 table A.4, and Gerdau's 2018 table naming the
+  2011 edition of the same declaration; ArcelorMittal Brasil names the 2024 edition per the
+  #877 research, and its JS-gated catalogue PDF was not downloaded or read). The producer
+  catalogs grant no reproduction right (ArcelorMittal reserves its content; Gerdau grants
+  none): they are designation-form, availability and cross-check sources only, and no table is
+  copied from them. Nothing is purchased: the official NBR 15980:2024 text stays buy-deferred
+  until a slice needs NBR-specific content. The designations take the producers' print form
+  «W 310 x 60,0» (one decimal, decimal comma), which Gerdau's own tables confirm byte for byte
+  on the 106 rows they roll. The annex prints one SI designation for two of its shapes (W920
+  X 345 for W36X231 and W36X232); the designation names W36X232 — the shape the Nucor-Yamato
+  size list rolls and prints under it — and W36X231 stays `NOT_FOUND` until a source
+  distinguishes them. Materials are not in the slice: NBR 7007 is a named candidate, no
+  national grade source is admitted, the environment lists no material library and every grade
+  is `NOT_FOUND`. [Design note](../design/brazil-abnt-nbr-15980-profiles.md).
 
 ## 2026-11-23
 

@@ -1,0 +1,11 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "brazil"
+        string "bim:environment:version" = "1"
+        string "bim:environment:title" = "Brazil (ABNT NBR 15980 W and HP shapes)"
+        string[] "bim:environment:libraries" = ["profiles-abnt-nbr-15980.usda"]
+    }
+)
