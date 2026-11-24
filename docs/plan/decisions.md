@@ -161,6 +161,17 @@ Open questions are at the end.
 
 ## 2026-11-22
 
+- **The completed Apple USD Tools run is the macOS interoperability evidence for N03, and is
+  sufficient for that acceptance item.** Owner decision on
+  [#476](https://github.com/Apibim-com/BeamCraft/issues/476): the differential run of 2026-11-05
+  (Apple USD Tools 0.25.11 against `openusd` 0.8.0, recorded in
+  [`usd-sdk-differential.md`](../design/usd-sdk-differential.md)) needs no further macOS work.
+  For Omniverse interoperability, use a supported Windows or Linux setup. The LEW-05
+  cross-platform SHA-256 comparison is run manually, one run per platform — never a CI gate —
+  over a fixed-identity stack, and the digests hash the generated files exactly as BeamCraft
+  writes them: LF line endings on all platforms, with one final LF. The digest mode, the
+  recorded table and the open legs live in the design note.
+
 - **C05 offline-client acceptance uses 250 operations per client.** Each client
   authors distinct operations and may save them in batches. After publishing both
   clients' changes through rebase, verify the same final USD stage with pinned
