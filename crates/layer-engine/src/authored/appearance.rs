@@ -58,13 +58,14 @@ pub(super) fn display_color(class: i32) -> Result<[f32; 3], Diagnostic> {
     }
 }
 
-/// Authors one uniform attribute spec, the appearance form of the seam's `attribute` helper.
+/// Authors one attribute spec, the appearance form of the seam's `attribute` helper.
 /// `None` authors a valueless output such as `outputs:surface`.
-fn uniform(
+fn attribute(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
     ty: &str,
+    variability: sdf::Variability,
     value: Option<sdf::Value>,
 ) -> Result<(), Diagnostic> {
     let full = super::edit::path(&format!("{p}.{name}"))?;
@@ -76,11 +77,7 @@ fn uniform(
     }
     data.set_field(&full, "typeName", sdf::Value::token(ty));
     data.set_field(&full, "custom", sdf::Value::Bool(false));
-    data.set_field(
-        &full,
-        "variability",
-        sdf::Value::Variability(sdf::Variability::Uniform),
-    );
+    data.set_field(&full, "variability", sdf::Value::Variability(variability));
     match value {
         Some(v) => data.set_field(&full, "default", v),
         None => data.erase_field(&full, "default"),
@@ -98,7 +95,16 @@ fn author_look(data: &mut sdf::Data, index: usize) -> Result<(), Diagnostic> {
         None => return Err(invalid()),
     };
     super::edit::prim(data, &mat, Some("Material"), true)?;
-    uniform(data, &mat, "outputs:surface", "token", None)?;
+    // The USDA writer emits a separate .connect statement with default (varying)
+    // variability. OpenUSD requires both declarations of the attribute to agree.
+    attribute(
+        data,
+        &mat,
+        "outputs:surface",
+        "token",
+        sdf::Variability::Varying,
+        None,
+    )?;
     data.set_field(
         &super::edit::path(&format!("{mat}.outputs:surface"))?,
         "connectionPaths",
@@ -107,21 +113,30 @@ fn author_look(data: &mut sdf::Data, index: usize) -> Result<(), Diagnostic> {
         ))?])),
     );
     super::edit::prim(data, &shader, Some("Shader"), true)?;
-    uniform(
+    attribute(
         data,
         &shader,
         "info:id",
         "token",
+        sdf::Variability::Uniform,
         Some(sdf::Value::token("UsdPreviewSurface")),
     )?;
-    uniform(
+    attribute(
         data,
         &shader,
         "inputs:diffuseColor",
         "color3f",
+        sdf::Variability::Uniform,
         Some(sdf::Value::Vec3f(colour.into())),
     )?;
-    uniform(data, &shader, "outputs:surface", "token", None)?;
+    attribute(
+        data,
+        &shader,
+        "outputs:surface",
+        "token",
+        sdf::Variability::Uniform,
+        None,
+    )?;
     Ok(())
 }
 

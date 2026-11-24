@@ -3,7 +3,8 @@
 Date: 2026-10-25. Status: **acceptance specification; the runtime is deferred after the MVP by
 owner decision. The C05 rows below are executable tests as of 2026-10-27
 (`apps/beamcraft-cli/tests/offline_clients.rs`), at the largest scale the default suite carries —
-the per-commit verification is O(revisions), so the full 1000 + 1000 sweep stays out of it. The
+the per-commit verification is O(revisions), so the full 250 + 250 acceptance run
+uses batched saves and runs separately from the default suite. The
 authenticated coordinator rebase (C03) is executable as of 2026-10-30
 (`apps/beamcraft-cli/tests/coordinator_rebase.rs`). The C04 semantic-conflict workflow is
 executable as of 2026-10-26 (`apps/beamcraft-cli/tests/rebase.rs`,
@@ -82,12 +83,12 @@ and the kind (write-write, read-write, lifecycle), in a deterministic order.
 
 ## C05 retry and two offline clients
 
-Plan row C05: harness for 1000 + 1000 IDs, retries, crash windows and two workspaces.
+Plan row C05: harness for 250 + 250 operations, retries, crash windows and two workspaces.
 Acceptance: no path collisions; the accepted snapshot is readable by OpenUSD.
 
 | Case | Required observable assertions |
 |---|---|
-| C05-01 1000 + 1000 offline | Two workspaces create 1000 elements each against one base; publish A, rebase B, publish B; the store reopens with 2000 elements with the expected values; element and operation IDs are distinct across workspaces; the final accepted revision opens in the ordinary OpenUSD distribution (additional evidence, as C03-14) and in the independent reader |
+| C05-01 250 + 250 offline | Two workspaces create 250 elements each against one base and save their distinct operations in batches. Publish A, rebase B, then publish B. The reopened store contains all 500 new elements with their expected values and retains the common base. Element and operation IDs are distinct across workspaces. The same final accepted revision opens with all geometry in pinned OpenUSD and Omniverse, and agrees with the independent reader. |
 | C05-02 retry path is explicit and bounded | After `BASE_REVISION_MISMATCH` the only forward path is rebase, repackage under a new changeset identity, publish with the observed head; a retry that skips rebase keeps failing; a bounded retry budget ends in a typed result and never spins unboundedly |
 | C05-03 duplicate retries publish once | The same changeset identity resubmitted after a crash publishes exactly once; every later submission replays the recorded answer whatever the current head is; a different payload under that identity is refused |
 | C05-04 interleaved publications with retries | A and B both fail and retry: per base exactly one publication is admitted (the coordinator's single queue and the store's expected-base check); every loser's data stays in its draft; the accepted order is total and matches the queue order; no accepted head is overwritten |

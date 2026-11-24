@@ -107,6 +107,14 @@ Open questions are at the end.
     catalogue is a cross-check source only (no table is copied from it); fasteners are out of
     scope (#708).
 
+## 2026-11-22
+
+- **C05 offline-client acceptance uses 250 operations per client.** Each client
+  authors distinct operations and may save them in batches. After publishing both
+  clients' changes through rebase, verify the same final USD stage with pinned
+  OpenUSD and Omniverse. This supersedes the previous 1,000-per-client scale for
+  [#504](https://github.com/Apibim-com/BeamCraft/issues/504).
+
 ## 2026-11-21
 
 - **Paginate level and assembly listings as summaries.** With `--offset` or `--limit`,

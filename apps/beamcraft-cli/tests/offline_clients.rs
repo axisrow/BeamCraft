@@ -9,9 +9,9 @@
 //! result: no lost writes and deterministic operation outcomes across retries, crash
 //! windows, forced identity collisions and bounded failures.
 //!
-//! The element count per workspace is bounded by the O(revisions) verification cost of
-//! every commit; the row's identity-space, collision, retry and reader obligations are
-//! proven at the largest scale the default suite can carry.
+//! The default C05-01 run checks 32 operations per client. Set
+//! `BEAMCRAFT_C05_USD_OUT` to a new directory to run 250 operations per client
+//! and retain the final USD stage for the external readers.
 
 #![allow(
     clippy::unwrap_used,
@@ -41,12 +41,11 @@ const CHANGESET: &str = "019a7bf0-0000-7000-8000-00000000c510";
 const TOKEN_A: &str = "c05-token-a-0123456789abcdefghijklmnopqrstuv";
 const TOKEN_B: &str = "c05-token-b-0123456789abcdefghijklmnopqrstuv";
 
-/// Workspace `a` uses `eid(n)`, workspace `b` uses `eid(B + n)`, so a collision only
-/// happens where a case forces one deliberately.
+/// Workspace `b` uses an identity range above workspace `a`.
 const B: usize = 1000;
 
 /// The seed plate every published store starts with.
-const SEED: usize = 500;
+const SEED: usize = 3000;
 
 fn eid(n: usize) -> String {
     format!("019a7bf0-0000-7000-8000-{n:012x}")
@@ -339,23 +338,44 @@ impl Fixture {
 
     /// Every plate of a store as (element id, name, width, volume mm3).
     fn plates(&self, name: &str) -> Vec<(String, String, f64, f64)> {
-        let inspected = self.ok(&["inspect-elements", "--store", self.s(name)]);
-        assert_eq!(text(&inspected, "outcome"), "plate_inspection");
-        inspected
-            .get("plates")
-            .unwrap()
-            .array()
-            .unwrap()
-            .iter()
-            .map(|plate| {
-                (
-                    text(plate, "element_id").to_owned(),
-                    text(plate, "name").to_owned(),
-                    num(plate, &["dimensions_mm", "width"]),
-                    num(plate, &["quantities", "volume", "mm3"]),
-                )
-            })
-            .collect()
+        let mut plates = Vec::new();
+        let mut offset = 0;
+        loop {
+            let inspected = self.ok(&[
+                "inspect-elements",
+                "--store",
+                self.s(name),
+                "--offset",
+                &offset.to_string(),
+                "--limit",
+                "128",
+            ]);
+            assert_eq!(text(&inspected, "outcome"), "plate_inspection");
+            plates.extend(
+                inspected
+                    .get("plates")
+                    .unwrap()
+                    .array()
+                    .unwrap()
+                    .iter()
+                    .map(|plate| {
+                        (
+                            text(plate, "element_id").to_owned(),
+                            text(plate, "name").to_owned(),
+                            num(plate, &["dimensions_mm", "width"]),
+                            num(plate, &["quantities", "volume", "mm3"]),
+                        )
+                    }),
+            );
+            match inspected.get("next_offset").unwrap() {
+                Json::Null => return plates,
+                next => {
+                    let next = next.unsigned().unwrap();
+                    assert!(next > offset);
+                    offset = next;
+                }
+            }
+        }
     }
 
     /// Writes a token file readable by its owner only.
@@ -508,56 +528,107 @@ fn revision_sequence(store_path: &Path, revision: &str) -> Option<u64> {
         .find(|&sequence| store.info_at(sequence).unwrap().revision().as_str() == revision)
 }
 
-// C05-01 at suite scale: two workspaces create independent elements against one base, A
-// publishes, B rebases without publishing and then publishes; the reopened store holds
-// every element exactly once with its authored value, and the final accepted revision
-// agrees with the independent reader.
+// C05-01: both clients work from the same base. A publishes, B rebases and publishes.
+// The accepted revision keeps each plate exactly once and agrees with the independent reader.
 #[test]
 fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
-    const N: usize = 32;
+    let external = std::env::var_os("BEAMCRAFT_C05_USD_OUT").map(PathBuf::from);
+    if let Some(path) = &external {
+        assert!(
+            !path.exists(),
+            "the evidence directory must be new: {path:?}"
+        );
+    }
+    let count = if external.is_some() { 250 } else { 32 };
     let f = Fixture::new();
     let mut created: Vec<(String, String, f64, f64)> =
         vec![(eid(SEED), "Seed".to_owned(), 500.0, 1_200_000.0)];
-    // One authoring loop rides one `run-script` invocation as one batch: the 32 creates
-    // commit as one draft revision, so the O(revisions) verification of every commit
-    // stops growing with the element count (`#738`). The replies carry the same plate
-    // objects the one-process commands printed, and the tests read volumes from them.
+    // Create distinct command identities and commit them in bounded batches. Large
+    // run-script summaries can omit individual replies, but still count every failure.
     let author = |workspace: &str, first: usize, width: usize, prefix: &str| {
         let width_arg = width.to_string();
-        let mut lines = vec![crate::support::Scripted::ok(&["batch-open"])];
-        for n in 1..=N {
-            let element = eid(first + n);
-            let name = format!("{prefix}-{n}");
-            lines.push(crate::support::Scripted::ok(&[
-                "create-plate",
+        const BATCH: usize = 250;
+        let mut expected = Vec::with_capacity(count);
+        for start in (0..count).step_by(BATCH) {
+            let end = (start + BATCH).min(count);
+            let mut lines = vec![Json::Array(vec![Json::text("batch-open")])];
+            for n in start + 1..=end {
+                let element = eid(first + n);
+                let op = eid(10_000 + first + n);
+                let name = format!("{prefix}-{n}");
+                lines.push(Json::Array(
+                    [
+                        "create-plate",
+                        "--store",
+                        f.ws(workspace),
+                        "--width",
+                        &width_arg,
+                        "--length",
+                        "300",
+                        "--thickness",
+                        "8",
+                        "--new-id",
+                        &element,
+                        "--op-id",
+                        &op,
+                        "--name",
+                        &name,
+                    ]
+                    .into_iter()
+                    .map(Json::text)
+                    .collect(),
+                ));
+                expected.push((element, name, width as f64, (width * 300 * 8) as f64));
+            }
+            lines.push(Json::Array(vec![Json::text("batch-commit")]));
+            let script = f.path(&format!("{workspace}-{start}.json"));
+            let commands = lines.len() as u64;
+            fs::write(
+                &script,
+                Json::Array(lines).encode(&Limits::DEFAULT).unwrap(),
+            )
+            .unwrap();
+            let summary = f.ok(&[
+                "run-script",
                 "--store",
                 f.ws(workspace),
-                "--width",
-                width_arg.as_str(),
-                "--length",
-                "300",
-                "--thickness",
-                "8",
-                "--new-id",
-                element.as_str(),
-                "--name",
-                name.as_str(),
-            ]));
+                "--file",
+                script.to_str().unwrap(),
+            ]);
+            assert_eq!(text(&summary, "outcome"), "script_complete");
+            assert_eq!(
+                summary.get("failed").unwrap().unsigned().unwrap(),
+                0,
+                "{workspace} operations {}–{end}: {:?}",
+                start + 1,
+                summary
+                    .get("replies")
+                    .unwrap()
+                    .array()
+                    .unwrap()
+                    .iter()
+                    .find(|reply| reply.get("exit").unwrap().unsigned().unwrap() != 0),
+            );
+            assert_eq!(
+                summary.get("commands").unwrap().unsigned().unwrap(),
+                commands
+            );
+            let revision = store(Path::new(f.ws(workspace))).open().unwrap();
+            let evidence = beamcraft_commands::command_evidence::read(&revision)
+                .unwrap()
+                .unwrap();
+            let bound: Vec<_> = evidence
+                .bindings
+                .iter()
+                .map(|(op, _)| op.to_string())
+                .collect();
+            let intended: Vec<_> = (start + 1..=end).map(|n| eid(10_000 + first + n)).collect();
+            assert_eq!(
+                bound, intended,
+                "{workspace} batch lost operation identities"
+            );
         }
-        lines.push(crate::support::Scripted::ok(&["batch-commit"]));
-        let replies = f.script(f.ws(workspace), &lines);
-        (1..=N)
-            .zip(&replies[1..=N])
-            .map(|(n, reply)| {
-                let plate = reply.get("plate").unwrap();
-                (
-                    text(plate, "element_id").to_owned(),
-                    format!("{prefix}-{n}"),
-                    width as f64,
-                    num(plate, &["quantities", "volume", "mm3"]),
-                )
-            })
-            .collect::<Vec<_>>()
+        expected
     };
     // The two clients are offline from each other: each workspace is its own store, so their
     // drafts are authored side by side, as two machines would.
@@ -579,42 +650,49 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
     let (code, moved) = f.publish("b");
     assert_eq!(code, 0, "{moved:?}");
 
-    // The reopened store holds every element exactly once with its authored value.
-    let plates = f.plates("published");
-    assert_eq!(plates.len(), created.len());
-    let mut seen = std::collections::BTreeSet::new();
-    for (element, name, width, volume) in &plates {
-        assert!(seen.insert(element.clone()), "duplicated element {element}");
-        let expected = created
-            .iter()
-            .find(|(identity, ..)| identity == element)
-            .unwrap_or_else(|| panic!("unknown element {element}"));
-        assert_eq!(name, &expected.1, "{element}");
-        assert_eq!(width, &expected.2, "{element}");
-        assert_eq!(volume, &expected.3, "{element}");
-    }
-    assert_eq!(seen.len(), created.len());
-    for (element, _, _, _) in &created {
-        assert!(seen.contains(element), "{element} is lost");
+    if external.is_some() {
+        // Each CLI page reopens and verifies the whole model. Read the exact count once.
+        // The independent reader below checks the detailed values and every element ID.
+        let page = f.ok(&[
+            "inspect-elements",
+            "--store",
+            f.s("published"),
+            "--limit",
+            "1",
+        ]);
+        assert_eq!(
+            page.get("element_count").unwrap().unsigned().unwrap(),
+            created.len() as u64,
+        );
+    } else {
+        let plates = f.plates("published");
+        assert_eq!(plates.len(), created.len());
+        let mut seen = std::collections::BTreeSet::new();
+        for (element, name, width, volume) in &plates {
+            assert!(seen.insert(element.clone()), "duplicated element {element}");
+            let expected = created
+                .iter()
+                .find(|(identity, ..)| identity == element)
+                .unwrap_or_else(|| panic!("unknown element {element}"));
+            assert_eq!(name, &expected.1, "{element}");
+            assert_eq!(width, &expected.2, "{element}");
+            assert_eq!(volume, &expected.3, "{element}");
+        }
+        assert_eq!(seen.len(), created.len());
+        for (element, _, _, _) in &created {
+            assert!(seen.contains(element), "{element} is lost");
+        }
     }
 
     // The final accepted revision opens in the independent reader and agrees plate by
     // plate, so nothing was renamed, dropped or doubled on the way to disk.
-    let inspected = f.ok(&["inspect-elements", "--store", f.s("published")]);
-    let layers = f.path("layers");
+    let revision = store(&f.path("published")).open().unwrap();
+    let manifest = revision.manifest().content();
+    let layers = external.unwrap_or_else(|| f.path("layers"));
     fs::create_dir(&layers).unwrap();
-    for entry in inspected
-        .get("revision")
-        .unwrap()
-        .get("manifest")
-        .unwrap()
-        .get("layers")
-        .unwrap()
-        .array()
-        .unwrap()
-    {
-        let digest = text(entry, "digest");
-        let target = layers.join(text(entry, "name"));
+    for entry in manifest.entries() {
+        let digest = entry.digest().to_string();
+        let target = layers.join(entry.name());
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).unwrap();
         }
@@ -622,41 +700,41 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
             f.path("published")
                 .join("blobs")
                 .join(&digest[..2])
-                .join(digest),
+                .join(&digest),
             &target,
         )
         .unwrap();
     }
-    let expect = created
-        .iter()
-        .map(|(element, name, width, volume)| {
+    // Each independent-reader report must fit the CLI JSON envelope.
+    for (page, chunk) in created.chunks(128).enumerate() {
+        let expect = chunk.iter().map(|(element, name, width, volume)| {
             format!(
                 r#"{{"id":"{element}","name":"{name}","width":{width:?},"length":300.0,"thickness":8.0,"translation":[0.0,0.0,0.0],"cli_volume_mm3":{volume:?}}}"#
             )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    fs::write(layers.join("expect.json"), format!("[{expect}]")).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft-usd-oracle"))
-        .arg("revision")
-        .arg(layers.join("root.usda"))
-        .arg(layers.join("expect.json"))
-        .output()
+        }).collect::<Vec<_>>().join(",");
+        let file = f.path(&format!("expect-{page}.json"));
+        fs::write(&file, format!("[{expect}]")).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft-usd-oracle"))
+            .arg("revision")
+            .arg(layers.join(manifest.root_layer()))
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "the independent reader disagreed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = beamcraft_json::decode(
+            String::from_utf8_lossy(&output.stdout).trim().as_bytes(),
+            &Limits::DEFAULT,
+        )
         .unwrap();
-    assert!(
-        output.status.success(),
-        "the independent reader disagreed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = beamcraft_json::decode(
-        String::from_utf8_lossy(&output.stdout).trim().as_bytes(),
-        &Limits::DEFAULT,
-    )
-    .unwrap();
-    assert_eq!(
-        report.get("plates").unwrap().array().unwrap().len(),
-        2 * N + 1
-    );
+        assert_eq!(
+            report.get("plates").unwrap().array().unwrap().len(),
+            chunk.len()
+        );
+    }
 }
 
 // C05-02: after a base mismatch the only forward path is rebase, repackage under a new

@@ -369,6 +369,16 @@ fn a_created_part_carries_the_portable_appearance_of_its_class() {
         text.contains(r#"token info:id = "UsdPreviewSurface""#),
         "{text}"
     );
+    let (_, class_zero) = text.split_once(r#"def Material "PartClass0""#).unwrap();
+    let (material, _) = class_zero
+        .split_once(r#"def Shader "PreviewSurface""#)
+        .unwrap();
+    assert!(
+        material
+            .lines()
+            .any(|line| line.trim() == "token outputs:surface"),
+        "the material output must agree with the varying .connect declaration: {material}"
+    );
     assert!(
         text.contains("token outputs:surface.connect = </World/Looks/PartClass0/PreviewSurface.outputs:surface>"),
         "{text}"
