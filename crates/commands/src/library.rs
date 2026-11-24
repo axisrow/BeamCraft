@@ -8361,6 +8361,88 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_brazil_nbr_7007_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/brazil/materials-nbr-7007.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "brazil-nbr-7007-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 4);
+        // The grades the open public listings and the producers' prints corroborate, in the
+        // loader's designation order. Every row declares the edition the public listings name
+        // (10/2022, vigente) and the metric 7850 kg/m3 density of every shipped pack.
+        let expected: [&str; 4] = ["AR 350", "AR 350 COR", "AR 415", "MR 250"];
+        let grades: Vec<&str> = library
+            .entries
+            .iter()
+            .map(|entry| match &entry.record {
+                DefinitionRecord::Material { grade, .. } => grade.as_deref().unwrap(),
+                _ => panic!("{} is not a material grade", entry.designation),
+            })
+            .collect();
+        assert_eq!(grades, expected);
+        for entry in &library.entries {
+            assert!(
+                matches!(
+                    &entry.record,
+                    DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                        if standard.as_deref() == Some("ABNT NBR 7007:2022")
+                ),
+                "{}",
+                entry.designation
+            );
+            // The designation is the producers' print form: the strength prefix and the yield
+            // number, spaced.
+            assert_eq!(entry.designation, entry.designation.to_uppercase());
+            assert!(entry.designation.contains(' '));
+        }
+        // Refused, never a near match: no compact spelling (the current Gerdau print runs the
+        // strength prefix and the number together; the shipped rows are the spaced forms the
+        // listings print), no grade one listing names and no producer corroborates (BR 190),
+        // no strength level the public listings do not carry, and no ASTM name — the A36,
+        // A572 and A588 neighbours of the standard's informative mapping are not rows.
+        for absent in [
+            "AR350",
+            "AR 350COR",
+            "MR250",
+            "BR 190",
+            "BR190",
+            "AR 345",
+            "AR 500",
+            "MR 325",
+            "A36",
+            "A572 Grade 50",
+            "A588",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not a shipped grade"
+            );
+        }
+    }
+
+    #[test]
     fn the_shipped_china_h_section_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

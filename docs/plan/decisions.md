@@ -29,6 +29,22 @@ Open questions are at the end.
   national grade source is admitted, the environment lists no material library and every grade
   is `NOT_FOUND`. [Design note](../design/brazil-abnt-nbr-15980-profiles.md).
 
+- **NBR 7007 is admitted as the Brazil grade standard under the 2026-11-23 sourcing principle,
+  and the grades slice closes #710.** The 2026-11-23 principle admits national standards whose
+  owner is the state: ABNT is that state-recognised national body, so the `brazil` environment
+  gains its material library without a further decision — the official text stays unpurchased,
+  and the rows are the grade designations the open public listings corroborate, declared with
+  the edition the listings name (the 2022 edition, October 2022, vigente, pinned from the
+  public listing of the ABNT catalogue). Four grades ship — MR 250, AR 350, AR 350 COR and AR
+  415 — in the spaced designation form the listings print; the compact unspaced spellings of
+  the current Gerdau print stay `NOT_FOUND`, as do the ASTM names of the producers' equivalence
+  mappings (the relations are not aliases, as the NCh203 pack ruled) and the BR 190 light grade
+  one standards-database listing names with no producer corroboration. With the profile pack of
+  the same date, the #710 acceptance — the producers' tables and the ABNT grades — is covered;
+  the remaining families (angles, flat bars, channels, S and M shapes) and edition bumps stay
+  under the standing pack discipline, each with its own source decision.
+  [Design note](../design/brazil-abnt-nbr-15980-profiles.md).
+
 ## 2026-11-23
 
 - **The Middle East pack is a curated EN+ASTM mix, re-entered from the declared standards.**

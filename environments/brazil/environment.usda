@@ -5,7 +5,8 @@
     customLayerData = {
         string "bim:environment:id" = "brazil"
         string "bim:environment:version" = "1"
-        string "bim:environment:title" = "Brazil (ABNT NBR 15980 W and HP shapes)"
+        string "bim:environment:title" = "Brazil (ABNT NBR 15980 W and HP shapes, NBR 7007 grades)"
         string[] "bim:environment:libraries" = ["profiles-abnt-nbr-15980.usda"]
+        string[] "bim:environment:material-libraries" = ["materials-nbr-7007.usda"]
     }
 )
