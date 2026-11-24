@@ -398,11 +398,28 @@ fn all_namespaces_page_as_one_position_space() {
 
     // The three listings the `all` listing concatenates, and the `all` listing walked a page of
     // one entry at a time: the pages tile the three ranges exactly, in namespace order. The
-    // profile range outgrew one page of 256 when #790 doubled the europe catalog, so the three
-    // ranges are walked page by page exactly as the `all` chain is.
+    // profile range outgrew one page of 256 when #790 doubled the europe catalog, so each of
+    // the three ranges is fetched full page by full page until it runs out.
     let expected: Vec<String> = ["profile", "fastener", "material"]
         .into_iter()
-        .flat_map(|namespace| walk(&f, &store, namespace))
+        .flat_map(|namespace| {
+            let mut listed = Vec::new();
+            let mut offset = 0u64;
+            loop {
+                let at = offset.to_string();
+                let page = f.listing(
+                    &store,
+                    &["--namespace", namespace, "--offset", &at, "--limit", "256"],
+                );
+                let page_designations = designations(&page);
+                let fetched = page_designations.len();
+                listed.extend(page_designations);
+                offset += fetched as u64;
+                if number(&page, "next_offset").is_none() {
+                    return listed;
+                }
+            }
+        })
         .collect();
     assert_eq!(walk(&f, &store, "all"), expected);
     let first = f.listing(&store, &["--namespace", "all", "--limit", "1"]);
