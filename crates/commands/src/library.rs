@@ -2932,6 +2932,133 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_usa_environment_admits_its_fastener_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "usa");
+        assert_eq!(
+            environment.info.fastener_libraries,
+            ["fasteners-rcsc-2025.usda"]
+        );
+        // The profile namespace is unchanged by the fastener listing: the A6 pack keeps its
+        // entries.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.sources[0].library.entries.len(), 285);
+        // The RCSC fastener set rides the same environment, admitted with declared provenance.
+        assert_eq!(environment.fastener_sources.len(), 1);
+        let bolts = &environment.fastener_sources[0];
+        assert_eq!(bolts.library.info.id, "beamcraft-rcsc-fasteners");
+        assert_eq!(bolts.library.entries.len(), 18);
+        assert!(bolts.library.rejected.is_empty());
+        assert!(
+            bolts
+                .library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty())
+                && bolts
+                    .library
+                    .info
+                    .licence
+                    .as_deref()
+                    .is_some_and(|l| !l.is_empty()),
+            "the shipped fastener library declares its provenance"
+        );
+        // Bolt lookups ride the same resolver machinery, in their own namespace.
+        let lookup = environment.fastener_lookup();
+        let three_quarter = lookup.find("A325-3/4").unwrap().1;
+        assert!(
+            matches!(&three_quarter.record, DefinitionRecord::Fastener { spec }
+                if spec.nominal_diameter_mm == 19.05 && spec.hole_clearance_mm == 1.5875)
+        );
+        // A designation the set does not publish is NOT_FOUND, never a near match: the metric
+        // A325M series is excluded by the slice, the washers are paywalled and deferred, no
+        // oversize or slot row exists, and the lookup never answers a lowercase variant.
+        for absent in [
+            "A325M-16",
+            "A325M20",
+            "M20",
+            "F436-3/4",
+            "A325-3/4-OVS",
+            "a325-3/4",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_usa_fastener_pack_matches_the_rcsc_2025_tables() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/fasteners-rcsc-2025.usda"
+        );
+        let library = load_fastener(path).unwrap();
+        assert_eq!(library.info.id, "beamcraft-rcsc-fasteners");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 18);
+        // One row per size and grade: the C-2.1 inch fractions converted exactly (x 25.4),
+        // the Table 3.1 standard hole as the clearance — 1/16 in over the bolt through 7/8 in
+        // and 1/8 in from 1 in up, the band the 2025 edition moved — and no washer anywhere.
+        let sizes = [
+            ("1/2", 12.7, 22.225, 7.9375, 12.303125, 1.5875, 4.0),
+            ("5/8", 15.875, 26.9875, 9.921875, 15.478125, 1.5875, 5.0),
+            ("3/4", 19.05, 31.75, 11.90625, 18.653125, 1.5875, 6.0),
+            ("7/8", 22.225, 36.5125, 13.890625, 21.828125, 1.5875, 7.0),
+            ("1", 25.4, 41.275, 15.478125, 25.003125, 3.175, 8.0),
+            ("1-1/8", 28.575, 46.0375, 17.4625, 28.178125, 3.175, 9.0),
+            ("1-1/4", 31.75, 50.8, 19.84375, 30.95625, 3.175, 10.0),
+            ("1-3/8", 34.925, 55.5625, 21.43125, 34.13125, 3.175, 11.0),
+            ("1-1/2", 38.1, 60.325, 23.8125, 37.30625, 3.175, 12.0),
+        ];
+        // The offered lengths are the declared contributor grid, exact millimetres of the
+        // inch steps: 1-1/4 to 5 in quarter steps (31.75 to 127 mm), then half steps to 8 in
+        // (139.7 to 203.2 mm).
+        let lengths: Vec<f64> = vec![
+            31.75, 38.1, 44.45, 50.8, 57.15, 63.5, 69.85, 76.2, 82.55, 88.9, 95.25, 101.6, 107.95,
+            114.3, 120.65, 127., 139.7, 152.4, 165.1, 177.8, 190.5, 203.2,
+        ];
+        assert_eq!(lengths.len(), 22);
+        for grade in ["A325", "A490"] {
+            for (size, nominal, flats, head, nut, clearance, protrusion) in sizes {
+                let designation = format!("{grade}-{size}");
+                let entry = library
+                    .entries
+                    .iter()
+                    .find(|e| e.designation == designation)
+                    .unwrap_or_else(|| panic!("the pack lists {designation}"));
+                let DefinitionRecord::Fastener { spec } = &entry.record else {
+                    panic!("{designation} is a fastener record");
+                };
+                assert_eq!(spec.designation.as_deref(), Some(designation.as_str()));
+                assert_eq!(spec.standard.as_deref(), Some("ASTM F3125"));
+                assert_eq!(spec.grade.as_deref(), Some(grade));
+                assert_eq!(spec.kind, FastenerKind::Bolt);
+                assert_eq!(spec.head_kind, HeadKind::Hex);
+                assert_eq!(spec.nominal_diameter_mm, nominal, "{designation}");
+                assert_eq!(spec.head_across_flats_mm, flats, "{designation}");
+                assert_eq!(spec.head_height_mm, head, "{designation}");
+                assert_eq!(spec.nut_across_flats_mm, Some(flats), "{designation}");
+                assert_eq!(spec.nut_height_mm, Some(nut), "{designation}");
+                assert_eq!(spec.hole_clearance_mm, clearance, "{designation}");
+                assert_eq!(spec.thread_protrusion_mm, protrusion, "{designation}");
+                assert!(spec.washer.is_none(), "{designation} carries no washer");
+                assert!(!spec.washer_under_head && !spec.washer_under_nut);
+                assert_eq!(spec.hole_mode, HoleMode::Generate);
+                assert_eq!(spec.lengths_mm, lengths, "{designation}");
+            }
+        }
+    }
+
+    #[test]
     fn the_shipped_europe_materials_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3536,14 +3663,18 @@ mod tests {
         let environment = load_environment(path).unwrap();
         assert_eq!(environment.info.libraries, ["profiles-astm-a6-w-hp.usda"]);
         assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
-        // The environment carries its profile library beside its material library and no
-        // fastener library yet (the USA fastener slice is still open).
+        // The environment carries its profile library beside its material library and its
+        // RCSC fastener set (the fastener slice of #708).
         assert_eq!(environment.sources.len(), 1);
         assert_eq!(
             environment.sources[0].library.info.id,
             "usa-astm-a6-w-hp-profiles"
         );
-        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(
+            environment.fastener_sources[0].library.info.id,
+            "beamcraft-rcsc-fasteners"
+        );
         assert_eq!(environment.material_sources.len(), 1);
         let materials = &environment.material_sources[0];
         assert_eq!(materials.library.info.id, "usa-astm-materials");
