@@ -7825,7 +7825,9 @@ mod tests {
             .environment_lost
             .expect("the recorded loss is reported");
         assert!(
-            lost.path.ends_with("environment/environment.usda"),
+            // Component comparison, not a raw string suffix: the recorded loss path is a
+            // platform path, so on Windows it carries `\` separators.
+            std::path::Path::new(&lost.path).ends_with("environment/environment.usda"),
             "{lost:?}"
         );
         assert!(
