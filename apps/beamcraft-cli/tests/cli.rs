@@ -96,6 +96,7 @@ mod numbering_approval;
 mod offline_clients;
 mod p_degenerate;
 mod part_classes;
+mod philippines_environment;
 mod pick;
 mod plate;
 mod plate_contour_edits;

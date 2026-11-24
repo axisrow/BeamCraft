@@ -3803,6 +3803,184 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_philippines_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/philippines/materials-philippines.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "philippines-esc-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 35);
+        // The grade designations the ESC Steel Philippines page names for locally supplied
+        // sections, each with the publicly documented edition of its standard: the ASTM
+        // grades the `usa` pack declares (A36, the complete A572 strength-grade set), the
+        // EN 10025-2:2019 set the `europe` pack re-entered, and the JIS grades — SS400 of
+        // G 3101:2015, the SM set ESC names of G 3106:2020 and the complete G 3136:2012 set
+        // (SN490A is no grade of that standard). The KS D 3503 and KS D 3515 designations
+        // the page names are the same strings the JIS rows carry and add no row.
+        let expected: [(&str, &str); 35] = [
+            ("A36", "ASTM A36/A36M-19"),
+            ("A572 Grade 42", "ASTM A572/A572M-21"),
+            ("A572 Grade 50", "ASTM A572/A572M-21"),
+            ("A572 Grade 55", "ASTM A572/A572M-21"),
+            ("A572 Grade 60", "ASTM A572/A572M-21"),
+            ("A572 Grade 65", "ASTM A572/A572M-21"),
+            ("S235J0", "EN 10025-2:2019"),
+            ("S235J2", "EN 10025-2:2019"),
+            ("S235JR", "EN 10025-2:2019"),
+            ("S275J0", "EN 10025-2:2019"),
+            ("S275J2", "EN 10025-2:2019"),
+            ("S275JR", "EN 10025-2:2019"),
+            ("S355J0", "EN 10025-2:2019"),
+            ("S355J2", "EN 10025-2:2019"),
+            ("S355JR", "EN 10025-2:2019"),
+            ("S355K2", "EN 10025-2:2019"),
+            ("S460J0", "EN 10025-2:2019"),
+            ("S460J2", "EN 10025-2:2019"),
+            ("S460JR", "EN 10025-2:2019"),
+            ("S460K2", "EN 10025-2:2019"),
+            ("S500J0", "EN 10025-2:2019"),
+            ("SM400A", "JIS G 3106:2020"),
+            ("SM400B", "JIS G 3106:2020"),
+            ("SM400C", "JIS G 3106:2020"),
+            ("SM490A", "JIS G 3106:2020"),
+            ("SM490B", "JIS G 3106:2020"),
+            ("SM490C", "JIS G 3106:2020"),
+            ("SM490YA", "JIS G 3106:2020"),
+            ("SM490YB", "JIS G 3106:2020"),
+            ("SN400A", "JIS G 3136:2012"),
+            ("SN400B", "JIS G 3136:2012"),
+            ("SN400C", "JIS G 3136:2012"),
+            ("SN490B", "JIS G 3136:2012"),
+            ("SN490C", "JIS G 3136:2012"),
+            ("SS400", "JIS G 3101:2015"),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_philippines_environment_admits_its_libraries() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/philippines/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "philippines");
+        assert_eq!(environment.info.libraries, ["profiles-astm-a6-w-hp.usda"]);
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-philippines.usda"]
+        );
+        // One profile source beside one material source; no fastener library.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        // The profile source re-declares the `usa` pack A6 facts: the same 285 admitted
+        // rows, every designation with the same dimensions, area, mass and radius, under
+        // the Philippines library id.
+        let profiles = &environment.sources[0];
+        assert_eq!(
+            profiles.library.info.id,
+            "philippines-astm-a6-w-hp-profiles"
+        );
+        assert!(profiles.library.rejected.is_empty());
+        assert_eq!(profiles.library.entries.len(), 285);
+        let usa = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/profiles-astm-a6-w-hp.usda"
+        ))
+        .unwrap();
+        assert_eq!(usa.entries.len(), 285);
+        for (philippines, usa) in profiles.library.entries.iter().zip(&usa.entries) {
+            assert_eq!(philippines.designation, usa.designation);
+            assert_eq!(philippines.record, usa.record);
+        }
+        // The material source binds the ESC-named grades; the environment lookup resolves
+        // through both namespaces.
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "philippines-esc-materials");
+        assert!(materials.library.rejected.is_empty());
+        assert_eq!(materials.library.entries.len(), 35);
+        let lookup = environment.material_lookup();
+        let (source, ss400) = lookup.find("SS400").unwrap();
+        assert_eq!(source.library.info.id, "philippines-esc-materials");
+        assert!(matches!(
+            &ss400.record,
+            DefinitionRecord::Material { standard, .. }
+                if standard.as_deref() == Some("JIS G 3101:2015")
+        ));
+        assert!(matches!(
+            &lookup.find("SM490YB").unwrap().1.record,
+            DefinitionRecord::Material { standard, .. }
+                if standard.as_deref() == Some("JIS G 3106:2020")
+        ));
+        assert!(matches!(
+            &lookup.find("SN490C").unwrap().1.record,
+            DefinitionRecord::Material { standard, .. }
+                if standard.as_deref() == Some("JIS G 3136:2012")
+        ));
+        // A grade the ESC list does not name is NOT_FOUND, never a near match: no SN490A
+        // (no grade of G 3136), no SM520B or SS540 of the full JIS sets, no A992 the usa
+        // pack ships, no S450J0 the 2019 EN revision deleted, no bare SM400, and no
+        // designation of the KS standards the page names (the same strings the JIS rows
+        // carry already resolve there).
+        for absent in [
+            "SN490A", "SM520B", "SS540", "A992", "S450J0", "SM400", "SN400",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+        // The material namespace never answers a profile name and the other way round: the
+        // EDI inch designations, the jumbo rows of the newer A6 editions and the S family of
+        // the annex stay NOT_FOUND in the material lookup too.
+        for absent in ["W1100X499", "W44X408", "HP16X183", "S24X121"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn the_shipped_china_gb_t_1591_materials_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
