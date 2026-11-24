@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "philippines"
+        string "bim:environment:version" = "1"
+        string "bim:environment:title" = "Philippines (ASTM A6/A6M W and HP shapes, ESC-verified grade mix)"
+        string[] "bim:environment:libraries" = ["profiles-astm-a6-w-hp.usda"]
+        string[] "bim:environment:material-libraries" = ["materials-philippines.usda"]
+    }
+)
