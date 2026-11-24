@@ -5,9 +5,8 @@
 // structural steel standard, in its national designations — the general-construction class ES
 // (A240ES, A270ES, A345ES, M345ES, Y345ES) and the dynamic-load class ESP (A250ESP, A345ESP) —
 // re-entered by hand as our own data; the density is the 7850 kg/m3 of the shipped profile packs.
-// The environment carries no profile libraries, so the mass check rides a plate, whose mass is
-// exact geometry. Provenance and licence are in `ATTRIBUTION.md` and in the library's own
-// metadata.
+// The profile pack beside it is the subject of `south_america_environment.rs`. Provenance and
+// licence are in `ATTRIBUTION.md` and in the library's own metadata.
 
 //! The material library of the `south-america` environment end to end through the real
 //! `beamcraft` binary (#711): the grades-only environment carries its material library into a
@@ -98,18 +97,25 @@ fn the_south_america_environment_lists_and_carries_its_material_library() {
         "the project copy holds the NCh203 material library"
     );
 
-    // The listing and the store round ride one process (#738 P7): the library listing, the
-    // offered-grade reads, the two plates whose mass math uses the catalogue density, and
-    // the refusals in their authored order.
+    // The picker listing is read in its own process: with the W-shape profile library beside
+    // the material library a `definitions` reply carries every environment profile, so the
+    // one-script summary of #738 P7 would keep only the replies that fit its own budget. The
+    // store round stays one script; every shipped grade is listed for pickers until the model
+    // defines it: the complete set of the standard's two classes, in the loader's order.
+    let listed_before = f.ok(&["definitions", "--store", &store]);
+    let available = list(&listed_before, "environment_materials");
+    let offered: Vec<String> = available.iter().map(|g| text(g, "grade")).collect();
+    assert_eq!(
+        offered,
+        [
+            "A240ES", "A250ESP", "A270ES", "A345ES", "A345ESP", "M345ES", "Y345ES",
+        ]
+    );
+
+    // The store round rides one script: the two plates whose mass math uses the catalogue
+    // density (a 200 x 3000 x 10 plate at 7850 kg/m3 weighs exactly 47.1 kg) and the
+    // refusals in their authored order.
     let mut lines = vec![
-        // The grades-only environment names its material library and no other library.
-        Scripted::ok(&["list-library", "--environment", ENVIRONMENT]),
-        // Every shipped grade is listed for pickers until the model defines it: the complete
-        // set of the standard's two classes, in the loader's designation order.
-        Scripted::ok(&["definitions", "--store", &store]),
-        // A grade of the set resolves through the project's own environment copy, with no
-        // option naming any file, and the mass math uses the catalogue entry's density: a
-        // 200 x 3000 x 10 plate at 7850 kg/m3 weighs exactly 47.1 kg.
         Scripted::ok(&[
             "create-plate",
             "--store",
@@ -125,11 +131,6 @@ fn the_south_america_environment_lists_and_carries_its_material_library() {
             "--actor-id",
             ACTOR,
         ]),
-        // The pinned definition is the catalogue entry itself: the declared grade, standard
-        // and density ride into the model, which never needs the library file again.
-        Scripted::ok(&["definitions", "--store", &store, "--name", "A270ES"]),
-        // The spent grade is no longer offered to pickers; the other six still are.
-        Scripted::ok(&["definitions", "--store", &store]),
         // The seeded constants stay the neutral fallback: Steel still answers by name.
         Scripted::ok(&[
             "create-plate",
@@ -146,7 +147,6 @@ fn the_south_america_environment_lists_and_carries_its_material_library() {
             "--actor-id",
             ACTOR,
         ]),
-        Scripted::ok(&["definitions", "--store", &store, "--name", "Steel"]),
     ];
     // A grade the set does not publish stays NOT_FOUND, never a near match: no ASTM
     // designation of the standard's informative Annex C relations, no designation of the
@@ -178,57 +178,51 @@ fn the_south_america_environment_lists_and_carries_its_material_library() {
         ]));
     }
     let replies = f.script(&store, &lines);
-    let listed = &replies[0];
-    assert_eq!(
-        at(listed, &["environment", "material_libraries"])
-            .array()
-            .unwrap(),
-        [Json::text("materials-nch203.usda")]
-    );
-    let available = list(&replies[1], "environment_materials");
-    let offered: Vec<String> = available.iter().map(|g| text(g, "grade")).collect();
-    assert_eq!(
-        offered,
-        [
-            "A240ES", "A250ESP", "A270ES", "A345ES", "A345ESP", "M345ES", "Y345ES",
-        ]
-    );
-    let plate = &replies[2];
+    let plate = &replies[0];
     let mass = at(plate, &["plate", "quantities", "mass"]);
     assert_eq!(text(mass, "status"), "current");
     let kg = at(mass, &["kg"]).float().unwrap();
     assert!((kg - 47.1).abs() < 0.001, "mass {kg} kg");
-    let pinned = list(&replies[3], "definitions");
-    assert_eq!(pinned.len(), 1);
-    assert_eq!(text(&pinned[0], "kind"), "material");
-    assert_eq!(text(&pinned[0], "grade"), "A270ES");
-    assert_eq!(text(&pinned[0], "standard"), "NCh203.Of2006");
-    assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
-    let remaining = list(&replies[4], "environment_materials");
+    let steel_plate = &replies[1];
+    let steel_mass = at(steel_plate, &["plate", "quantities", "mass"]);
+    let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
+    assert!((steel_kg - 47.1).abs() < 0.001, "Steel mass {steel_kg} kg");
+    // Replies 2..8 carry the refusals in the authored order.
+    for (index, designation) in absent.iter().enumerate() {
+        assert_eq!(
+            text(&replies[2 + index], "code"),
+            "NOT_FOUND",
+            "{designation}"
+        );
+    }
+
+    // The pinned definition is the catalogue entry itself: the declared grade, standard and
+    // density ride into the model, which never needs the library file again. The reads ride
+    // their own processes, after the script above.
+    let pinned = f.ok(&["definitions", "--store", &store, "--name", "A270ES"]);
+    let pinned_defs = list(&pinned, "definitions");
+    assert_eq!(pinned_defs.len(), 1);
+    assert_eq!(text(&pinned_defs[0], "kind"), "material");
+    assert_eq!(text(&pinned_defs[0], "grade"), "A270ES");
+    assert_eq!(text(&pinned_defs[0], "standard"), "NCh203.Of2006");
+    assert_eq!(
+        at(&pinned_defs[0], &["density_kg_m3"]).float().unwrap(),
+        7850.0
+    );
+    let listed_after = f.ok(&["definitions", "--store", &store]);
+    let remaining = list(&listed_after, "environment_materials");
     assert_eq!(remaining.len(), 6);
     assert!(
         remaining.iter().all(|g| text(g, "grade") != "A270ES"),
         "A270ES is spent"
     );
-    let steel_plate = &replies[5];
-    let steel_mass = at(steel_plate, &["plate", "quantities", "mass"]);
-    let steel_kg = at(steel_mass, &["kg"]).float().unwrap();
-    assert!((steel_kg - 47.1).abs() < 0.001, "Steel mass {steel_kg} kg");
-    let pinned_steel = list(&replies[6], "definitions");
-    assert_eq!(pinned_steel.len(), 1);
+    let pinned_steel = f.ok(&["definitions", "--store", &store, "--name", "Steel"]);
+    let pinned_steel_defs = list(&pinned_steel, "definitions");
+    assert_eq!(pinned_steel_defs.len(), 1);
     assert!(
-        at(&pinned_steel[0], &["grade"]).string().is_err(),
+        at(&pinned_steel_defs[0], &["grade"]).string().is_err(),
         "the neutral Steel declares no grade"
     );
-
-    // Replies 7..13 carry the refusals in the authored order.
-    for (index, designation) in absent.iter().enumerate() {
-        assert_eq!(
-            text(&replies[7 + index], "code"),
-            "NOT_FOUND",
-            "{designation}"
-        );
-    }
 }
 
 #[test]

@@ -68,14 +68,19 @@ saved setting.
   hole of Table 3.1; see `usa-rcsc-fasteners.md`) — and `environments/canada/`
   (2026-11-15) is grades-only the same way: the complete weldable category of
   CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W). `environments/south-america/`
-  (2026-11-23, #711) is grades-only as well, and national: the complete grade set of NCh203.Of2006,
+  (2026-11-23, #711) started grades-only and is national: the complete grade set of NCh203.Of2006,
   the official Chilean structural steel standard, in the standard's own designations — the
   general-construction class ES (A240ES, A270ES, A345ES, M345ES, Y345ES) and the dynamic-load class
   ESP (A250ESP, A345ESP). Its status is public:
   [Decreto 231 of 2006 of the Ministry of Public Works declares NCh203.Of2006 an official norm of
   the Republic](https://www.bcn.cl/leychile/navegar?idNorma=249463) and annuls NCh203.Of77 and
-  NCh1159.Of77. The environment lists no profile library — the region's profile pack follows the
-  #708 route — so a grade is its whole content: `create-project --environment south-america` lets
+  NCh1159.Of77. Since 2026-11-24 the environment carries, beside the material library, a profile
+  library with the complete W-shape series of ASTM A6/A6M-05a Annex A2 (274 rows, the USA pack's
+  re-entered SI-column facts, named by the standard's metric designations `W310x60`; the two rows
+  the standard names alike — W920 X 345 — keep their inch designations, the HP shapes stay
+  `NOT_FOUND` because no public Chilean source lists them, and no Chilean source lists the W
+  assortment either, so no availability subset is invented; see `south-america-a6-w-profiles.md`):
+  `create-project --environment south-america` lets
   a new model select one (`--material A270ES`). The standard's text is published by INN; the rows
   were read from a public technical manual that reproduces the standard's two classification
   tables and cross-checked against Chilean producer tables, with M345ES and Y345ES resting on
