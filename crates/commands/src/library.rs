@@ -2688,7 +2688,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "europe-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("3"));
+        assert_eq!(library.info.version.as_deref(), Some("4"));
         assert!(
             library
                 .info
@@ -2707,7 +2707,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 87);
+        assert_eq!(library.entries.len(), 207);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -2735,8 +2735,13 @@ mod tests {
             );
             // The declared catalogue area matches its convention's reference (the D3 1 percent
             // warning never fires: like-for-like, EN 10365 publishes the UPN 50-300 areas as
-            // the nominal sharp-cornered value and the 320-400 areas exact) and the declared
-            // mass must be the area at the standard's 7850 kg/m3 within its published rounding.
+            // the nominal sharp-cornered value and the 320-400 areas exact, and the EN tables
+            // print no HL root radius, so the HL rows carry the radius reproducing the
+            // published area) and the declared mass must be the area at the standard's
+            // 7850 kg/m3 within its published rounding — except the HL, HLZ, HD and HP rows of
+            // the #790 extension, which carry the designation nominal masses: the rounded
+            // published areas track them within 2.2 percent (worst HP400x122 at 2.19 percent,
+            // HD360x147 at 1.91, HL920x368 at 0.60), so those rows are bounded relatively.
             assert!(
                 entry.record.declared_area_warning().is_none(),
                 "{}",
@@ -2745,11 +2750,22 @@ mod tests {
             let area = section.area_mm2.unwrap();
             let mass = section.mass_per_meter_kg.unwrap();
             let mass_from_area = area * 7850.0 / 1.0e6;
-            assert!(
-                (mass - mass_from_area).abs() <= 0.55,
-                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
-                entry.designation
-            );
+            if entry.designation.starts_with("HL")
+                || entry.designation.starts_with("HD")
+                || entry.designation.starts_with("HP")
+            {
+                assert!(
+                    (mass - mass_from_area).abs() / mass_from_area <= 0.025,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            } else {
+                assert!(
+                    (mass - mass_from_area).abs() <= 0.55,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
             // The convention declaration itself: nominal sharp exactly on the UPN 50-300 rows,
             // the exact default on the 320-400 rows and everywhere else.
             let want_convention = if entry.designation.starts_with("UPN") {
@@ -2772,21 +2788,220 @@ mod tests {
         // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
         // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270),
         // no UPE 250/260 (the channel sequence steps 240 to 270), and the UPN series runs
-        // 50 to 400 with its own steps (320/350/380 after 300; no 270/330/360).
+        // 50 to 400 with its own steps (320/350/380 after 300; no 270/330/360). The #790
+        // extension adds the HEA/HEB 650-1000 rows and the HL, HLZ, HD and HP series; the
+        // x-suffix rows sort lexically, so the deep HD and HP rows lead their groups and the
+        // four HLZ rows close the HL one.
         assert_eq!(
             designations,
             [
-                "HEA100", "HEA120", "HEA140", "HEA160", "HEA180", "HEA200", "HEA220", "HEA240",
-                "HEA260", "HEA280", "HEA300", "HEA320", "HEA340", "HEA360", "HEA400", "HEA450",
-                "HEA500", "HEA550", "HEA600", "HEB100", "HEB120", "HEB140", "HEB160", "HEB180",
-                "HEB200", "HEB220", "HEB240", "HEB260", "HEB280", "HEB300", "HEB320", "HEB340",
-                "HEB360", "HEB400", "HEB450", "HEB500", "HEB550", "HEB600", "IPE100", "IPE120",
-                "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
-                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600", "UPE100",
-                "UPE120", "UPE140", "UPE160", "UPE180", "UPE200", "UPE220", "UPE240", "UPE270",
-                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80", "UPN100", "UPN120", "UPN140",
-                "UPN160", "UPN180", "UPN200", "UPN220", "UPN240", "UPN260", "UPN280", "UPN300",
-                "UPN320", "UPN350", "UPN380", "UPN400", "UPN50", "UPN65", "UPN80",
+                "HD260x114",
+                "HD260x142",
+                "HD260x172",
+                "HD260x225",
+                "HD260x299",
+                "HD260x54.1",
+                "HD260x68.2",
+                "HD260x93.0",
+                "HD320x127",
+                "HD320x158",
+                "HD320x198",
+                "HD320x245",
+                "HD320x300",
+                "HD320x74.2",
+                "HD320x97.6",
+                "HD360x134",
+                "HD360x147",
+                "HD360x162",
+                "HD360x179",
+                "HD360x196",
+                "HD400x1086",
+                "HD400x187",
+                "HD400x216",
+                "HD400x237",
+                "HD400x262",
+                "HD400x287",
+                "HD400x314",
+                "HD400x347",
+                "HD400x382",
+                "HD400x421",
+                "HD400x463",
+                "HD400x509",
+                "HD400x551",
+                "HD400x592",
+                "HD400x634",
+                "HD400x677",
+                "HD400x744",
+                "HD400x818",
+                "HD400x900",
+                "HD400x990",
+                "HEA100",
+                "HEA1000",
+                "HEA120",
+                "HEA140",
+                "HEA160",
+                "HEA180",
+                "HEA200",
+                "HEA220",
+                "HEA240",
+                "HEA260",
+                "HEA280",
+                "HEA300",
+                "HEA320",
+                "HEA340",
+                "HEA360",
+                "HEA400",
+                "HEA450",
+                "HEA500",
+                "HEA550",
+                "HEA600",
+                "HEA650",
+                "HEA700",
+                "HEA800",
+                "HEA900",
+                "HEB100",
+                "HEB1000",
+                "HEB120",
+                "HEB140",
+                "HEB160",
+                "HEB180",
+                "HEB200",
+                "HEB220",
+                "HEB240",
+                "HEB260",
+                "HEB280",
+                "HEB300",
+                "HEB320",
+                "HEB340",
+                "HEB360",
+                "HEB400",
+                "HEB450",
+                "HEB500",
+                "HEB550",
+                "HEB600",
+                "HEB650",
+                "HEB700",
+                "HEB800",
+                "HEB900",
+                "HL1000A",
+                "HL1000AA",
+                "HL1000B",
+                "HL1000M",
+                "HL1000x443",
+                "HL1000x483",
+                "HL1000x539",
+                "HL1000x554",
+                "HL1000x591",
+                "HL1000x642",
+                "HL1000x748",
+                "HL1000x883",
+                "HL1000x976",
+                "HL1100A",
+                "HL1100B",
+                "HL1100M",
+                "HL1100R",
+                "HL1100x548",
+                "HL1100x607",
+                "HL920x1077",
+                "HL920x1194",
+                "HL920x1269",
+                "HL920x1377",
+                "HL920x344",
+                "HL920x368",
+                "HL920x390",
+                "HL920x420",
+                "HL920x449",
+                "HL920x491",
+                "HL920x537",
+                "HL920x588",
+                "HL920x656",
+                "HL920x725",
+                "HL920x787",
+                "HL920x970",
+                "HLZ1100A",
+                "HLZ1100B",
+                "HLZ1100C",
+                "HLZ1100D",
+                "HP200x43",
+                "HP200x53",
+                "HP220x57",
+                "HP260x75",
+                "HP260x87",
+                "HP305x110",
+                "HP305x126",
+                "HP305x149",
+                "HP305x180",
+                "HP305x186",
+                "HP305x223",
+                "HP305x79",
+                "HP305x88",
+                "HP305x95",
+                "HP320x103",
+                "HP320x117",
+                "HP320x147",
+                "HP320x184",
+                "HP320x88",
+                "HP360x109",
+                "HP360x133",
+                "HP360x152",
+                "HP360x174",
+                "HP360x180",
+                "HP400x122",
+                "HP400x140",
+                "HP400x158",
+                "HP400x176",
+                "HP400x194",
+                "HP400x213",
+                "HP400x231",
+                "IPE100",
+                "IPE120",
+                "IPE140",
+                "IPE160",
+                "IPE180",
+                "IPE200",
+                "IPE220",
+                "IPE240",
+                "IPE270",
+                "IPE300",
+                "IPE330",
+                "IPE360",
+                "IPE400",
+                "IPE450",
+                "IPE500",
+                "IPE550",
+                "IPE600",
+                "UPE100",
+                "UPE120",
+                "UPE140",
+                "UPE160",
+                "UPE180",
+                "UPE200",
+                "UPE220",
+                "UPE240",
+                "UPE270",
+                "UPE300",
+                "UPE330",
+                "UPE360",
+                "UPE400",
+                "UPE80",
+                "UPN100",
+                "UPN120",
+                "UPN140",
+                "UPN160",
+                "UPN180",
+                "UPN200",
+                "UPN220",
+                "UPN240",
+                "UPN260",
+                "UPN280",
+                "UPN300",
+                "UPN320",
+                "UPN350",
+                "UPN380",
+                "UPN400",
+                "UPN50",
+                "UPN65",
+                "UPN80",
             ]
         );
         // Spot checks against the transcribed values.
@@ -2867,9 +3082,67 @@ mod tests {
         assert_eq!(p.values(), [400.0, 110.0, 14.0, 18.0, 18.0, 9.0, 0.05]);
         assert_eq!(section.area_mm2, Some(9150.0));
         assert_eq!(section.mass_per_meter_kg, Some(71.8));
+        // One spot per family of the #790 extension, against the transcribed values: the
+        // EMSTEEL-catalogue HL row, the largest-HD-gap row, the deepest HLZ row, the heaviest
+        // HP row and the top of the extended HEA ladder.
+        let hl920x491 = library.entry("HL920x491").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hl920x491.record
+        else {
+            panic!("HL920x491 is not a parametric section");
+        };
+        assert_eq!(p.values(), [957.0, 422.0, 25.9, 47.0, 19.0]);
+        assert_eq!(section.area_mm2, Some(62300.0));
+        assert_eq!(section.mass_per_meter_kg, Some(491.0));
+        let hd400x818 = library.entry("HD400x818").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hd400x818.record
+        else {
+            panic!("HD400x818 is not a parametric section");
+        };
+        assert_eq!(p.values(), [514.0, 437.0, 60.5, 97.0, 24.0]);
+        assert_eq!(section.area_mm2, Some(104630.0));
+        assert_eq!(section.mass_per_meter_kg, Some(818.0));
+        let hlz1100d = library.entry("HLZ1100D").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hlz1100d.record
+        else {
+            panic!("HLZ1100D is not a parametric section");
+        };
+        assert_eq!(p.values(), [1087.0, 460.0, 22.0, 37.0, 35.0]);
+        assert_eq!(section.area_mm2, Some(57800.0));
+        assert_eq!(section.mass_per_meter_kg, Some(453.0));
+        let hp400x231 = library.entry("HP400x231").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hp400x231.record
+        else {
+            panic!("HP400x231 is not a parametric section");
+        };
+        assert_eq!(p.values(), [372.0, 402.0, 26.0, 26.0, 24.0]);
+        assert_eq!(section.area_mm2, Some(29720.0));
+        assert_eq!(section.mass_per_meter_kg, Some(231.0));
+        let hea1000 = library.entry("HEA1000").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hea1000.record
+        else {
+            panic!("HEA1000 is not a parametric section");
+        };
+        assert_eq!(p.values(), [990.0, 300.0, 16.5, 31.0, 27.0]);
+        assert_eq!(section.area_mm2, Some(34685.0));
+        assert_eq!(section.mass_per_meter_kg, Some(272.3));
         for absent in [
-            "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700", "UPE250", "UPE260",
-            "UPE450", "UPN250", "UPN270", "UPN330", "UPN360", "UPN450",
+            "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEM200", "HEM300", "UPE250",
+            "UPE260", "UPE450", "UPN250", "UPN270", "UPN330", "UPN360", "UPN450",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -2891,7 +3164,7 @@ mod tests {
         // The profile namespace is unchanged by the fastener listing: both profile libraries
         // keep their entries.
         assert_eq!(environment.sources.len(), 2);
-        assert_eq!(environment.sources[0].library.entries.len(), 87);
+        assert_eq!(environment.sources[0].library.entries.len(), 207);
         assert_eq!(environment.sources[1].library.entries.len(), 52);
         // The DIN fastener set rides the same environment, admitted with declared provenance;
         // the pack carries the M12-30 designations since the EN 1090-2 hole-series rows.
@@ -4136,7 +4409,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "middle-east-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.info.version.as_deref(), Some("2"));
         assert!(
             library
                 .info
@@ -4155,7 +4428,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 55);
+        assert_eq!(library.entries.len(), 175);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -4174,8 +4447,13 @@ mod tests {
                 entry.designation
             );
             // The D3 declared-area check stays silent (the declared areas are the standard's
-            // published values, the exact-filleted convention by default) and the declared mass
-            // is that area at 7850 kg/m3 within the published rounding.
+            // published values, the exact-filleted convention by default; the EN tables print
+            // no HL root radius, so the HL rows carry the radius reproducing the published
+            // area) and the declared mass is that area at 7850 kg/m3 within the published
+            // rounding — except the HL, HLZ, HD and HP rows, which carry the designation
+            // nominal masses the rounded published areas track within 2.2 percent (worst
+            // HP400x122 at 2.19 percent, HD360x147 at 1.91, HL920x368 at 0.60), so those rows
+            // are bounded relatively, as in the `europe` pack.
             assert!(
                 entry.record.declared_area_warning().is_none(),
                 "{}",
@@ -4184,32 +4462,193 @@ mod tests {
             let area = section.area_mm2.unwrap();
             let mass = section.mass_per_meter_kg.unwrap();
             let mass_from_area = area * 7850.0 / 1.0e6;
-            assert!(
-                (mass - mass_from_area).abs() <= 0.55,
-                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
-                entry.designation
-            );
+            if entry.designation.starts_with("HL")
+                || entry.designation.starts_with("HD")
+                || entry.designation.starts_with("HP")
+            {
+                assert!(
+                    (mass - mass_from_area).abs() / mass_from_area <= 0.025,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            } else {
+                assert!(
+                    (mass - mass_from_area).abs() <= 0.55,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
             designations.push(entry.designation.clone());
         }
-        // The IPE, HEA and HEB rows of the `europe` pack, sizes 100 to 600, in the loader's
-        // designation order: HEA and HEB share one size ladder (no 250 or 270) and IPE has its
-        // own (no 250 or 280; 270 and 330 included).
+        // The rows of the extended `europe` pack, in the loader's designation order: the HEA and
+        // HEB ladder gains its 650-1000 rows (still one shared ladder, no 250 or 270) and IPE
+        // keeps its own (no 250 or 280; 270 and 330 included); the HD, HL and HP designations
+        // the #790 extension adds sort around them, the x-suffix rows lexically (the deep HD
+        // rows lead their groups), and the HL list closes with the four HLZ rows, its lexical
+        // position.
+        let hd = [
+            "HD260x114",
+            "HD260x142",
+            "HD260x172",
+            "HD260x225",
+            "HD260x299",
+            "HD260x54.1",
+            "HD260x68.2",
+            "HD260x93.0",
+            "HD320x127",
+            "HD320x158",
+            "HD320x198",
+            "HD320x245",
+            "HD320x300",
+            "HD320x74.2",
+            "HD320x97.6",
+            "HD360x134",
+            "HD360x147",
+            "HD360x162",
+            "HD360x179",
+            "HD360x196",
+            "HD400x1086",
+            "HD400x187",
+            "HD400x216",
+            "HD400x237",
+            "HD400x262",
+            "HD400x287",
+            "HD400x314",
+            "HD400x347",
+            "HD400x382",
+            "HD400x421",
+            "HD400x463",
+            "HD400x509",
+            "HD400x551",
+            "HD400x592",
+            "HD400x634",
+            "HD400x677",
+            "HD400x744",
+            "HD400x818",
+            "HD400x900",
+            "HD400x990",
+        ];
+        let hl = [
+            "HL1000A",
+            "HL1000AA",
+            "HL1000B",
+            "HL1000M",
+            "HL1000x443",
+            "HL1000x483",
+            "HL1000x539",
+            "HL1000x554",
+            "HL1000x591",
+            "HL1000x642",
+            "HL1000x748",
+            "HL1000x883",
+            "HL1000x976",
+            "HL1100A",
+            "HL1100B",
+            "HL1100M",
+            "HL1100R",
+            "HL1100x548",
+            "HL1100x607",
+            "HL920x1077",
+            "HL920x1194",
+            "HL920x1269",
+            "HL920x1377",
+            "HL920x344",
+            "HL920x368",
+            "HL920x390",
+            "HL920x420",
+            "HL920x449",
+            "HL920x491",
+            "HL920x537",
+            "HL920x588",
+            "HL920x656",
+            "HL920x725",
+            "HL920x787",
+            "HL920x970",
+            "HLZ1100A",
+            "HLZ1100B",
+            "HLZ1100C",
+            "HLZ1100D",
+        ];
+        let hp = [
+            "HP200x43",
+            "HP200x53",
+            "HP220x57",
+            "HP260x75",
+            "HP260x87",
+            "HP305x110",
+            "HP305x126",
+            "HP305x149",
+            "HP305x180",
+            "HP305x186",
+            "HP305x223",
+            "HP305x79",
+            "HP305x88",
+            "HP305x95",
+            "HP320x103",
+            "HP320x117",
+            "HP320x147",
+            "HP320x184",
+            "HP320x88",
+            "HP360x109",
+            "HP360x133",
+            "HP360x152",
+            "HP360x174",
+            "HP360x180",
+            "HP400x122",
+            "HP400x140",
+            "HP400x158",
+            "HP400x176",
+            "HP400x194",
+            "HP400x213",
+            "HP400x231",
+        ];
         let he = [
             100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 340, 360, 400, 450, 500,
-            550, 600,
+            550, 600, 650, 700, 800, 900, 1000,
         ];
         let ipe = [
             100, 120, 140, 160, 180, 200, 220, 240, 270, 300, 330, 360, 400, 450, 500, 550, 600,
         ];
-        let mut expected: Vec<String> = he.iter().map(|h| format!("HEA{h}")).collect();
+        let mut expected: Vec<String> = hd.iter().map(|d| d.to_string()).collect();
+        expected.extend(he.iter().map(|h| format!("HEA{h}")));
         expected.extend(he.iter().map(|h| format!("HEB{h}")));
+        expected.extend(hl.iter().map(|d| d.to_string()));
+        expected.extend(hp.iter().map(|d| d.to_string()));
         expected.extend(ipe.iter().map(|h| format!("IPE{h}")));
+        // The loader's order is lexical, so the 1000 rows slot in right after the 100 rows.
+        expected.sort();
         assert_eq!(designations, expected);
-        // Spot checks against the standard's published values.
+        // Spot checks against the standard's published values, one per family of the #790
+        // extension on top of the original three.
         for (designation, values, area, mass) in [
             ("IPE300", [300.0, 150.0, 7.1, 10.7, 15.0], 5381.0, 42.2),
             ("HEA340", [330.0, 300.0, 9.5, 16.5, 27.0], 13350.0, 105.0),
             ("HEB100", [100.0, 100.0, 6.0, 10.0, 12.0], 2600.0, 20.4),
+            (
+                "HL920x491",
+                [957.0, 422.0, 25.9, 47.0, 19.0],
+                62300.0,
+                491.0,
+            ),
+            (
+                "HD400x818",
+                [514.0, 437.0, 60.5, 97.0, 24.0],
+                104630.0,
+                818.0,
+            ),
+            (
+                "HLZ1100D",
+                [1087.0, 460.0, 22.0, 37.0, 35.0],
+                57800.0,
+                453.0,
+            ),
+            (
+                "HP400x231",
+                [372.0, 402.0, 26.0, 26.0, 24.0],
+                29720.0,
+                231.0,
+            ),
+            ("HEA1000", [990.0, 300.0, 16.5, 31.0, 27.0], 34685.0, 272.3),
         ] {
             let DefinitionRecord::SectionProfile {
                 shape: SectionShape::Parametric(p),
@@ -4223,21 +4662,11 @@ mod tests {
             assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
         }
         // NOT_FOUND, never a near match: designations the series does not publish (no IPE 250 or
-        // 280, no HEA 250), sizes beyond the shipped range (IPE 650, HEA 700, HEB 1000), the HL,
-        // HD and HP series the region rolls but the pack holds no re-entered tables for, and the
-        // channel series the curated mix leaves to the `europe` pack.
+        // 280, no HEA 250), sizes beyond the shipped range (IPE 650, HEA 1100), the HEM series
+        // the #790 extension leaves out, and the channel series the curated mix leaves to the
+        // `europe` pack.
         for absent in [
-            "IPE250",
-            "IPE280",
-            "HEA250",
-            "IPE650",
-            "HEA700",
-            "HEB1000",
-            "HL920x491",
-            "HD260x172",
-            "HP305x95",
-            "UPE100",
-            "UPN100",
+            "IPE250", "IPE280", "HEA250", "IPE650", "HEA1100", "HEM300", "UPE100", "UPN100",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -4329,7 +4758,7 @@ mod tests {
         assert_eq!(environment.material_sources.len(), 1);
         let profiles = &environment.sources[0];
         assert_eq!(profiles.library.info.id, "middle-east-en-10365-profiles");
-        assert_eq!(profiles.library.entries.len(), 55);
+        assert_eq!(profiles.library.entries.len(), 175);
         assert!(profiles.library.rejected.is_empty());
         let materials = &environment.material_sources[0];
         assert_eq!(materials.library.info.id, "middle-east-astm-materials");
