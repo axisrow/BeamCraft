@@ -3,16 +3,18 @@
 // The shipped Canada environment lists the CSA G40.21 weldable-category material grades
 // (`materials-csa-g4021.usda`): the complete metric W series of the combined standard
 // CSA G40.20-13/G40.21-13, re-entered by hand as our own data; the density is the 7850 kg/m3
-// of the shipped profile packs. The environment carries no profile libraries, so the mass
-// check rides a plate, whose mass is exact geometry. Provenance and licence are in
-// `ATTRIBUTION.md` and in the library's own metadata.
+// of the shipped profile packs. Beside the material library the environment carries the #709
+// profile library, so a member resolves its metric designations and their EDI inch aliases
+// the same way; this suite covers the material side, and the mass check rides a plate, whose
+// mass is exact geometry. Provenance and licence are in `ATTRIBUTION.md` and in the library's
+// own metadata.
 
 //! The material library of the `canada` environment end to end through the real `beamcraft`
-//! binary (#648): the grades-only environment carries its material library into a project
-//! copy, a grade resolves through it without any option, the mass math uses the catalogue
-//! entry's density, the seeded constants stay the neutral fallback, and a grade the set does
-//! not publish — including the imperial designations and the other categories of the same
-//! strength level — stays `NOT_FOUND`.
+//! binary (#648): the grades ride the environment into a project copy, a grade resolves
+//! through it without any option, the mass math uses the catalogue entry's density, the
+//! seeded constants stay the neutral fallback, and a grade the set does not publish —
+//! including the imperial designations and the other categories of the same strength
+//! level — stays `NOT_FOUND`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -97,11 +99,11 @@ fn the_canada_environment_lists_and_carries_its_material_library() {
     );
 
     // The listing and the store round ride one process (#738 P7). Every `definitions` reply
-    // carries the environment's whole picker listing (the #709 profile library puts 588
-    // profiles there), and a run-script summary envelope holds one such listing, so the
-    // round is split into three script invocations, each with at most one. The library
-    // listing reads one entry (--limit 1): the full 569-entry listing is paged through in
-    // `canada_environment`.
+    // carries the environment's whole picker listing — 588 profiles: the #709 library's 569
+    // plus the nineteen generic profiles of the `blank` fallback layer every chain reaches —
+    // and a run-script summary envelope holds one such listing, so the round is split into
+    // four script invocations, each with at most one. The library listing reads one entry
+    // (--limit 1): the full 569-entry listing is paged through in `canada_environment`.
     // Script one: the library listing, the offered grades, the 350W plate.
     let lines_a = vec![
         // The environment names its profile library and its material library.

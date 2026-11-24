@@ -47,6 +47,12 @@ the USA pack ships. Both names resolve to the same geometry; 569 entries carry t
   spells the separator lowercase: the lowercase form is what Canadian practice prints and what
   the Nucor-Yamato catalog's size list prints ("W920 x 345"); the declared standard itself
   prints a capital X. The decimal masses keep the table's own digits ("W310x21.0", "W410x46.1").
+  The trailing-zero forms are the tables' own: both declared copies print "X 13.0" (W6X8.5),
+  "X 18.0" (W6X12), "X 24.0" (W6X16), "X 15.0" (W8X10), "X 21.0" (W12X14) and "W360 X 39.0"
+  (W14X26) — holapl rows 3447–3450, 3441 and 3350, womicsteel rows 3448–3451, 3442 and 3350 —
+  so these six designations carry the printed `.0` on purpose. The sibling south-america pack
+  (#793) reads the same column of the same copies as W150x13, W150x18, W150x24, W200x15,
+  W310x21 and W360x39 without the `.0`; its follow-up issue names the rows and the evidence.
   The inch alias is the USA pack's designation unchanged ("W12X40", "W6X8.5"), so the same rows
   resolve by either name across the two environments.
 - **Values.** Depth, flange width, web thickness, flange thickness, area and the nominal mass of
