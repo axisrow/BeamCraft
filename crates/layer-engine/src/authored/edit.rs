@@ -598,35 +598,6 @@ pub(super) fn serialize(data: &sdf::Data, max: usize) -> Result<Vec<u8>, Diagnos
     Ok(output.bytes)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The N03/LEW-05 LF policy: every generated USDA layer is LF on all platforms, with
-    /// exactly one final LF, so the cross-platform digests compare the bytes the writer
-    /// wrote. Nothing in the engine emits CR; this pins the property on real writer output
-    /// instead of leaving it an unasserted construction detail.
-    #[test]
-    fn generated_layer_bytes_are_lf_only_with_one_final_newline() {
-        let bytes = definition_bytes(&Definition::Material {
-            density_kg_m3: Some(7850.0),
-            grade: Some("S355".to_owned()),
-            standard: Some("EN 10025-2:2019".to_owned()),
-            display_name: Some("Structural steel".to_owned()),
-        })
-        .unwrap();
-        assert!(!bytes.contains(&b'\r'), "the writer emitted a CR byte");
-        assert_eq!(bytes.last(), Some(&b'\n'), "the layer does not end with LF");
-        assert!(
-            !bytes.ends_with(b"\n\n"),
-            "the layer ends with a blank line"
-        );
-        assert!(
-            bytes.starts_with(b"#usda 1.0\n"),
-            "the layer header is not the canonical text form"
-        );
-    }
-}
 fn create(
     data: &mut sdf::Data,
     e: &Element,
@@ -2234,5 +2205,35 @@ fn field_opinion(
             b,
             name,
         )?)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The N03/LEW-05 LF policy: every generated USDA layer is LF on all platforms, with
+    /// exactly one final LF, so the cross-platform digests compare the bytes the writer
+    /// wrote. Nothing in the engine emits CR; this pins the property on real writer output
+    /// instead of leaving it an unasserted construction detail.
+    #[test]
+    fn generated_layer_bytes_are_lf_only_with_one_final_newline() {
+        let bytes = definition_bytes(&Definition::Material {
+            density_kg_m3: Some(7850.0),
+            grade: Some("S355".to_owned()),
+            standard: Some("EN 10025-2:2019".to_owned()),
+            display_name: Some("Structural steel".to_owned()),
+        })
+        .unwrap();
+        assert!(!bytes.contains(&b'\r'), "the writer emitted a CR byte");
+        assert_eq!(bytes.last(), Some(&b'\n'), "the layer does not end with LF");
+        assert!(
+            !bytes.ends_with(b"\n\n"),
+            "the layer ends with a blank line"
+        );
+        assert!(
+            bytes.starts_with(b"#usda 1.0\n"),
+            "the layer header is not the canonical text form"
+        );
     }
 }
