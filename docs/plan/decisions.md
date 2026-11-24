@@ -6,6 +6,33 @@ Open questions are at the end.
 
 ## 2026-11-24
 
+- **The Philippines pack is the A6 geometry alias plus the ESC-verified grade bindings.**
+  Decision of 2026-11-24 on the Philippines regional pack (#713, part of #649), taken under the
+  standing pack discipline and the sourcing principle once the USA admission decisions it waits
+  on had landed (2026-10-18 profile route, in force since the `usa` A6 slice): the
+  `philippines` environment ships the thin alias the issue anticipates — the 285 ASTM
+  A6/A6M-05a W and HP rows of the `usa` pack re-declared unchanged (EDI inch designations,
+  Nucor-Yamato radii) — beside one material library binding the grade designations the ESC
+  Steel Philippines wide-flange page names (escsteelstructures.ph): ASTM A36 and the complete
+  A572 strength-grade set under the `usa` pack's editions (A36/A36M-19, A572/A572M-21), the EN
+  10025-2:2019 grade set the `europe` pack re-entered (ESC names the BS publication of the same
+  EN), SS400 of JIS G 3101:2015, SM400A/B/C, SM490A/B/C and SM490YA/YB of JIS G 3106:2020 (the
+  edition the public English copy prints; its foreword replaces G 3106:2017), and SN400A/B/C
+  and SN490B/C of JIS G 3136:2012 — that standard's complete set, SN490A is no grade of it.
+  The geometry stays the A6 facts because ESC, the regional evidence, prints no section
+  designations and no dimension tables (verified 2026-11-24): it is the verification of the
+  environment, never a table source, and nothing is invented for the region. ESC prints no
+  editions either, so every row declares the best publicly documented edition of its standard
+  on the GOST 26020-83 stance (a provenance statement, not a currency claim); a designation
+  whose standard has no publicly documented edition ships no row. The KS D 3503 (SS400) and
+  KS D 3515 (SM400A, SM400B, SM490A, SM490B) the page names carry the same designation strings
+  the JIS rows ship, so they would add no row, and their editions had no public documentation
+  at the retrieval date — no KS row is declared, and the fact is recorded here and in
+  `ATTRIBUTION.md`. Not in the pack: A992 (ESC does not name it for the region), the SM520 and
+  SM570 and SS330/SS490/SS540 grades the full JIS sets carry but ESC does not name, S450J0
+  (deleted in the 2019 EN revision), the metric designation forms of the shipped rows and
+  fasteners (#708 carries the fastener set). NSCP referencing stays an engineering-rule matter:
+  the code names the sections, it is no catalogue source.
 - **The Brazil pack ships the A6 assortment under the producers' metric designations and the
   national standard they declare; the producers stay cross-check-only.** The 2026-11-23 Brazil
   route (the sourcing principle and the A6 decision above, applied to #710) lands as the

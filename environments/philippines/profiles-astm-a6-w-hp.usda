@@ -1,0 +1,4009 @@
+#usda 1.0
+(
+    doc = "BeamCraft Philippines environment: hot-rolled wide-flange W shapes and bearing-pile HP shapes of ASTM A6/A6M-05a, the rows of the ASTM A6 library of the shipped usa pack re-declared. ESC Steel Philippines, whose grade list the material library binds, prints no section designations and no dimension tables, so the shape facts stay the standard's own SI values (Annex A2), re-entered by hand as our own data; no text or table is copied and nothing is converted. Designations are in the EDI inch form (W44X335, HP14X117); the mass per metre is the nominal SI mass of the standard's metric designation. The root radius, which the standard does not print, is the fillet radius of the Nucor-Yamato Steel Structural Shapes catalog for the shapes it rolls and zero (a sharp corner) for the others. Reference data for modelling; it is not a substitute for the standard itself."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "philippines-astm-a6-w-hp-profiles"
+        string "bim:library:title" = "Philippines hot-rolled sections (ASTM A6/A6M: W, HP)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "ASTM A6/A6M-05a Annex A2 W and HP facts (SI column), the rows of the usa pack ASTM A6 library re-declared; root radius from the Nucor-Yamato catalog (nucoryamato.com); ESC Philippines prints no tables; no table copied"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "W44X335"
+        {
+            string steel:profile:designation = "W44X335"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1118
+            double steel:profile:bMm = 405
+            double steel:profile:twMm = 26
+            double steel:profile:tfMm = 45
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 63500
+            double steel:profile:massPerMeterKg = 499
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W44X290"
+        {
+            string steel:profile:designation = "W44X290"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1108
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 22
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55100
+            double steel:profile:massPerMeterKg = 433
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W44X262"
+        {
+            string steel:profile:designation = "W44X262"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1100
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 20
+            double steel:profile:tfMm = 36
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49700
+            double steel:profile:massPerMeterKg = 390
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W44X230"
+        {
+            string steel:profile:designation = "W44X230"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1090
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 43600
+            double steel:profile:massPerMeterKg = 343
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X593"
+        {
+            string steel:profile:designation = "W40X593"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1092
+            double steel:profile:bMm = 424
+            double steel:profile:twMm = 45.5
+            double steel:profile:tfMm = 82
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 112500
+            double steel:profile:massPerMeterKg = 883
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X503"
+        {
+            string steel:profile:designation = "W40X503"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1068
+            double steel:profile:bMm = 417
+            double steel:profile:twMm = 39
+            double steel:profile:tfMm = 70
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 95300
+            double steel:profile:massPerMeterKg = 748
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X431"
+        {
+            string steel:profile:designation = "W40X431"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1048
+            double steel:profile:bMm = 412
+            double steel:profile:twMm = 34
+            double steel:profile:tfMm = 60
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 81800
+            double steel:profile:massPerMeterKg = 642
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X397"
+        {
+            string steel:profile:designation = "W40X397"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1040
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 75300
+            double steel:profile:massPerMeterKg = 591
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X372"
+        {
+            string steel:profile:designation = "W40X372"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1032
+            double steel:profile:bMm = 408
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 52
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 70600
+            double steel:profile:massPerMeterKg = 554
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X362"
+        {
+            string steel:profile:designation = "W40X362"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1030
+            double steel:profile:bMm = 407
+            double steel:profile:twMm = 28.4
+            double steel:profile:tfMm = 51.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 68700
+            double steel:profile:massPerMeterKg = 539
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X324"
+        {
+            string steel:profile:designation = "W40X324"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1020
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 25.4
+            double steel:profile:tfMm = 46
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 61500
+            double steel:profile:massPerMeterKg = 483
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X297"
+        {
+            string steel:profile:designation = "W40X297"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1012
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 23.6
+            double steel:profile:tfMm = 41.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 56400
+            double steel:profile:massPerMeterKg = 443
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X277"
+        {
+            string steel:profile:designation = "W40X277"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1008
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 52500
+            double steel:profile:massPerMeterKg = 412
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X249"
+        {
+            string steel:profile:designation = "W40X249"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1000
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 36.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 47300
+            double steel:profile:massPerMeterKg = 371
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X215"
+        {
+            string steel:profile:designation = "W40X215"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 990
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40800
+            double steel:profile:massPerMeterKg = 321
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X199"
+        {
+            string steel:profile:designation = "W40X199"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 982
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 27.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 37700
+            double steel:profile:massPerMeterKg = 296
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X392"
+        {
+            string steel:profile:designation = "W40X392"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1056
+            double steel:profile:bMm = 314
+            double steel:profile:twMm = 36
+            double steel:profile:tfMm = 64
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 74400
+            double steel:profile:massPerMeterKg = 584
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X331"
+        {
+            string steel:profile:designation = "W40X331"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1036
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 54
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 62900
+            double steel:profile:massPerMeterKg = 494
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X327"
+        {
+            string steel:profile:designation = "W40X327"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1036
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 30
+            double steel:profile:tfMm = 54.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 61900
+            double steel:profile:massPerMeterKg = 486
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X294"
+        {
+            string steel:profile:designation = "W40X294"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1026
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 49
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55600
+            double steel:profile:massPerMeterKg = 438
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X278"
+        {
+            string steel:profile:designation = "W40X278"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1020
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 26
+            double steel:profile:tfMm = 46
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 52800
+            double steel:profile:massPerMeterKg = 415
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X264"
+        {
+            string steel:profile:designation = "W40X264"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1016
+            double steel:profile:bMm = 303
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 50100
+            double steel:profile:massPerMeterKg = 393
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X235"
+        {
+            string steel:profile:designation = "W40X235"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1008
+            double steel:profile:bMm = 302
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44600
+            double steel:profile:massPerMeterKg = 350
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X211"
+        {
+            string steel:profile:designation = "W40X211"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1000
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 19.1
+            double steel:profile:tfMm = 35.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40000
+            double steel:profile:massPerMeterKg = 314
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X183"
+        {
+            string steel:profile:designation = "W40X183"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 990
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 34600
+            double steel:profile:massPerMeterKg = 272
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X167"
+        {
+            string steel:profile:designation = "W40X167"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 980
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 26
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 31700
+            double steel:profile:massPerMeterKg = 249
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W40X149"
+        {
+            string steel:profile:designation = "W40X149"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 970
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 21.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28200
+            double steel:profile:massPerMeterKg = 222
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X800"
+        {
+            string steel:profile:designation = "W36X800"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1081
+            double steel:profile:bMm = 457
+            double steel:profile:twMm = 60.5
+            double steel:profile:tfMm = 109
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 152500
+            double steel:profile:massPerMeterKg = 1191
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X652"
+        {
+            string steel:profile:designation = "W36X652"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1043
+            double steel:profile:bMm = 446
+            double steel:profile:twMm = 50
+            double steel:profile:tfMm = 89.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 124100
+            double steel:profile:massPerMeterKg = 970
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X529"
+        {
+            string steel:profile:designation = "W36X529"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1011
+            double steel:profile:bMm = 437
+            double steel:profile:twMm = 40.9
+            double steel:profile:tfMm = 73.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 100700
+            double steel:profile:massPerMeterKg = 787
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X487"
+        {
+            string steel:profile:designation = "W36X487"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 999
+            double steel:profile:bMm = 434
+            double steel:profile:twMm = 38.1
+            double steel:profile:tfMm = 68.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 92700
+            double steel:profile:massPerMeterKg = 725
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X441"
+        {
+            string steel:profile:designation = "W36X441"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 987
+            double steel:profile:bMm = 431
+            double steel:profile:twMm = 34.5
+            double steel:profile:tfMm = 62
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 84000
+            double steel:profile:massPerMeterKg = 656
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X395"
+        {
+            string steel:profile:designation = "W36X395"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 975
+            double steel:profile:bMm = 427
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 75700
+            double steel:profile:massPerMeterKg = 588
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X361"
+        {
+            string steel:profile:designation = "W36X361"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 965
+            double steel:profile:bMm = 425
+            double steel:profile:twMm = 28.4
+            double steel:profile:tfMm = 51.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 68700
+            double steel:profile:massPerMeterKg = 537
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X330"
+        {
+            string steel:profile:designation = "W36X330"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 957
+            double steel:profile:bMm = 422
+            double steel:profile:twMm = 25.9
+            double steel:profile:tfMm = 47
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 62800
+            double steel:profile:massPerMeterKg = 491
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X302"
+        {
+            string steel:profile:designation = "W36X302"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 948
+            double steel:profile:bMm = 423
+            double steel:profile:twMm = 24
+            double steel:profile:tfMm = 42.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 57600
+            double steel:profile:massPerMeterKg = 449
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X282"
+        {
+            string steel:profile:designation = "W36X282"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 943
+            double steel:profile:bMm = 422
+            double steel:profile:twMm = 22.5
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 53800
+            double steel:profile:massPerMeterKg = 420
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X262"
+        {
+            string steel:profile:designation = "W36X262"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 936
+            double steel:profile:bMm = 420
+            double steel:profile:twMm = 21.3
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49900
+            double steel:profile:massPerMeterKg = 390
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X247"
+        {
+            string steel:profile:designation = "W36X247"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 931
+            double steel:profile:bMm = 419
+            double steel:profile:twMm = 20.3
+            double steel:profile:tfMm = 34.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 47000
+            double steel:profile:massPerMeterKg = 368
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X231"
+        {
+            string steel:profile:designation = "W36X231"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 927
+            double steel:profile:bMm = 418
+            double steel:profile:twMm = 19.3
+            double steel:profile:tfMm = 32
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44200
+            double steel:profile:massPerMeterKg = 345
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X256"
+        {
+            string steel:profile:designation = "W36X256"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 951
+            double steel:profile:bMm = 310
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 48600
+            double steel:profile:massPerMeterKg = 381
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X232"
+        {
+            string steel:profile:designation = "W36X232"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 943
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44000
+            double steel:profile:massPerMeterKg = 345
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X210"
+        {
+            string steel:profile:designation = "W36X210"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 932
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 34.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 39900
+            double steel:profile:massPerMeterKg = 313
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X194"
+        {
+            string steel:profile:designation = "W36X194"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 927
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 19.4
+            double steel:profile:tfMm = 32
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36800
+            double steel:profile:massPerMeterKg = 289
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X182"
+        {
+            string steel:profile:designation = "W36X182"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 923
+            double steel:profile:bMm = 307
+            double steel:profile:twMm = 18.4
+            double steel:profile:tfMm = 30
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 34600
+            double steel:profile:massPerMeterKg = 271
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X170"
+        {
+            string steel:profile:designation = "W36X170"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 919
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 27.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32300
+            double steel:profile:massPerMeterKg = 253
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X160"
+        {
+            string steel:profile:designation = "W36X160"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 915
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 25.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30300
+            double steel:profile:massPerMeterKg = 238
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X150"
+        {
+            string steel:profile:designation = "W36X150"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 911
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 15.9
+            double steel:profile:tfMm = 23.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28500
+            double steel:profile:massPerMeterKg = 223
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W36X135"
+        {
+            string steel:profile:designation = "W36X135"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 903
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 15.2
+            double steel:profile:tfMm = 20.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25600
+            double steel:profile:massPerMeterKg = 201
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X387"
+        {
+            string steel:profile:designation = "W33X387"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 913
+            double steel:profile:bMm = 411
+            double steel:profile:twMm = 32
+            double steel:profile:tfMm = 57.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 73500
+            double steel:profile:massPerMeterKg = 576
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X354"
+        {
+            string steel:profile:designation = "W33X354"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 903
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 67200
+            double steel:profile:massPerMeterKg = 527
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X318"
+        {
+            string steel:profile:designation = "W33X318"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 893
+            double steel:profile:bMm = 406
+            double steel:profile:twMm = 26.4
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 60300
+            double steel:profile:massPerMeterKg = 473
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X291"
+        {
+            string steel:profile:designation = "W33X291"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 885
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55200
+            double steel:profile:massPerMeterKg = 433
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X263"
+        {
+            string steel:profile:designation = "W33X263"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 877
+            double steel:profile:bMm = 401
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49900
+            double steel:profile:massPerMeterKg = 392
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X241"
+        {
+            string steel:profile:designation = "W33X241"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 868
+            double steel:profile:bMm = 403
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 35.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 45700
+            double steel:profile:massPerMeterKg = 359
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X221"
+        {
+            string steel:profile:designation = "W33X221"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 862
+            double steel:profile:bMm = 401
+            double steel:profile:twMm = 19.7
+            double steel:profile:tfMm = 32.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 41900
+            double steel:profile:massPerMeterKg = 329
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X201"
+        {
+            string steel:profile:designation = "W33X201"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 855
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 18.2
+            double steel:profile:tfMm = 29.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 38100
+            double steel:profile:massPerMeterKg = 299
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X169"
+        {
+            string steel:profile:designation = "W33X169"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 859
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 31900
+            double steel:profile:massPerMeterKg = 251
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X152"
+        {
+            string steel:profile:designation = "W33X152"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 851
+            double steel:profile:bMm = 294
+            double steel:profile:twMm = 16.1
+            double steel:profile:tfMm = 26.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28800
+            double steel:profile:massPerMeterKg = 226
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X141"
+        {
+            string steel:profile:designation = "W33X141"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 846
+            double steel:profile:bMm = 293
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 24.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 26800
+            double steel:profile:massPerMeterKg = 210
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X130"
+        {
+            string steel:profile:designation = "W33X130"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 840
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 14.7
+            double steel:profile:tfMm = 21.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24700
+            double steel:profile:massPerMeterKg = 193
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W33X118"
+        {
+            string steel:profile:designation = "W33X118"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 835
+            double steel:profile:bMm = 292
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 18.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22400
+            double steel:profile:massPerMeterKg = 176
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X391"
+        {
+            string steel:profile:designation = "W30X391"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 843
+            double steel:profile:bMm = 396
+            double steel:profile:twMm = 34.5
+            double steel:profile:tfMm = 62
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 74200
+            double steel:profile:massPerMeterKg = 582
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X357"
+        {
+            string steel:profile:designation = "W30X357"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 833
+            double steel:profile:bMm = 393
+            double steel:profile:twMm = 31.5
+            double steel:profile:tfMm = 56.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 67600
+            double steel:profile:massPerMeterKg = 531
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X326"
+        {
+            string steel:profile:designation = "W30X326"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 823
+            double steel:profile:bMm = 390
+            double steel:profile:twMm = 29
+            double steel:profile:tfMm = 52.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 61700
+            double steel:profile:massPerMeterKg = 484
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X292"
+        {
+            string steel:profile:designation = "W30X292"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 813
+            double steel:profile:bMm = 387
+            double steel:profile:twMm = 25.9
+            double steel:profile:tfMm = 47
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 55300
+            double steel:profile:massPerMeterKg = 434
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X261"
+        {
+            string steel:profile:designation = "W30X261"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 803
+            double steel:profile:bMm = 385
+            double steel:profile:twMm = 23.6
+            double steel:profile:tfMm = 41.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 49500
+            double steel:profile:massPerMeterKg = 389
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X235"
+        {
+            string steel:profile:designation = "W30X235"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 795
+            double steel:profile:bMm = 382
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 38.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44500
+            double steel:profile:massPerMeterKg = 350
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X211"
+        {
+            string steel:profile:designation = "W30X211"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 786
+            double steel:profile:bMm = 384
+            double steel:profile:twMm = 19.7
+            double steel:profile:tfMm = 33.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40000
+            double steel:profile:massPerMeterKg = 314
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X191"
+        {
+            string steel:profile:designation = "W30X191"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 779
+            double steel:profile:bMm = 382
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 30.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36200
+            double steel:profile:massPerMeterKg = 284
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X173"
+        {
+            string steel:profile:designation = "W30X173"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 773
+            double steel:profile:bMm = 381
+            double steel:profile:twMm = 16.6
+            double steel:profile:tfMm = 27.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32800
+            double steel:profile:massPerMeterKg = 257
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X148"
+        {
+            string steel:profile:designation = "W30X148"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 779
+            double steel:profile:bMm = 266
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 30
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28100
+            double steel:profile:massPerMeterKg = 220
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X132"
+        {
+            string steel:profile:designation = "W30X132"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 770
+            double steel:profile:bMm = 268
+            double steel:profile:twMm = 15.6
+            double steel:profile:tfMm = 25.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25100
+            double steel:profile:massPerMeterKg = 196
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X124"
+        {
+            string steel:profile:designation = "W30X124"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 766
+            double steel:profile:bMm = 267
+            double steel:profile:twMm = 14.9
+            double steel:profile:tfMm = 23.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 23500
+            double steel:profile:massPerMeterKg = 185
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X116"
+        {
+            string steel:profile:designation = "W30X116"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 762
+            double steel:profile:bMm = 267
+            double steel:profile:twMm = 14.4
+            double steel:profile:tfMm = 21.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22100
+            double steel:profile:massPerMeterKg = 173
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X108"
+        {
+            string steel:profile:designation = "W30X108"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 758
+            double steel:profile:bMm = 266
+            double steel:profile:twMm = 13.8
+            double steel:profile:tfMm = 19.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 20500
+            double steel:profile:massPerMeterKg = 161
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X99"
+        {
+            string steel:profile:designation = "W30X99"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 753
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 13.2
+            double steel:profile:tfMm = 17
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 18800
+            double steel:profile:massPerMeterKg = 147
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W30X90"
+        {
+            string steel:profile:designation = "W30X90"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 750
+            double steel:profile:bMm = 264
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17000
+            double steel:profile:massPerMeterKg = 134
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X539"
+        {
+            string steel:profile:designation = "W27X539"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 826
+            double steel:profile:bMm = 387
+            double steel:profile:twMm = 50
+            double steel:profile:tfMm = 89.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 102200
+            double steel:profile:massPerMeterKg = 802
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X368"
+        {
+            string steel:profile:designation = "W27X368"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 772
+            double steel:profile:bMm = 372
+            double steel:profile:twMm = 35.1
+            double steel:profile:tfMm = 63
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 69800
+            double steel:profile:massPerMeterKg = 548
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X336"
+        {
+            string steel:profile:designation = "W27X336"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 762
+            double steel:profile:bMm = 369
+            double steel:profile:twMm = 32
+            double steel:profile:tfMm = 57.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 63700
+            double steel:profile:massPerMeterKg = 500
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X307"
+        {
+            string steel:profile:designation = "W27X307"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 752
+            double steel:profile:bMm = 367
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 58200
+            double steel:profile:massPerMeterKg = 457
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X281"
+        {
+            string steel:profile:designation = "W27X281"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 744
+            double steel:profile:bMm = 364
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 49
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 53300
+            double steel:profile:massPerMeterKg = 419
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X258"
+        {
+            string steel:profile:designation = "W27X258"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 736
+            double steel:profile:bMm = 362
+            double steel:profile:twMm = 24.9
+            double steel:profile:tfMm = 45
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 48900
+            double steel:profile:massPerMeterKg = 384
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X235"
+        {
+            string steel:profile:designation = "W27X235"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 728
+            double steel:profile:bMm = 360
+            double steel:profile:twMm = 23.1
+            double steel:profile:tfMm = 40.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44600
+            double steel:profile:massPerMeterKg = 350
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X217"
+        {
+            string steel:profile:designation = "W27X217"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 722
+            double steel:profile:bMm = 359
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 38.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 41100
+            double steel:profile:massPerMeterKg = 323
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X194"
+        {
+            string steel:profile:designation = "W27X194"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 714
+            double steel:profile:bMm = 356
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 34
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36800
+            double steel:profile:massPerMeterKg = 289
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X178"
+        {
+            string steel:profile:designation = "W27X178"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 706
+            double steel:profile:bMm = 358
+            double steel:profile:twMm = 18.4
+            double steel:profile:tfMm = 30.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33700
+            double steel:profile:massPerMeterKg = 265
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X161"
+        {
+            string steel:profile:designation = "W27X161"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 701
+            double steel:profile:bMm = 356
+            double steel:profile:twMm = 16.8
+            double steel:profile:tfMm = 27.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30600
+            double steel:profile:massPerMeterKg = 240
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X146"
+        {
+            string steel:profile:designation = "W27X146"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 695
+            double steel:profile:bMm = 355
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 24.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27700
+            double steel:profile:massPerMeterKg = 217
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X129"
+        {
+            string steel:profile:designation = "W27X129"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 702
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 15.5
+            double steel:profile:tfMm = 27.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24400
+            double steel:profile:massPerMeterKg = 192
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X114"
+        {
+            string steel:profile:designation = "W27X114"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 693
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 23.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 21600
+            double steel:profile:massPerMeterKg = 170
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X102"
+        {
+            string steel:profile:designation = "W27X102"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 688
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 21.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19400
+            double steel:profile:massPerMeterKg = 152
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X94"
+        {
+            string steel:profile:designation = "W27X94"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 684
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 12.4
+            double steel:profile:tfMm = 18.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17900
+            double steel:profile:massPerMeterKg = 140
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W27X84"
+        {
+            string steel:profile:designation = "W27X84"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 678
+            double steel:profile:bMm = 253
+            double steel:profile:twMm = 11.7
+            double steel:profile:tfMm = 16.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 16000
+            double steel:profile:massPerMeterKg = 125
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X370"
+        {
+            string steel:profile:designation = "W24X370"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 711
+            double steel:profile:bMm = 347
+            double steel:profile:twMm = 38.6
+            double steel:profile:tfMm = 69.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 70200
+            double steel:profile:massPerMeterKg = 551
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X335"
+        {
+            string steel:profile:designation = "W24X335"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 699
+            double steel:profile:bMm = 343
+            double steel:profile:twMm = 35.1
+            double steel:profile:tfMm = 63
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 63500
+            double steel:profile:massPerMeterKg = 498
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X306"
+        {
+            string steel:profile:designation = "W24X306"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 689
+            double steel:profile:bMm = 340
+            double steel:profile:twMm = 32
+            double steel:profile:tfMm = 57.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 57900
+            double steel:profile:massPerMeterKg = 455
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X279"
+        {
+            string steel:profile:designation = "W24X279"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 679
+            double steel:profile:bMm = 338
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 52900
+            double steel:profile:massPerMeterKg = 415
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X250"
+        {
+            string steel:profile:designation = "W24X250"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 669
+            double steel:profile:bMm = 335
+            double steel:profile:twMm = 26.4
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 47400
+            double steel:profile:massPerMeterKg = 372
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X229"
+        {
+            string steel:profile:designation = "W24X229"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 661
+            double steel:profile:bMm = 333
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 43.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 43400
+            double steel:profile:massPerMeterKg = 341
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X207"
+        {
+            string steel:profile:designation = "W24X207"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 653
+            double steel:profile:bMm = 330
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 39100
+            double steel:profile:massPerMeterKg = 307
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X192"
+        {
+            string steel:profile:designation = "W24X192"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 647
+            double steel:profile:bMm = 329
+            double steel:profile:twMm = 20.6
+            double steel:profile:tfMm = 37.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36100
+            double steel:profile:massPerMeterKg = 285
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X176"
+        {
+            string steel:profile:designation = "W24X176"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 641
+            double steel:profile:bMm = 327
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 34
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33300
+            double steel:profile:massPerMeterKg = 262
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X162"
+        {
+            string steel:profile:designation = "W24X162"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 635
+            double steel:profile:bMm = 329
+            double steel:profile:twMm = 17.9
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30800
+            double steel:profile:massPerMeterKg = 241
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X146"
+        {
+            string steel:profile:designation = "W24X146"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 628
+            double steel:profile:bMm = 328
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 27.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27700
+            double steel:profile:massPerMeterKg = 217
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X131"
+        {
+            string steel:profile:designation = "W24X131"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 622
+            double steel:profile:bMm = 327
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 24.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 24800
+            double steel:profile:massPerMeterKg = 195
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X117"
+        {
+            string steel:profile:designation = "W24X117"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 616
+            double steel:profile:bMm = 325
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 21.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22200
+            double steel:profile:massPerMeterKg = 174
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X104"
+        {
+            string steel:profile:designation = "W24X104"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 611
+            double steel:profile:bMm = 324
+            double steel:profile:twMm = 12.7
+            double steel:profile:tfMm = 19
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19700
+            double steel:profile:massPerMeterKg = 155
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X103"
+        {
+            string steel:profile:designation = "W24X103"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 623
+            double steel:profile:bMm = 229
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 24.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19600
+            double steel:profile:massPerMeterKg = 153
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X94"
+        {
+            string steel:profile:designation = "W24X94"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 617
+            double steel:profile:bMm = 230
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 22.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17900
+            double steel:profile:massPerMeterKg = 140
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X84"
+        {
+            string steel:profile:designation = "W24X84"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 612
+            double steel:profile:bMm = 229
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 19.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 15900
+            double steel:profile:massPerMeterKg = 125
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X76"
+        {
+            string steel:profile:designation = "W24X76"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 608
+            double steel:profile:bMm = 228
+            double steel:profile:twMm = 11.2
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 14500
+            double steel:profile:massPerMeterKg = 113
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X68"
+        {
+            string steel:profile:designation = "W24X68"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 603
+            double steel:profile:bMm = 228
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 14.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 13000
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X62"
+        {
+            string steel:profile:designation = "W24X62"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 603
+            double steel:profile:bMm = 179
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 15
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11700
+            double steel:profile:massPerMeterKg = 92
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W24X55"
+        {
+            string steel:profile:designation = "W24X55"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 599
+            double steel:profile:bMm = 178
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 12.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X201"
+        {
+            string steel:profile:designation = "W21X201"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 585
+            double steel:profile:bMm = 319
+            double steel:profile:twMm = 23.1
+            double steel:profile:tfMm = 41.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 38200
+            double steel:profile:massPerMeterKg = 300
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X182"
+        {
+            string steel:profile:designation = "W21X182"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 577
+            double steel:profile:bMm = 317
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 37.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 34600
+            double steel:profile:massPerMeterKg = 272
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X166"
+        {
+            string steel:profile:designation = "W21X166"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 571
+            double steel:profile:bMm = 315
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 34.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 31500
+            double steel:profile:massPerMeterKg = 248
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X147"
+        {
+            string steel:profile:designation = "W21X147"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 560
+            double steel:profile:bMm = 318
+            double steel:profile:twMm = 18.3
+            double steel:profile:tfMm = 29.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27900
+            double steel:profile:massPerMeterKg = 219
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X132"
+        {
+            string steel:profile:designation = "W21X132"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 554
+            double steel:profile:bMm = 316
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 26.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25000
+            double steel:profile:massPerMeterKg = 196
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X122"
+        {
+            string steel:profile:designation = "W21X122"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 551
+            double steel:profile:bMm = 315
+            double steel:profile:twMm = 15.2
+            double steel:profile:tfMm = 24.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 23200
+            double steel:profile:massPerMeterKg = 182
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X111"
+        {
+            string steel:profile:designation = "W21X111"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 546
+            double steel:profile:bMm = 313
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 22.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 21100
+            double steel:profile:massPerMeterKg = 165
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X101"
+        {
+            string steel:profile:designation = "W21X101"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 543
+            double steel:profile:bMm = 312
+            double steel:profile:twMm = 12.7
+            double steel:profile:tfMm = 20.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19200
+            double steel:profile:massPerMeterKg = 150
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X93"
+        {
+            string steel:profile:designation = "W21X93"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 549
+            double steel:profile:bMm = 214
+            double steel:profile:twMm = 14.7
+            double steel:profile:tfMm = 23.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 17600
+            double steel:profile:massPerMeterKg = 138
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X83"
+        {
+            string steel:profile:designation = "W21X83"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 544
+            double steel:profile:bMm = 212
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 21.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 15700
+            double steel:profile:massPerMeterKg = 123
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X73"
+        {
+            string steel:profile:designation = "W21X73"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 539
+            double steel:profile:bMm = 211
+            double steel:profile:twMm = 11.6
+            double steel:profile:tfMm = 18.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 13900
+            double steel:profile:massPerMeterKg = 109
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X68"
+        {
+            string steel:profile:designation = "W21X68"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 537
+            double steel:profile:bMm = 210
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 17.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12900
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X62"
+        {
+            string steel:profile:designation = "W21X62"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 533
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 10.2
+            double steel:profile:tfMm = 15.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11800
+            double steel:profile:massPerMeterKg = 92
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X55"
+        {
+            string steel:profile:designation = "W21X55"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 528
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 9.5
+            double steel:profile:tfMm = 13.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X48"
+        {
+            string steel:profile:designation = "W21X48"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 524
+            double steel:profile:bMm = 207
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9180
+            double steel:profile:massPerMeterKg = 72
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X57"
+        {
+            string steel:profile:designation = "W21X57"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 535
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 10.3
+            double steel:profile:tfMm = 16.5
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10800
+            double steel:profile:massPerMeterKg = 85
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X50"
+        {
+            string steel:profile:designation = "W21X50"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 529
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 9.7
+            double steel:profile:tfMm = 13.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 74
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W21X44"
+        {
+            string steel:profile:designation = "W21X44"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 525
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 8.9
+            double steel:profile:tfMm = 11.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8390
+            double steel:profile:massPerMeterKg = 66
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X311"
+        {
+            string steel:profile:designation = "W18X311"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 567
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 38.6
+            double steel:profile:tfMm = 69.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 59100
+            double steel:profile:massPerMeterKg = 464
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X283"
+        {
+            string steel:profile:designation = "W18X283"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 555
+            double steel:profile:bMm = 302
+            double steel:profile:twMm = 35.6
+            double steel:profile:tfMm = 63.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 53700
+            double steel:profile:massPerMeterKg = 421
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X258"
+        {
+            string steel:profile:designation = "W18X258"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 545
+            double steel:profile:bMm = 299
+            double steel:profile:twMm = 32.5
+            double steel:profile:tfMm = 58.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 49000
+            double steel:profile:massPerMeterKg = 384
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X234"
+        {
+            string steel:profile:designation = "W18X234"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 535
+            double steel:profile:bMm = 296
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 53.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 44400
+            double steel:profile:massPerMeterKg = 349
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X211"
+        {
+            string steel:profile:designation = "W18X211"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 525
+            double steel:profile:bMm = 293
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 48.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 40100
+            double steel:profile:massPerMeterKg = 315
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X192"
+        {
+            string steel:profile:designation = "W18X192"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 517
+            double steel:profile:bMm = 291
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 44.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 36400
+            double steel:profile:massPerMeterKg = 286
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X175"
+        {
+            string steel:profile:designation = "W18X175"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 509
+            double steel:profile:bMm = 289
+            double steel:profile:twMm = 22.6
+            double steel:profile:tfMm = 40.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 33100
+            double steel:profile:massPerMeterKg = 260
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X158"
+        {
+            string steel:profile:designation = "W18X158"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 501
+            double steel:profile:bMm = 287
+            double steel:profile:twMm = 20.6
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 29900
+            double steel:profile:massPerMeterKg = 235
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X143"
+        {
+            string steel:profile:designation = "W18X143"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 495
+            double steel:profile:bMm = 285
+            double steel:profile:twMm = 18.5
+            double steel:profile:tfMm = 33.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 27100
+            double steel:profile:massPerMeterKg = 213
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X130"
+        {
+            string steel:profile:designation = "W18X130"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 489
+            double steel:profile:bMm = 283
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 30.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 24700
+            double steel:profile:massPerMeterKg = 193
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X119"
+        {
+            string steel:profile:designation = "W18X119"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 482
+            double steel:profile:bMm = 286
+            double steel:profile:twMm = 16.6
+            double steel:profile:tfMm = 26.9
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 22600
+            double steel:profile:massPerMeterKg = 177
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X106"
+        {
+            string steel:profile:designation = "W18X106"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 476
+            double steel:profile:bMm = 284
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 23.9
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 20100
+            double steel:profile:massPerMeterKg = 158
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X97"
+        {
+            string steel:profile:designation = "W18X97"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 472
+            double steel:profile:bMm = 283
+            double steel:profile:twMm = 13.6
+            double steel:profile:tfMm = 22.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 18400
+            double steel:profile:massPerMeterKg = 144
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X86"
+        {
+            string steel:profile:designation = "W18X86"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 467
+            double steel:profile:bMm = 282
+            double steel:profile:twMm = 12.2
+            double steel:profile:tfMm = 19.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 16300
+            double steel:profile:massPerMeterKg = 128
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X76"
+        {
+            string steel:profile:designation = "W18X76"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 463
+            double steel:profile:bMm = 280
+            double steel:profile:twMm = 10.8
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 14400
+            double steel:profile:massPerMeterKg = 113
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X71"
+        {
+            string steel:profile:designation = "W18X71"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 469
+            double steel:profile:bMm = 194
+            double steel:profile:twMm = 12.6
+            double steel:profile:tfMm = 20.6
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 13400
+            double steel:profile:massPerMeterKg = 106
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X65"
+        {
+            string steel:profile:designation = "W18X65"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 466
+            double steel:profile:bMm = 193
+            double steel:profile:twMm = 11.4
+            double steel:profile:tfMm = 19
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 12300
+            double steel:profile:massPerMeterKg = 97
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X60"
+        {
+            string steel:profile:designation = "W18X60"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 463
+            double steel:profile:bMm = 192
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 17.7
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 11400
+            double steel:profile:massPerMeterKg = 89
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X55"
+        {
+            string steel:profile:designation = "W18X55"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 460
+            double steel:profile:bMm = 191
+            double steel:profile:twMm = 9.9
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 10500
+            double steel:profile:massPerMeterKg = 82
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X50"
+        {
+            string steel:profile:designation = "W18X50"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 457
+            double steel:profile:bMm = 190
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 14.5
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 74
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X46"
+        {
+            string steel:profile:designation = "W18X46"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 459
+            double steel:profile:bMm = 154
+            double steel:profile:twMm = 9.1
+            double steel:profile:tfMm = 15.4
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 8710
+            double steel:profile:massPerMeterKg = 68
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X40"
+        {
+            string steel:profile:designation = "W18X40"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 455
+            double steel:profile:bMm = 153
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 13.3
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 7610
+            double steel:profile:massPerMeterKg = 60
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W18X35"
+        {
+            string steel:profile:designation = "W18X35"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 450
+            double steel:profile:bMm = 152
+            double steel:profile:twMm = 7.6
+            double steel:profile:tfMm = 10.8
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 6650
+            double steel:profile:massPerMeterKg = 52
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X100"
+        {
+            string steel:profile:designation = "W16X100"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 431
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 14.9
+            double steel:profile:tfMm = 25
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 19000
+            double steel:profile:massPerMeterKg = 149
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X89"
+        {
+            string steel:profile:designation = "W16X89"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 425
+            double steel:profile:bMm = 263
+            double steel:profile:twMm = 13.3
+            double steel:profile:tfMm = 22.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 16900
+            double steel:profile:massPerMeterKg = 132
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X77"
+        {
+            string steel:profile:designation = "W16X77"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 420
+            double steel:profile:bMm = 261
+            double steel:profile:twMm = 11.6
+            double steel:profile:tfMm = 19.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 14600
+            double steel:profile:massPerMeterKg = 114
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X67"
+        {
+            string steel:profile:designation = "W16X67"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 415
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 16.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12700
+            double steel:profile:massPerMeterKg = 100
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X57"
+        {
+            string steel:profile:designation = "W16X57"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 417
+            double steel:profile:bMm = 181
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 18.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10800
+            double steel:profile:massPerMeterKg = 85
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X50"
+        {
+            string steel:profile:designation = "W16X50"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 413
+            double steel:profile:bMm = 180
+            double steel:profile:twMm = 9.7
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 75
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X45"
+        {
+            string steel:profile:designation = "W16X45"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 410
+            double steel:profile:bMm = 179
+            double steel:profile:twMm = 8.8
+            double steel:profile:tfMm = 14.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8580
+            double steel:profile:massPerMeterKg = 67
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X40"
+        {
+            string steel:profile:designation = "W16X40"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 407
+            double steel:profile:bMm = 178
+            double steel:profile:twMm = 7.7
+            double steel:profile:tfMm = 12.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 7610
+            double steel:profile:massPerMeterKg = 60
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X36"
+        {
+            string steel:profile:designation = "W16X36"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 403
+            double steel:profile:bMm = 177
+            double steel:profile:twMm = 7.5
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 6840
+            double steel:profile:massPerMeterKg = 53
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X31"
+        {
+            string steel:profile:designation = "W16X31"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 403
+            double steel:profile:bMm = 140
+            double steel:profile:twMm = 7
+            double steel:profile:tfMm = 11.2
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 5880
+            double steel:profile:massPerMeterKg = 46.1
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W16X26"
+        {
+            string steel:profile:designation = "W16X26"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 399
+            double steel:profile:bMm = 140
+            double steel:profile:twMm = 6.4
+            double steel:profile:tfMm = 8.8
+            double steel:profile:rMm = 15
+            double steel:profile:areaMm2 = 4950
+            double steel:profile:massPerMeterKg = 38.8
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X730"
+        {
+            string steel:profile:designation = "W14X730"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 569
+            double steel:profile:bMm = 454
+            double steel:profile:twMm = 78
+            double steel:profile:tfMm = 125
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 139000
+            double steel:profile:massPerMeterKg = 1086
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X665"
+        {
+            string steel:profile:designation = "W14X665"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 550
+            double steel:profile:bMm = 448
+            double steel:profile:twMm = 71.9
+            double steel:profile:tfMm = 115
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 126000
+            double steel:profile:massPerMeterKg = 990
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X605"
+        {
+            string steel:profile:designation = "W14X605"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 531
+            double steel:profile:bMm = 442
+            double steel:profile:twMm = 65.9
+            double steel:profile:tfMm = 106
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 115000
+            double steel:profile:massPerMeterKg = 900
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X550"
+        {
+            string steel:profile:designation = "W14X550"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 514
+            double steel:profile:bMm = 437
+            double steel:profile:twMm = 60.5
+            double steel:profile:tfMm = 97
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 105000
+            double steel:profile:massPerMeterKg = 818
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X500"
+        {
+            string steel:profile:designation = "W14X500"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 498
+            double steel:profile:bMm = 432
+            double steel:profile:twMm = 55.6
+            double steel:profile:tfMm = 88.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 94800
+            double steel:profile:massPerMeterKg = 744
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X455"
+        {
+            string steel:profile:designation = "W14X455"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 483
+            double steel:profile:bMm = 428
+            double steel:profile:twMm = 51.2
+            double steel:profile:tfMm = 81.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 86500
+            double steel:profile:massPerMeterKg = 677
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X426"
+        {
+            string steel:profile:designation = "W14X426"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 474
+            double steel:profile:bMm = 424
+            double steel:profile:twMm = 47.6
+            double steel:profile:tfMm = 77.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 80600
+            double steel:profile:massPerMeterKg = 634
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X398"
+        {
+            string steel:profile:designation = "W14X398"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 465
+            double steel:profile:bMm = 421
+            double steel:profile:twMm = 45
+            double steel:profile:tfMm = 72.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 75500
+            double steel:profile:massPerMeterKg = 592
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X370"
+        {
+            string steel:profile:designation = "W14X370"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 455
+            double steel:profile:bMm = 418
+            double steel:profile:twMm = 42
+            double steel:profile:tfMm = 67.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 70300
+            double steel:profile:massPerMeterKg = 551
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X342"
+        {
+            string steel:profile:designation = "W14X342"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 446
+            double steel:profile:bMm = 416
+            double steel:profile:twMm = 39.1
+            double steel:profile:tfMm = 62.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 65200
+            double steel:profile:massPerMeterKg = 509
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X311"
+        {
+            string steel:profile:designation = "W14X311"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 435
+            double steel:profile:bMm = 412
+            double steel:profile:twMm = 35.8
+            double steel:profile:tfMm = 57.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 59000
+            double steel:profile:massPerMeterKg = 463
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X283"
+        {
+            string steel:profile:designation = "W14X283"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 425
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 32.8
+            double steel:profile:tfMm = 52.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 53700
+            double steel:profile:massPerMeterKg = 421
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X257"
+        {
+            string steel:profile:designation = "W14X257"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 416
+            double steel:profile:bMm = 406
+            double steel:profile:twMm = 29.8
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 48800
+            double steel:profile:massPerMeterKg = 382
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X233"
+        {
+            string steel:profile:designation = "W14X233"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 407
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 27.2
+            double steel:profile:tfMm = 43.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 44200
+            double steel:profile:massPerMeterKg = 347
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X211"
+        {
+            string steel:profile:designation = "W14X211"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 399
+            double steel:profile:bMm = 401
+            double steel:profile:twMm = 24.9
+            double steel:profile:tfMm = 39.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40000
+            double steel:profile:massPerMeterKg = 314
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X193"
+        {
+            string steel:profile:designation = "W14X193"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 393
+            double steel:profile:bMm = 399
+            double steel:profile:twMm = 22.6
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 36600
+            double steel:profile:massPerMeterKg = 287
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X176"
+        {
+            string steel:profile:designation = "W14X176"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 387
+            double steel:profile:bMm = 398
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 33.3
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33400
+            double steel:profile:massPerMeterKg = 262
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X159"
+        {
+            string steel:profile:designation = "W14X159"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 380
+            double steel:profile:bMm = 395
+            double steel:profile:twMm = 18.9
+            double steel:profile:tfMm = 30.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 30100
+            double steel:profile:massPerMeterKg = 237
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X145"
+        {
+            string steel:profile:designation = "W14X145"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 375
+            double steel:profile:bMm = 394
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 27.7
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 27500
+            double steel:profile:massPerMeterKg = 216
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X132"
+        {
+            string steel:profile:designation = "W14X132"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 372
+            double steel:profile:bMm = 374
+            double steel:profile:twMm = 16.4
+            double steel:profile:tfMm = 26.2
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25000
+            double steel:profile:massPerMeterKg = 196
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X120"
+        {
+            string steel:profile:designation = "W14X120"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 368
+            double steel:profile:bMm = 373
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 23.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22800
+            double steel:profile:massPerMeterKg = 179
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X109"
+        {
+            string steel:profile:designation = "W14X109"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 364
+            double steel:profile:bMm = 371
+            double steel:profile:twMm = 13.3
+            double steel:profile:tfMm = 21.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 20600
+            double steel:profile:massPerMeterKg = 162
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X99"
+        {
+            string steel:profile:designation = "W14X99"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 370
+            double steel:profile:twMm = 12.3
+            double steel:profile:tfMm = 19.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 18800
+            double steel:profile:massPerMeterKg = 147
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X90"
+        {
+            string steel:profile:designation = "W14X90"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 369
+            double steel:profile:twMm = 11.2
+            double steel:profile:tfMm = 18
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 17100
+            double steel:profile:massPerMeterKg = 134
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X82"
+        {
+            string steel:profile:designation = "W14X82"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 363
+            double steel:profile:bMm = 257
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 21.7
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 15500
+            double steel:profile:massPerMeterKg = 122
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X74"
+        {
+            string steel:profile:designation = "W14X74"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 11.4
+            double steel:profile:tfMm = 19.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 14100
+            double steel:profile:massPerMeterKg = 110
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X68"
+        {
+            string steel:profile:designation = "W14X68"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 357
+            double steel:profile:bMm = 255
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 18.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12900
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X61"
+        {
+            string steel:profile:designation = "W14X61"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 353
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 9.5
+            double steel:profile:tfMm = 16.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11500
+            double steel:profile:massPerMeterKg = 91
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X53"
+        {
+            string steel:profile:designation = "W14X53"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 354
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9.4
+            double steel:profile:tfMm = 16.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10100
+            double steel:profile:massPerMeterKg = 79
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X48"
+        {
+            string steel:profile:designation = "W14X48"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 350
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 8.6
+            double steel:profile:tfMm = 15.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9100
+            double steel:profile:massPerMeterKg = 72
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X43"
+        {
+            string steel:profile:designation = "W14X43"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 347
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 7.7
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8130
+            double steel:profile:massPerMeterKg = 64
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X38"
+        {
+            string steel:profile:designation = "W14X38"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 358
+            double steel:profile:bMm = 172
+            double steel:profile:twMm = 7.9
+            double steel:profile:tfMm = 13.1
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 7230
+            double steel:profile:massPerMeterKg = 58
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X34"
+        {
+            string steel:profile:designation = "W14X34"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 355
+            double steel:profile:bMm = 171
+            double steel:profile:twMm = 7.2
+            double steel:profile:tfMm = 11.6
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 6450
+            double steel:profile:massPerMeterKg = 51
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X30"
+        {
+            string steel:profile:designation = "W14X30"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 352
+            double steel:profile:bMm = 171
+            double steel:profile:twMm = 6.9
+            double steel:profile:tfMm = 9.8
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 5710
+            double steel:profile:massPerMeterKg = 44.6
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X26"
+        {
+            string steel:profile:designation = "W14X26"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 353
+            double steel:profile:bMm = 128
+            double steel:profile:twMm = 6.5
+            double steel:profile:tfMm = 10.7
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 4960
+            double steel:profile:massPerMeterKg = 39
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W14X22"
+        {
+            string steel:profile:designation = "W14X22"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 349
+            double steel:profile:bMm = 127
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 8.5
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 4190
+            double steel:profile:massPerMeterKg = 32.9
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X336"
+        {
+            string steel:profile:designation = "W12X336"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 427
+            double steel:profile:bMm = 340
+            double steel:profile:twMm = 45.1
+            double steel:profile:tfMm = 75.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 63700
+            double steel:profile:massPerMeterKg = 500
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X305"
+        {
+            string steel:profile:designation = "W12X305"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 415
+            double steel:profile:bMm = 336
+            double steel:profile:twMm = 41.3
+            double steel:profile:tfMm = 68.7
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 57800
+            double steel:profile:massPerMeterKg = 454
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X279"
+        {
+            string steel:profile:designation = "W12X279"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 403
+            double steel:profile:bMm = 334
+            double steel:profile:twMm = 38.9
+            double steel:profile:tfMm = 62.7
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 52800
+            double steel:profile:massPerMeterKg = 415
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X252"
+        {
+            string steel:profile:designation = "W12X252"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 391
+            double steel:profile:bMm = 330
+            double steel:profile:twMm = 35.4
+            double steel:profile:tfMm = 57.2
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 47800
+            double steel:profile:massPerMeterKg = 375
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X230"
+        {
+            string steel:profile:designation = "W12X230"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 382
+            double steel:profile:bMm = 328
+            double steel:profile:twMm = 32.6
+            double steel:profile:tfMm = 52.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 43700
+            double steel:profile:massPerMeterKg = 342
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X210"
+        {
+            string steel:profile:designation = "W12X210"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 374
+            double steel:profile:bMm = 325
+            double steel:profile:twMm = 30
+            double steel:profile:tfMm = 48.3
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 39900
+            double steel:profile:massPerMeterKg = 313
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X190"
+        {
+            string steel:profile:designation = "W12X190"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 365
+            double steel:profile:bMm = 322
+            double steel:profile:twMm = 26.9
+            double steel:profile:tfMm = 44.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 36000
+            double steel:profile:massPerMeterKg = 283
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X170"
+        {
+            string steel:profile:designation = "W12X170"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 319
+            double steel:profile:twMm = 24.4
+            double steel:profile:tfMm = 39.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 32300
+            double steel:profile:massPerMeterKg = 253
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X152"
+        {
+            string steel:profile:designation = "W12X152"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 348
+            double steel:profile:bMm = 317
+            double steel:profile:twMm = 22.1
+            double steel:profile:tfMm = 35.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 28800
+            double steel:profile:massPerMeterKg = 226
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X136"
+        {
+            string steel:profile:designation = "W12X136"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 341
+            double steel:profile:bMm = 315
+            double steel:profile:twMm = 20.1
+            double steel:profile:tfMm = 31.8
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 25700
+            double steel:profile:massPerMeterKg = 202
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X120"
+        {
+            string steel:profile:designation = "W12X120"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 333
+            double steel:profile:bMm = 313
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 28.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 22800
+            double steel:profile:massPerMeterKg = 179
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X106"
+        {
+            string steel:profile:designation = "W12X106"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 327
+            double steel:profile:bMm = 310
+            double steel:profile:twMm = 15.5
+            double steel:profile:tfMm = 25.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 20100
+            double steel:profile:massPerMeterKg = 158
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X96"
+        {
+            string steel:profile:designation = "W12X96"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 323
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 22.9
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 18200
+            double steel:profile:massPerMeterKg = 143
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X87"
+        {
+            string steel:profile:designation = "W12X87"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 318
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 20.6
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 16500
+            double steel:profile:massPerMeterKg = 129
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X79"
+        {
+            string steel:profile:designation = "W12X79"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 314
+            double steel:profile:bMm = 307
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 18.7
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 15000
+            double steel:profile:massPerMeterKg = 117
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X72"
+        {
+            string steel:profile:designation = "W12X72"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 311
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 10.9
+            double steel:profile:tfMm = 17
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 13600
+            double steel:profile:massPerMeterKg = 107
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X65"
+        {
+            string steel:profile:designation = "W12X65"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 308
+            double steel:profile:bMm = 305
+            double steel:profile:twMm = 9.9
+            double steel:profile:tfMm = 15.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 12300
+            double steel:profile:massPerMeterKg = 97
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X58"
+        {
+            string steel:profile:designation = "W12X58"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 9.1
+            double steel:profile:tfMm = 16.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11000
+            double steel:profile:massPerMeterKg = 86
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X53"
+        {
+            string steel:profile:designation = "W12X53"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 306
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 8.8
+            double steel:profile:tfMm = 14.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10100
+            double steel:profile:massPerMeterKg = 79
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X50"
+        {
+            string steel:profile:designation = "W12X50"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9.4
+            double steel:profile:tfMm = 16.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9480
+            double steel:profile:massPerMeterKg = 74
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X45"
+        {
+            string steel:profile:designation = "W12X45"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 306
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 8.5
+            double steel:profile:tfMm = 14.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8520
+            double steel:profile:massPerMeterKg = 67
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X40"
+        {
+            string steel:profile:designation = "W12X40"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 7.5
+            double steel:profile:tfMm = 13.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 7610
+            double steel:profile:massPerMeterKg = 60
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X35"
+        {
+            string steel:profile:designation = "W12X35"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 317
+            double steel:profile:bMm = 167
+            double steel:profile:twMm = 7.6
+            double steel:profile:tfMm = 13.2
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 6650
+            double steel:profile:massPerMeterKg = 52
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X30"
+        {
+            string steel:profile:designation = "W12X30"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 313
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 11.2
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 5670
+            double steel:profile:massPerMeterKg = 44.5
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X26"
+        {
+            string steel:profile:designation = "W12X26"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 9.7
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4940
+            double steel:profile:massPerMeterKg = 38.7
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X22"
+        {
+            string steel:profile:designation = "W12X22"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 313
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 10.8
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4180
+            double steel:profile:massPerMeterKg = 32.7
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X19"
+        {
+            string steel:profile:designation = "W12X19"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 309
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 8.9
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 3590
+            double steel:profile:massPerMeterKg = 28.3
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X16"
+        {
+            string steel:profile:designation = "W12X16"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 305
+            double steel:profile:bMm = 101
+            double steel:profile:twMm = 5.6
+            double steel:profile:tfMm = 6.7
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 3040
+            double steel:profile:massPerMeterKg = 23.8
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W12X14"
+        {
+            string steel:profile:designation = "W12X14"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303
+            double steel:profile:bMm = 101
+            double steel:profile:twMm = 5.1
+            double steel:profile:tfMm = 5.7
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2680
+            double steel:profile:massPerMeterKg = 21
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X112"
+        {
+            string steel:profile:designation = "W10X112"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 289
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 19.2
+            double steel:profile:tfMm = 31.8
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 21200
+            double steel:profile:massPerMeterKg = 167
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X100"
+        {
+            string steel:profile:designation = "W10X100"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 282
+            double steel:profile:bMm = 263
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 28.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 19000
+            double steel:profile:massPerMeterKg = 149
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X88"
+        {
+            string steel:profile:designation = "W10X88"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 275
+            double steel:profile:bMm = 261
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 25.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 16700
+            double steel:profile:massPerMeterKg = 131
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X77"
+        {
+            string steel:profile:designation = "W10X77"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 269
+            double steel:profile:bMm = 259
+            double steel:profile:twMm = 13.5
+            double steel:profile:tfMm = 22.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 14600
+            double steel:profile:massPerMeterKg = 115
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X68"
+        {
+            string steel:profile:designation = "W10X68"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 264
+            double steel:profile:bMm = 257
+            double steel:profile:twMm = 11.9
+            double steel:profile:tfMm = 19.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 12900
+            double steel:profile:massPerMeterKg = 101
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X60"
+        {
+            string steel:profile:designation = "W10X60"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 260
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 10.7
+            double steel:profile:tfMm = 17.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 11400
+            double steel:profile:massPerMeterKg = 89
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X54"
+        {
+            string steel:profile:designation = "W10X54"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 256
+            double steel:profile:bMm = 255
+            double steel:profile:twMm = 9.4
+            double steel:profile:tfMm = 15.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10200
+            double steel:profile:massPerMeterKg = 80
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X49"
+        {
+            string steel:profile:designation = "W10X49"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 253
+            double steel:profile:bMm = 254
+            double steel:profile:twMm = 8.6
+            double steel:profile:tfMm = 14.2
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 9290
+            double steel:profile:massPerMeterKg = 73
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X45"
+        {
+            string steel:profile:designation = "W10X45"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 257
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 8.9
+            double steel:profile:tfMm = 15.7
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8580
+            double steel:profile:massPerMeterKg = 67
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X39"
+        {
+            string steel:profile:designation = "W10X39"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 252
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 13.5
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 7420
+            double steel:profile:massPerMeterKg = 58
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X33"
+        {
+            string steel:profile:designation = "W10X33"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 247
+            double steel:profile:bMm = 202
+            double steel:profile:twMm = 7.4
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 6260
+            double steel:profile:massPerMeterKg = 49.1
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X30"
+        {
+            string steel:profile:designation = "W10X30"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 266
+            double steel:profile:bMm = 148
+            double steel:profile:twMm = 7.6
+            double steel:profile:tfMm = 13
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 5700
+            double steel:profile:massPerMeterKg = 44.8
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X26"
+        {
+            string steel:profile:designation = "W10X26"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 262
+            double steel:profile:bMm = 147
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 11.2
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4910
+            double steel:profile:massPerMeterKg = 38.5
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X22"
+        {
+            string steel:profile:designation = "W10X22"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 258
+            double steel:profile:bMm = 146
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 9.1
+            double steel:profile:rMm = 8.5
+            double steel:profile:areaMm2 = 4190
+            double steel:profile:massPerMeterKg = 32.7
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X19"
+        {
+            string steel:profile:designation = "W10X19"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 260
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.4
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3630
+            double steel:profile:massPerMeterKg = 28.4
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X17"
+        {
+            string steel:profile:designation = "W10X17"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 257
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 8.4
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3220
+            double steel:profile:massPerMeterKg = 25.3
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X15"
+        {
+            string steel:profile:designation = "W10X15"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 254
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 6.9
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2850
+            double steel:profile:massPerMeterKg = 22.3
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W10X12"
+        {
+            string steel:profile:designation = "W10X12"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 251
+            double steel:profile:bMm = 101
+            double steel:profile:twMm = 4.8
+            double steel:profile:tfMm = 5.3
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2280
+            double steel:profile:massPerMeterKg = 17.9
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X67"
+        {
+            string steel:profile:designation = "W8X67"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 229
+            double steel:profile:bMm = 210
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 23.7
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 12700
+            double steel:profile:massPerMeterKg = 100
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X58"
+        {
+            string steel:profile:designation = "W8X58"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 222
+            double steel:profile:bMm = 209
+            double steel:profile:twMm = 13
+            double steel:profile:tfMm = 20.6
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 11000
+            double steel:profile:massPerMeterKg = 86
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X48"
+        {
+            string steel:profile:designation = "W8X48"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 216
+            double steel:profile:bMm = 206
+            double steel:profile:twMm = 10.2
+            double steel:profile:tfMm = 17.4
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 9100
+            double steel:profile:massPerMeterKg = 71
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X40"
+        {
+            string steel:profile:designation = "W8X40"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 210
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9.1
+            double steel:profile:tfMm = 14.2
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 7550
+            double steel:profile:massPerMeterKg = 59
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X35"
+        {
+            string steel:profile:designation = "W8X35"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 206
+            double steel:profile:bMm = 204
+            double steel:profile:twMm = 7.9
+            double steel:profile:tfMm = 12.6
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 6650
+            double steel:profile:massPerMeterKg = 52
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X31"
+        {
+            string steel:profile:designation = "W8X31"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 203
+            double steel:profile:bMm = 203
+            double steel:profile:twMm = 7.2
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 5890
+            double steel:profile:massPerMeterKg = 46.1
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X28"
+        {
+            string steel:profile:designation = "W8X28"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 205
+            double steel:profile:bMm = 166
+            double steel:profile:twMm = 7.2
+            double steel:profile:tfMm = 11.8
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 5320
+            double steel:profile:massPerMeterKg = 41.7
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X24"
+        {
+            string steel:profile:designation = "W8X24"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 201
+            double steel:profile:bMm = 165
+            double steel:profile:twMm = 6.2
+            double steel:profile:tfMm = 10.2
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 4570
+            double steel:profile:massPerMeterKg = 35.9
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X21"
+        {
+            string steel:profile:designation = "W8X21"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 210
+            double steel:profile:bMm = 134
+            double steel:profile:twMm = 6.4
+            double steel:profile:tfMm = 10.2
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 3970
+            double steel:profile:massPerMeterKg = 31.3
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X18"
+        {
+            string steel:profile:designation = "W8X18"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 207
+            double steel:profile:bMm = 133
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 8.4
+            double steel:profile:rMm = 10
+            double steel:profile:areaMm2 = 3390
+            double steel:profile:massPerMeterKg = 26.6
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X15"
+        {
+            string steel:profile:designation = "W8X15"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 206
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.2
+            double steel:profile:tfMm = 8
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2860
+            double steel:profile:massPerMeterKg = 22.5
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X13"
+        {
+            string steel:profile:designation = "W8X13"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 203
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 6.5
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2480
+            double steel:profile:massPerMeterKg = 19.3
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W8X10"
+        {
+            string steel:profile:designation = "W8X10"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 4.3
+            double steel:profile:tfMm = 5.2
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 1910
+            double steel:profile:massPerMeterKg = 15
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W6X25"
+        {
+            string steel:profile:designation = "W6X25"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 162
+            double steel:profile:bMm = 154
+            double steel:profile:twMm = 8.1
+            double steel:profile:tfMm = 11.6
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 4740
+            double steel:profile:massPerMeterKg = 37.1
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W6X20"
+        {
+            string steel:profile:designation = "W6X20"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 157
+            double steel:profile:bMm = 153
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 9.3
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 3790
+            double steel:profile:massPerMeterKg = 29.8
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W6X15"
+        {
+            string steel:profile:designation = "W6X15"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 152
+            double steel:profile:bMm = 152
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 6.6
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 2860
+            double steel:profile:massPerMeterKg = 22.5
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W6X16"
+        {
+            string steel:profile:designation = "W6X16"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 160
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 6.6
+            double steel:profile:tfMm = 10.3
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 3060
+            double steel:profile:massPerMeterKg = 24
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W6X12"
+        {
+            string steel:profile:designation = "W6X12"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 153
+            double steel:profile:bMm = 102
+            double steel:profile:twMm = 5.8
+            double steel:profile:tfMm = 7.1
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 2290
+            double steel:profile:massPerMeterKg = 18
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W6X9"
+        {
+            string steel:profile:designation = "W6X9"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 4.3
+            double steel:profile:tfMm = 5.5
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1730
+            double steel:profile:massPerMeterKg = 13.5
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W6X8_5"
+        {
+            string steel:profile:designation = "W6X8.5"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 148
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 4.3
+            double steel:profile:tfMm = 4.9
+            double steel:profile:rMm = 8
+            double steel:profile:areaMm2 = 1630
+            double steel:profile:massPerMeterKg = 13
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W5X19"
+        {
+            string steel:profile:designation = "W5X19"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 131
+            double steel:profile:bMm = 128
+            double steel:profile:twMm = 6.9
+            double steel:profile:tfMm = 10.9
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3590
+            double steel:profile:massPerMeterKg = 28.1
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W5X16"
+        {
+            string steel:profile:designation = "W5X16"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 127
+            double steel:profile:bMm = 127
+            double steel:profile:twMm = 6.1
+            double steel:profile:tfMm = 9.1
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 3040
+            double steel:profile:massPerMeterKg = 23.8
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "W4X13"
+        {
+            string steel:profile:designation = "W4X13"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 106
+            double steel:profile:bMm = 103
+            double steel:profile:twMm = 7.1
+            double steel:profile:tfMm = 8.8
+            double steel:profile:rMm = 0
+            double steel:profile:areaMm2 = 2470
+            double steel:profile:massPerMeterKg = 19.3
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP14X117"
+        {
+            string steel:profile:designation = "HP14X117"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 361
+            double steel:profile:bMm = 378
+            double steel:profile:twMm = 20.4
+            double steel:profile:tfMm = 20.4
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 22200
+            double steel:profile:massPerMeterKg = 174
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP14X102"
+        {
+            string steel:profile:designation = "HP14X102"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 376
+            double steel:profile:twMm = 17.9
+            double steel:profile:tfMm = 17.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 19400
+            double steel:profile:massPerMeterKg = 152
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP14X89"
+        {
+            string steel:profile:designation = "HP14X89"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 351
+            double steel:profile:bMm = 373
+            double steel:profile:twMm = 15.6
+            double steel:profile:tfMm = 15.6
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 16800
+            double steel:profile:massPerMeterKg = 132
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP14X73"
+        {
+            string steel:profile:designation = "HP14X73"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 346
+            double steel:profile:bMm = 370
+            double steel:profile:twMm = 12.8
+            double steel:profile:tfMm = 12.8
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 13800
+            double steel:profile:massPerMeterKg = 108
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP12X84"
+        {
+            string steel:profile:designation = "HP12X84"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 312
+            double steel:profile:bMm = 312
+            double steel:profile:twMm = 17.4
+            double steel:profile:tfMm = 17.4
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 15900
+            double steel:profile:massPerMeterKg = 125
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP12X74"
+        {
+            string steel:profile:designation = "HP12X74"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 308
+            double steel:profile:bMm = 310
+            double steel:profile:twMm = 15.4
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 14100
+            double steel:profile:massPerMeterKg = 110
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP12X63"
+        {
+            string steel:profile:designation = "HP12X63"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 13.1
+            double steel:profile:tfMm = 13.1
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 11900
+            double steel:profile:massPerMeterKg = 93
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP12X53"
+        {
+            string steel:profile:designation = "HP12X53"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 299
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 20
+            double steel:profile:areaMm2 = 10000
+            double steel:profile:massPerMeterKg = 79
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP10X57"
+        {
+            string steel:profile:designation = "HP10X57"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 254
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 14.4
+            double steel:profile:tfMm = 14.4
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 10800
+            double steel:profile:massPerMeterKg = 85
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP10X42"
+        {
+            string steel:profile:designation = "HP10X42"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 246
+            double steel:profile:bMm = 256
+            double steel:profile:twMm = 10.5
+            double steel:profile:tfMm = 10.7
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 8000
+            double steel:profile:massPerMeterKg = 62
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+
+        def Scope "HP8X36"
+        {
+            string steel:profile:designation = "HP8X36"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 204
+            double steel:profile:bMm = 207
+            double steel:profile:twMm = 11.3
+            double steel:profile:tfMm = 11.3
+            double steel:profile:rMm = 13
+            double steel:profile:areaMm2 = 6840
+            double steel:profile:massPerMeterKg = 53
+            string steel:profile:standard = "ASTM A6/A6M-05a"
+        }
+    }
+}
