@@ -139,6 +139,10 @@ pub struct Report {
     pub cargo: String,
     /// Nextest version.
     pub nextest: String,
+    /// Ceiling on Cargo build jobs and nextest test threads when `BEAMCRAFT_GATE_MAX_JOBS` was
+    /// set; absent, and omitted from the JSON, when the tools' own defaults applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_jobs: Option<u32>,
     /// Number of runnable selected tests in the prepared inventory.
     pub expected_tests: u64,
     /// Executed test cases in the fresh JUnit report.
@@ -174,8 +178,11 @@ impl Report {
             || self.rustc.len() > 256
             || self.cargo.len() > 256
             || self.nextest.split_whitespace().nth(1) != Some(NEXTEST_VERSION)
+            || self.max_jobs == Some(0)
         {
-            return fail("missing tool/architecture identity or wrong nextest version");
+            return fail(
+                "missing tool/architecture identity, wrong nextest version or a zero job ceiling",
+            );
         }
         if !self.source_unchanged
             || self.expected_tests == 0
