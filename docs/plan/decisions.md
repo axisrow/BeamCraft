@@ -6,6 +6,28 @@ Open questions are at the end.
 
 ## 2026-11-24
 
+- **South America profile geometry is the A6/A6M-05a W imports, named in the standard's
+  metric designations.** Owner decision of 2026-11-24 on the South America pack (#711,
+  completing the pack the decision of 2026-11-23 defined): the `south-america` environment
+  gains a profile library with the W-shape series of ASTM A6/A6M-05a Annex A2 — the route
+  the 2026-11-23 decision deferred to, since NCh203.Of2006 covers material requirements
+  only and Chilean W shapes are imports with no national section standard. The rows are
+  the USA pack's re-entered SI-column facts, value for value, with the root radius from
+  the Nucor-Yamato catalog as there; the declared standard on every row stays
+  `ASTM A6/A6M-05a` and is a provenance statement, not a currency claim. The designations
+  are the standard's own metric ones (`W310x60`), the form the route direction names for
+  the regional producer print — the asked verification on the CINTAC public pages found no
+  Chilean producer print to override it: CINTAC lists no W shapes at all and the Aceros
+  AZA catalog carries angle and Estrella profiles only, so no Chilean print shows a form.
+  No public Chilean source lists the imported W assortment either, so the pack ships the
+  declared edition's complete W series rather than an invented availability subset, and
+  the HP shapes stay `NOT_FOUND`. The standard prints one metric designation for two rows
+  (W920 X 345 for W 36 X 231 and W 36 X 232), so those two keep their EDI inch
+  designations and the collision designation names no row. An admitted availability or
+  HP source enters under the standing pack discipline in its own slice and never edits
+  these rows in place. The design note is
+  [`south-america-a6-w-profiles.md`](../design/south-america-a6-w-profiles.md).
+
 - **The Philippines pack is the A6 geometry alias plus the ESC-verified grade bindings.**
   Decision of 2026-11-24 on the Philippines regional pack (#713, part of #649), taken under the
   standing pack discipline and the sourcing principle once the USA admission decisions it waits
