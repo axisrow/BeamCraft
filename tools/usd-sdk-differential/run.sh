@@ -9,12 +9,15 @@
 # from a real project export or a third-party model.
 #
 # Usage:
-#   tools/usd-sdk-differential/run.sh [--no-sdk]
+#   tools/usd-sdk-differential/run.sh [--no-sdk] [--digest]
 #
 # The official-SDK legs run only when `usdcat`/`usdchecker` (or USD_USDCAT/USD_USDCHECKER
 # overrides) are found. When they are absent or --no-sdk is given, the harness prints an
 # explicit SKIP banner: such a run verifies the oracle only and makes NO SDK claim.
 # Exit status is 0 when every run check passed; skipped legs never count as passes.
+# --digest replaces the check matrix with the LEW-05 digest export: one fixed-identity
+# stack written by the real writer and hashed exactly as written, for a cross-platform
+# SHA-256 comparison (one manual run per platform; digests never normalize bytes).
 
 set -u
 
@@ -25,10 +28,12 @@ ORACLE="$REPO_ROOT/target/debug/beamcraft-usd-oracle"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/usd-sdk-differential.XXXXXX")"
 
 NO_SDK=0
+DIGEST=0
 for arg in "$@"; do
     case "$arg" in
         --no-sdk) NO_SDK=1 ;;
-        *) echo "usage: $0 [--no-sdk]" >&2; exit 2 ;;
+        --digest) DIGEST=1 ;;
+        *) echo "usage: $0 [--no-sdk] [--digest]" >&2; exit 2 ;;
     esac
 done
 
@@ -83,6 +88,57 @@ echo "building the independent oracle (cargo build --locked -p beamcraft-cli --b
 echo "oracle: $ORACLE (repo $(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown))"
 echo "work:   $WORK"
 echo
+
+# ---- Digest mode (LEW-05) -----------------------------------------------------------------------
+# One fixed-identity stack written by the real writer on this platform, hashed exactly as
+# written (the oracle's digest mode normalizes nothing). No reader checks run in this mode:
+# two platforms compare digests only when both run these same committed commands. The run
+# itself stays manual per the N03 owner decision of 2026-11-22; it is never a CI gate.
+
+if [ "$DIGEST" -eq 1 ]; then
+    BEAMCRAFT="$REPO_ROOT/target/debug/beamcraft"
+    echo "building the writer CLI (cargo build --locked -p beamcraft-cli --bins)"
+    "$CARGO" build --locked -p beamcraft-cli --bins >&2 || { echo "FAIL cli build"; exit 1; }
+    STORE="$WORK/store"
+    mkdir -p "$STORE"
+    "$BEAMCRAFT" create-plate --store "$STORE" \
+        --new-id 0199e7a0-0000-7000-8000-00000000d001 \
+        --op-id 0199e7a0-0000-7000-8000-00000000d002 \
+        --revision-id 0199e7a0-0000-7000-8000-00000000d003 \
+        --actor-id 0199e7a0-0000-7000-8000-00000000d004 \
+        --project-id 0199e7a0-0000-7000-8000-00000000d005 \
+        --workspace-id 0199e7a0-0000-7000-8000-00000000d006 \
+        --width 1000 --length 500 --thickness 10 --name "Digest Reference" \
+        --translation "2000,-3000,1000" \
+        --orientation-xyzw "0,0,0.7071067811865476,0.7071067811865476" \
+        --hole-round "250,250,60" > /dev/null 2>"$WORK/create.err" || {
+        echo "FAIL the fixed-identity stack was refused:"; head -3 "$WORK/create.err"; exit 1
+    }
+    echo "platform: $(uname -s -r -m)  cli: $("$BEAMCRAFT" --version 2>&1)"
+    echo
+    MANIFEST=$(grep -rl '^beamcraft-revision-manifest' "$STORE/blobs" | head -1)
+    if [ -z "$MANIFEST" ]; then
+        echo "FAIL no revision manifest blob in the store"; exit 1
+    fi
+    status=0
+    while read -r name digest size; do
+        blob="$STORE/blobs/${digest%"${digest#??}"}/$digest"
+        line=$("$ORACLE" digest "$blob")
+        if [ "${line%% *}" = "$digest" ]; then
+            printf 'sha256  %s  %s  %s bytes\n' "$digest" "$name" "$size"
+        else
+            echo "FAIL layer $name ($digest) hashes to ${line%% *} (the store content addressing broke)"
+            status=1
+        fi
+    done < <(grep '^layer ' "$MANIFEST" | sort -k3 | awk '{print $3, $4, $5}')
+    rm -rf "$WORK"
+    if [ "$status" -ne 0 ]; then
+        exit 1
+    fi
+    echo
+    echo "OK: every manifest layer matches its content digest; compare this table across platforms"
+    exit 0
+fi
 
 # ---- Positive fixtures ------------------------------------------------------------------------
 
