@@ -24,6 +24,7 @@ mod bent_plates;
 mod bolt_groups;
 mod bolt_groups_view;
 mod bom;
+mod brazil_environment;
 mod canada_materials;
 mod catalog_namespaces;
 mod changeset;
