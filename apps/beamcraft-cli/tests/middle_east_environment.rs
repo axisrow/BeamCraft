@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// The shipped Middle East environment holds the EN 10365:2017 nominal dimensions of the IPE, HEA
-// and HEB series (the rows of the `europe` pack) and the ASTM grades A36, A572 and A992 (the
-// rows of the `usa` pack), re-entered by hand as our own data; provenance and licence are in
-// `ATTRIBUTION.md` and in the libraries' own metadata. The expected areas and masses in this file
-// are the published values.
+// The shipped Middle East environment holds the EN 10365:2017 nominal dimensions of the IPE, HEA,
+// HEB, HL, HLZ, HD and HP series (the rows of the `europe` pack) and the ASTM grades A36, A572
+// and A992 (the rows of the `usa` pack), re-entered by hand as our own data; provenance and
+// licence are in `ATTRIBUTION.md` and in the libraries' own metadata. The expected areas and
+// masses in this file are the published values.
 
 //! The regional `middle-east` environment end to end through the real `beamcraft` binary: it is
 //! listed with its provenance, a project created with it resolves its section designations and
@@ -73,8 +73,8 @@ fn num(json: &Json, path: &[&str]) -> f64 {
 #[test]
 fn the_shipped_middle_east_environment_lists_its_sections_and_provenance() {
     let f = Fixture::new();
-    // --limit names one page for the whole pack, which at fifty-five entries also fits the
-    // default page of 64.
+    // --limit names one page for the whole pack, which at one hundred seventy-five entries
+    // spans several default pages of 64.
     let listed = f.ok(&[
         "list-library",
         "--environment",
@@ -99,7 +99,7 @@ fn the_shipped_middle_east_environment_lists_its_sections_and_provenance() {
         listed_libraries("fastener_libraries").is_empty(),
         "the pack lists no fastener library"
     );
-    assert_eq!(num(&listed, &["entry_count"]), 55.0);
+    assert_eq!(num(&listed, &["entry_count"]), 175.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
     let libraries = at(&listed, &["libraries"]).array().unwrap();
     assert_eq!(libraries.len(), 1);
@@ -107,13 +107,13 @@ fn the_shipped_middle_east_environment_lists_its_sections_and_provenance() {
     assert_eq!(text(info, "id"), "middle-east-en-10365-profiles");
     assert_eq!(
         text(info, "title"),
-        "Middle East hot-rolled sections (EN 10365: IPE, HEA, HEB)"
+        "Middle East hot-rolled sections (EN 10365: IPE, HEA, HEB, HL, HLZ, HD, HP)"
     );
-    assert_eq!(text(info, "version"), "1");
+    assert_eq!(text(info, "version"), "2");
     assert_eq!(text(info, "licence"), "MPL-2.0");
     assert!(!text(info, "source").is_empty(), "the source is declared");
     let entries = at(&listed, &["entries"]).array().unwrap();
-    assert_eq!(entries.len(), 55);
+    assert_eq!(entries.len(), 175);
     let ipe300 = entries
         .iter()
         .find(|e| text(e, "designation") == "IPE300")
@@ -162,7 +162,7 @@ fn a_project_created_with_the_middle_east_environment_resolves_its_designations_
     // catalogue figure below is the published value.
     // profile, kind, start, end, material, catalogue area mm2, mass kg (area x length x 7850
     // kg/m3).
-    let cases: [(&str, &str, &str, &str, &str, f64, f64); 3] = [
+    let cases: [(&str, &str, &str, &str, &str, f64, f64); 4] = [
         (
             "IPE300", "beam", "0,0,0", "6000,0,0", "A36", 5381.0, 253.4451,
         ),
@@ -184,18 +184,27 @@ fn a_project_created_with_the_middle_east_environment_resolves_its_designations_
             2600.0,
             81.64,
         ),
+        // A designation of the #790 extension: the HL series the EN tables publish without a
+        // root radius.
+        (
+            "HL920x491",
+            "beam",
+            "12000,0,0",
+            "18000,0,0",
+            "A36",
+            62300.0,
+            2934.33,
+        ),
     ];
     // A name the pack does not ship is refused, not silently substituted: a designation the
-    // series does not publish and a size beyond the shipped range, the HL, HD and HP series the
-    // region rolls but the pack holds no tables for and the channels it leaves to the `europe`
-    // pack; a grade of another ASTM specification, the compact industry shorthand of A572 and
-    // the EN 10025 grades, which the curated mix does not carry.
-    let absent: [(&str, &str); 9] = [
+    // series does not publish and a size beyond the shipped range, the HEM series the
+    // extension leaves out and the channels it leaves to the `europe` pack; a grade of another
+    // ASTM specification, the compact industry shorthand of A572 and the EN 10025 grades,
+    // which the curated mix does not carry.
+    let absent: [(&str, &str); 7] = [
         ("profile", "IPE250"),
-        ("profile", "HEA700"),
-        ("profile", "HL920x491"),
-        ("profile", "HD260x172"),
-        ("profile", "HP305x95"),
+        ("profile", "HEA1100"),
+        ("profile", "HEM300"),
         ("profile", "UPE100"),
         ("material", "A709"),
         ("material", "A572Gr50"),
@@ -269,7 +278,8 @@ fn a_project_created_with_the_middle_east_environment_resolves_its_designations_
     assert_eq!(text(&pinned[0], "grade"), "A992");
     assert_eq!(text(&pinned[0], "standard"), "ASTM A992/A992M-20");
     assert_eq!(at(&pinned[0], &["density_kg_m3"]).float().unwrap(), 7850.0);
-    // Replies 4..13 carry the refusals in the authored order (the refused lines commit nothing).
+    // The replies after the members and the pinned definition carry the refusals in the
+    // authored order (the refused lines commit nothing).
     for (index, (_, designation)) in absent.iter().enumerate() {
         assert_eq!(
             text(&replies[cases.len() + 1 + index], "code"),

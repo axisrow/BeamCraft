@@ -34,6 +34,13 @@ slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-ti
 filter = 'test(=offline_clients::two_offline_workspaces_publish_independent_elements_and_lose_nothing)'
 slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
 
+# #790: the all-namespace position-space proof walks the merged listing one entry
+# per page, ~330 CLI spawns over the doubled europe catalog (43-45 s unloaded on
+# the reference Mac), so a loaded default-budget kill would read as a regression.
+[[profile.default.overrides]]
+filter = 'test(=catalog_namespaces::all_namespaces_page_as_one_position_space)'
+slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
+
 [profile.gate-full]
 default-filter = "all()"
 global-timeout = "600s"

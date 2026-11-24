@@ -95,9 +95,8 @@ fn the_europe_environment_lists_and_carries_its_material_library() {
     );
 
     // The listing and the store round ride one process (#738 P7): the library listing, the
-    // offered-grade reads, the two members whose mass math uses the catalogue density, and
-    // the refusals in their authored order.
-    let mut lines = vec![
+    // offered-grade reads and the two members whose mass math uses the catalogue density.
+    let lines = vec![
         // The environment listing names the material library beside the profile and
         // fastener ones.
         Scripted::ok(&["list-library", "--environment", ENVIRONMENT]),
@@ -143,28 +142,43 @@ fn the_europe_environment_lists_and_carries_its_material_library() {
             "--material",
             "Steel",
         ]),
-        Scripted::ok(&["definitions", "--store", &store, "--name", "Steel"]),
     ];
     // A grade the set does not publish stays NOT_FOUND, never a near match.
-    let absent = ["S355", "S235", "s355j2", "S355K2+N"];
-    for designation in absent {
-        lines.push(Scripted::refused(&[
-            "create-member",
-            "--store",
-            &store,
-            "--kind",
-            "beam",
-            "--start",
-            "0,0,0",
-            "--end",
-            "0,6000,0",
-            "--profile",
-            "IPE300",
-            "--material",
-            designation,
-        ]));
-    }
     let replies = f.script(&store, &lines);
+    // The last pinned-definition read and the refusals ride a second invocation: one summary
+    // over the whole eleven-line script outgrew the output budget when #790 doubled the
+    // europe catalog the definitions replies embed (environment_profiles carries every
+    // designation the pickers offer), and the envelope dropped the newest replies as
+    // replies_omitted. The second script's summary carries all of its replies.
+    let mut tail_lines = vec![Scripted::ok(&[
+        "definitions",
+        "--store",
+        &store,
+        "--name",
+        "Steel",
+    ])];
+    tail_lines.extend(
+        ["S355", "S235", "s355j2", "S355K2+N"]
+            .iter()
+            .map(|designation| {
+                Scripted::refused(&[
+                    "create-member",
+                    "--store",
+                    &store,
+                    "--kind",
+                    "beam",
+                    "--start",
+                    "0,0,0",
+                    "--end",
+                    "0,6000,0",
+                    "--profile",
+                    "IPE300",
+                    "--material",
+                    designation,
+                ])
+            }),
+    );
+    let tail_replies = f.script(&store, &tail_lines);
     let listed = &replies[0];
     assert_eq!(
         at(listed, &["environment", "material_libraries"])
@@ -200,17 +214,18 @@ fn the_europe_environment_lists_and_carries_its_material_library() {
         (steel_kg - 5381.0 * 5000.0 * 7850.0 / 1.0e9).abs() < 0.01,
         "Steel mass {steel_kg} kg"
     );
-    let pinned_steel = list(&replies[6], "definitions");
+    let pinned_steel = list(&tail_replies[0], "definitions");
     assert_eq!(pinned_steel.len(), 1);
     assert!(
         at(&pinned_steel[0], &["grade"]).string().is_err(),
         "the neutral Steel declares no grade"
     );
 
-    // Replies 7..11 carry the refusals in the authored order.
-    for (index, designation) in absent.iter().enumerate() {
+    // The second invocation's replies after the pinned definition carry the refusals in the
+    // authored order.
+    for (index, designation) in ["S355", "S235", "s355j2", "S355K2+N"].iter().enumerate() {
         assert_eq!(
-            text(&replies[7 + index], "code"),
+            text(&tail_replies[1 + index], "code"),
             "NOT_FOUND",
             "{designation}"
         );

@@ -1,13 +1,13 @@
 #usda 1.0
 (
-    doc = "BeamCraft Europe environment: hot-rolled I and H sections of the IPE, HEA and HEB series, the parallel-flange UPE channel series and the taper-flange UPN channel series. The nominal dimensions, areas and masses are the published values of the public standard EN 10365:2017, re-entered by hand as our own data; no text or table is copied. The UPN rows carry the taper-flange channel geometry: the inner flange faces rise at the slope the standard prints (8 percent up to UPN 300, 5 percent for UPN 320 to 400), t is the mid-leg flange thickness, r and r1 are the root and toe radii. The declared UPN areas follow the convention the standard publishes (steel:profile:areaConvention): the UPN 50 to 300 areas are the nominal sharp-cornered constant-flange value the standard prints (no fillet allowance), and the UPN 320 to 400 areas are the exact area of the filleted tapered section; the D3 declared-area check compares like-for-like. Reference data for modelling; it is not a substitute for the standard itself."
+    doc = "BeamCraft Europe environment: hot-rolled I and H sections of the IPE, HEA, HEB, HL, HLZ, HD and HP series, the HEA and HEB rows running to 1000, plus the parallel-flange UPE and taper-flange UPN channel series. The nominal dimensions, areas and masses are the published values of the public standard EN 10365:2017, re-entered by hand as our own data; no text or table is copied. The EN tables print no root radius for the HL series; those rows carry the radius reproducing the published area. The UPN rows carry the taper-flange geometry: inner flange faces rise at the printed slope (8 percent to UPN 300, 5 percent for 320 to 400), t is the mid-leg thickness, r and r1 the root and toe radii. The declared UPN areas follow steel:profile:areaConvention: UPN 50 to 300 are the nominal sharp-cornered constant-flange value (no fillet allowance), UPN 320 to 400 the exact filleted tapered area; the D3 check compares like-for-like. Reference data for modelling; it is not a substitute for the standard itself."
     metersPerUnit = 0.001
     upAxis = "Z"
     customLayerData = {
         string "bim:library:id" = "europe-en-10365-profiles"
-        string "bim:library:title" = "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, UPE, UPN)"
-        string "bim:library:version" = "3"
-        string "bim:library:source" = "EN 10365:2017 nominal facts (IPE/HEA/HEB 100-600, UPE 80-400, UPN 50-400) re-entered by hand; cross-checked against bauforumstahl.de, montanstahl.com, millstockgroup.com, structurecalcs.com, mesteel.com and masteel.co.uk; no table copied"
+        string "bim:library:title" = "Europe hot-rolled sections (EN 10365: IPE, HEA, HEB, HL, HLZ, HD, HP, UPE, UPN)"
+        string "bim:library:version" = "4"
+        string "bim:library:source" = "EN 10365:2017 nominal facts (IPE/HEA/HEB 100-1000, HL, HLZ, HD, HP, UPE 80-400, UPN 50-400) re-entered by hand; cross-checked against bauforumstahl.de, structurecalcs.com, emsteel.com and the ArcelorMittal HLZ tables; no table copied"
         string "bim:library:licence" = "MPL-2.0"
     }
 )
@@ -520,6 +520,76 @@ def Scope "Library"
             string steel:profile:standard = "EN 10365:2017"
         }
 
+        def Scope "HEA650"
+        {
+            string steel:profile:designation = "HEA650"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 640
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 13.5
+            double steel:profile:tfMm = 26
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 24164
+            double steel:profile:massPerMeterKg = 189.7
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEA700"
+        {
+            string steel:profile:designation = "HEA700"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 690
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 27
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 26048
+            double steel:profile:massPerMeterKg = 204.5
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEA800"
+        {
+            string steel:profile:designation = "HEA800"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 790
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 28
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 28583
+            double steel:profile:massPerMeterKg = 224.4
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEA900"
+        {
+            string steel:profile:designation = "HEA900"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 890
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 30
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 32053
+            double steel:profile:massPerMeterKg = 251.6
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEA1000"
+        {
+            string steel:profile:designation = "HEA1000"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 990
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 34685
+            double steel:profile:massPerMeterKg = 272.3
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
         def Scope "HEB_100"
         {
             string steel:profile:designation = "HEB100"
@@ -783,6 +853,76 @@ def Scope "Library"
             double steel:profile:rMm = 27
             double steel:profile:areaMm2 = 27000
             double steel:profile:massPerMeterKg = 212
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEB650"
+        {
+            string steel:profile:designation = "HEB650"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 650
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 28634
+            double steel:profile:massPerMeterKg = 224.8
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEB700"
+        {
+            string steel:profile:designation = "HEB700"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 700
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 17
+            double steel:profile:tfMm = 32
+            double steel:profile:rMm = 27
+            double steel:profile:areaMm2 = 30638
+            double steel:profile:massPerMeterKg = 240.5
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEB800"
+        {
+            string steel:profile:designation = "HEB800"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 800
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 17.5
+            double steel:profile:tfMm = 33
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 33418
+            double steel:profile:massPerMeterKg = 262.3
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEB900"
+        {
+            string steel:profile:designation = "HEB900"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 900
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 18.5
+            double steel:profile:tfMm = 35
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 37128
+            double steel:profile:massPerMeterKg = 291.5
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HEB1000"
+        {
+            string steel:profile:designation = "HEB1000"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1000
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 36
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40005
+            double steel:profile:massPerMeterKg = 314
             string steel:profile:standard = "EN 10365:2017"
         }
 
@@ -1281,6 +1421,1546 @@ def Scope "Library"
             double steel:profile:k = 0.05
             double steel:profile:areaMm2 = 9150
             double steel:profile:massPerMeterKg = 71.8
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x344"
+        {
+            string steel:profile:designation = "HL920x344"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 927
+            double steel:profile:bMm = 418
+            double steel:profile:twMm = 19.3
+            double steel:profile:tfMm = 32
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 43700
+            double steel:profile:massPerMeterKg = 344
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x368"
+        {
+            string steel:profile:designation = "HL920x368"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 931
+            double steel:profile:bMm = 419
+            double steel:profile:twMm = 20.3
+            double steel:profile:tfMm = 34.3
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 46600
+            double steel:profile:massPerMeterKg = 368
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x390"
+        {
+            string steel:profile:designation = "HL920x390"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 936
+            double steel:profile:bMm = 420
+            double steel:profile:twMm = 21.3
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 49430
+            double steel:profile:massPerMeterKg = 390
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x420"
+        {
+            string steel:profile:designation = "HL920x420"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 943
+            double steel:profile:bMm = 422
+            double steel:profile:twMm = 22.5
+            double steel:profile:tfMm = 39.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 53400
+            double steel:profile:massPerMeterKg = 420
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x449"
+        {
+            string steel:profile:designation = "HL920x449"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 948
+            double steel:profile:bMm = 423
+            double steel:profile:twMm = 24
+            double steel:profile:tfMm = 42.7
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 57100
+            double steel:profile:massPerMeterKg = 449
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x491"
+        {
+            string steel:profile:designation = "HL920x491"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 957
+            double steel:profile:bMm = 422
+            double steel:profile:twMm = 25.9
+            double steel:profile:tfMm = 47
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 62300
+            double steel:profile:massPerMeterKg = 491
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x537"
+        {
+            string steel:profile:designation = "HL920x537"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 965
+            double steel:profile:bMm = 425
+            double steel:profile:twMm = 28.4
+            double steel:profile:tfMm = 51.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 68200
+            double steel:profile:massPerMeterKg = 537
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x588"
+        {
+            string steel:profile:designation = "HL920x588"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 975
+            double steel:profile:bMm = 427
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 74800
+            double steel:profile:massPerMeterKg = 588
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x656"
+        {
+            string steel:profile:designation = "HL920x656"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 987
+            double steel:profile:bMm = 431
+            double steel:profile:twMm = 34.5
+            double steel:profile:tfMm = 62
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 83500
+            double steel:profile:massPerMeterKg = 656
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x725"
+        {
+            string steel:profile:designation = "HL920x725"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 999
+            double steel:profile:bMm = 434
+            double steel:profile:twMm = 38.1
+            double steel:profile:tfMm = 68.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 92300
+            double steel:profile:massPerMeterKg = 725
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x787"
+        {
+            string steel:profile:designation = "HL920x787"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1011
+            double steel:profile:bMm = 437
+            double steel:profile:twMm = 40.9
+            double steel:profile:tfMm = 73.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 100200
+            double steel:profile:massPerMeterKg = 787
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x970"
+        {
+            string steel:profile:designation = "HL920x970"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1043
+            double steel:profile:bMm = 446
+            double steel:profile:twMm = 50
+            double steel:profile:tfMm = 89.9
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 123660
+            double steel:profile:massPerMeterKg = 970
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x1077"
+        {
+            string steel:profile:designation = "HL920x1077"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1061
+            double steel:profile:bMm = 451
+            double steel:profile:twMm = 55
+            double steel:profile:tfMm = 99.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 137150
+            double steel:profile:massPerMeterKg = 1077
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x1194"
+        {
+            string steel:profile:designation = "HL920x1194"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1081
+            double steel:profile:bMm = 457
+            double steel:profile:twMm = 60.5
+            double steel:profile:tfMm = 109
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 152150
+            double steel:profile:massPerMeterKg = 1194
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x1269"
+        {
+            string steel:profile:designation = "HL920x1269"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1093
+            double steel:profile:bMm = 461
+            double steel:profile:twMm = 64
+            double steel:profile:tfMm = 115.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 161650
+            double steel:profile:massPerMeterKg = 1269
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL920x1377"
+        {
+            string steel:profile:designation = "HL920x1377"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1093
+            double steel:profile:bMm = 473
+            double steel:profile:twMm = 76.7
+            double steel:profile:tfMm = 115.1
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 175370
+            double steel:profile:massPerMeterKg = 1377
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000AA"
+        {
+            string steel:profile:designation = "HL1000AA"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 982
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 27.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 37800
+            double steel:profile:massPerMeterKg = 296
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000A"
+        {
+            string steel:profile:designation = "HL1000A"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 990
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 16.5
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 40900
+            double steel:profile:massPerMeterKg = 321
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000B"
+        {
+            string steel:profile:designation = "HL1000B"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1000
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 19
+            double steel:profile:tfMm = 36.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 47300
+            double steel:profile:massPerMeterKg = 371
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000M"
+        {
+            string steel:profile:designation = "HL1000M"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1008
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 52500
+            double steel:profile:massPerMeterKg = 412
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x443"
+        {
+            string steel:profile:designation = "HL1000x443"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1012
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 23.6
+            double steel:profile:tfMm = 41.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 56400
+            double steel:profile:massPerMeterKg = 443
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x483"
+        {
+            string steel:profile:designation = "HL1000x483"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1020
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 25.4
+            double steel:profile:tfMm = 46
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 61500
+            double steel:profile:massPerMeterKg = 483
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x539"
+        {
+            string steel:profile:designation = "HL1000x539"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1030
+            double steel:profile:bMm = 407
+            double steel:profile:twMm = 28.4
+            double steel:profile:tfMm = 51.1
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 68700
+            double steel:profile:massPerMeterKg = 539
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x554"
+        {
+            string steel:profile:designation = "HL1000x554"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1032
+            double steel:profile:bMm = 408
+            double steel:profile:twMm = 29.5
+            double steel:profile:tfMm = 52
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 70600
+            double steel:profile:massPerMeterKg = 554
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x591"
+        {
+            string steel:profile:designation = "HL1000x591"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1040
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 75300
+            double steel:profile:massPerMeterKg = 591
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x642"
+        {
+            string steel:profile:designation = "HL1000x642"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1048
+            double steel:profile:bMm = 412
+            double steel:profile:twMm = 34
+            double steel:profile:tfMm = 60
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 81800
+            double steel:profile:massPerMeterKg = 642
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x748"
+        {
+            string steel:profile:designation = "HL1000x748"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1068
+            double steel:profile:bMm = 417
+            double steel:profile:twMm = 39
+            double steel:profile:tfMm = 70
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 95300
+            double steel:profile:massPerMeterKg = 748
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x883"
+        {
+            string steel:profile:designation = "HL1000x883"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1092
+            double steel:profile:bMm = 424
+            double steel:profile:twMm = 45.5
+            double steel:profile:tfMm = 82
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 112500
+            double steel:profile:massPerMeterKg = 883
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1000x976"
+        {
+            string steel:profile:designation = "HL1000x976"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1108
+            double steel:profile:bMm = 428
+            double steel:profile:twMm = 50
+            double steel:profile:tfMm = 89.9
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 124100
+            double steel:profile:massPerMeterKg = 976
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1100A"
+        {
+            string steel:profile:designation = "HL1100A"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1090
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 43600
+            double steel:profile:massPerMeterKg = 343
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1100B"
+        {
+            string steel:profile:designation = "HL1100B"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1100
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 20
+            double steel:profile:tfMm = 36
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 49700
+            double steel:profile:massPerMeterKg = 390
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1100M"
+        {
+            string steel:profile:designation = "HL1100M"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1108
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 22
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 55100
+            double steel:profile:massPerMeterKg = 433
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1100R"
+        {
+            string steel:profile:designation = "HL1100R"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1118
+            double steel:profile:bMm = 405
+            double steel:profile:twMm = 26
+            double steel:profile:tfMm = 45
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 63500
+            double steel:profile:massPerMeterKg = 499
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1100x548"
+        {
+            string steel:profile:designation = "HL1100x548"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1128
+            double steel:profile:bMm = 407
+            double steel:profile:twMm = 28
+            double steel:profile:tfMm = 50
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 69800
+            double steel:profile:massPerMeterKg = 548
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HL1100x607"
+        {
+            string steel:profile:designation = "HL1100x607"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1138
+            double steel:profile:bMm = 410
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55
+            double steel:profile:rMm = 19
+            double steel:profile:areaMm2 = 77300
+            double steel:profile:massPerMeterKg = 607
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HLZ1100A"
+        {
+            string steel:profile:designation = "HLZ1100A"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1075.4
+            double steel:profile:bMm = 458
+            double steel:profile:twMm = 20
+            double steel:profile:tfMm = 31
+            double steel:profile:rMm = 35
+            double steel:profile:areaMm2 = 50100
+            double steel:profile:massPerMeterKg = 393
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HLZ1100B"
+        {
+            string steel:profile:designation = "HLZ1100B"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1079.4
+            double steel:profile:bMm = 458
+            double steel:profile:twMm = 20
+            double steel:profile:tfMm = 33
+            double steel:profile:rMm = 35
+            double steel:profile:areaMm2 = 51900
+            double steel:profile:massPerMeterKg = 408
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HLZ1100C"
+        {
+            string steel:profile:designation = "HLZ1100C"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1083
+            double steel:profile:bMm = 459
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 35
+            double steel:profile:rMm = 35
+            double steel:profile:areaMm2 = 54800
+            double steel:profile:massPerMeterKg = 430
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HLZ1100D"
+        {
+            string steel:profile:designation = "HLZ1100D"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 1087
+            double steel:profile:bMm = 460
+            double steel:profile:twMm = 22
+            double steel:profile:tfMm = 37
+            double steel:profile:rMm = 35
+            double steel:profile:areaMm2 = 57800
+            double steel:profile:massPerMeterKg = 453
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x54_1"
+        {
+            string steel:profile:designation = "HD260x54.1"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 244
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 6.5
+            double steel:profile:tfMm = 9.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 6900
+            double steel:profile:massPerMeterKg = 54.1
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x68_2"
+        {
+            string steel:profile:designation = "HD260x68.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 250
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 7.5
+            double steel:profile:tfMm = 12.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 8680
+            double steel:profile:massPerMeterKg = 68.2
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x93_0"
+        {
+            string steel:profile:designation = "HD260x93.0"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 260
+            double steel:profile:bMm = 260
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 17.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 11840
+            double steel:profile:massPerMeterKg = 93
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x114"
+        {
+            string steel:profile:designation = "HD260x114"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 268
+            double steel:profile:bMm = 262
+            double steel:profile:twMm = 12.5
+            double steel:profile:tfMm = 21.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 14570
+            double steel:profile:massPerMeterKg = 114
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x142"
+        {
+            string steel:profile:designation = "HD260x142"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 278
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 15.5
+            double steel:profile:tfMm = 26.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 18030
+            double steel:profile:massPerMeterKg = 142
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x172"
+        {
+            string steel:profile:designation = "HD260x172"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 290
+            double steel:profile:bMm = 268
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 32.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 21960
+            double steel:profile:massPerMeterKg = 172
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x225"
+        {
+            string steel:profile:designation = "HD260x225"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 309
+            double steel:profile:bMm = 271
+            double steel:profile:twMm = 24
+            double steel:profile:tfMm = 42
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 28660
+            double steel:profile:massPerMeterKg = 225
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD260x299"
+        {
+            string steel:profile:designation = "HD260x299"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 335
+            double steel:profile:bMm = 278
+            double steel:profile:twMm = 31
+            double steel:profile:tfMm = 55
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 38050
+            double steel:profile:massPerMeterKg = 299
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD320x74_2"
+        {
+            string steel:profile:designation = "HD320x74.2"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 301
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 9600
+            double steel:profile:massPerMeterKg = 74.2
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD320x97_6"
+        {
+            string steel:profile:designation = "HD320x97.6"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 310
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 15.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 12580
+            double steel:profile:massPerMeterKg = 97.6
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD320x127"
+        {
+            string steel:profile:designation = "HD320x127"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 320
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 11.5
+            double steel:profile:tfMm = 20.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 16280
+            double steel:profile:massPerMeterKg = 127
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD320x158"
+        {
+            string steel:profile:designation = "HD320x158"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 330
+            double steel:profile:bMm = 303
+            double steel:profile:twMm = 14.5
+            double steel:profile:tfMm = 25.5
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 20270
+            double steel:profile:massPerMeterKg = 158
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD320x198"
+        {
+            string steel:profile:designation = "HD320x198"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 343
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 32
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 25380
+            double steel:profile:massPerMeterKg = 198
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD320x245"
+        {
+            string steel:profile:designation = "HD320x245"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 359
+            double steel:profile:bMm = 309
+            double steel:profile:twMm = 21
+            double steel:profile:tfMm = 40
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 31350
+            double steel:profile:massPerMeterKg = 245
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD320x300"
+        {
+            string steel:profile:designation = "HD320x300"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 375
+            double steel:profile:bMm = 313
+            double steel:profile:twMm = 27
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 38350
+            double steel:profile:massPerMeterKg = 300
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD360x134"
+        {
+            string steel:profile:designation = "HD360x134"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 369
+            double steel:profile:twMm = 11.2
+            double steel:profile:tfMm = 18
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 17360
+            double steel:profile:massPerMeterKg = 134
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD360x147"
+        {
+            string steel:profile:designation = "HD360x147"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 370
+            double steel:profile:twMm = 12.3
+            double steel:profile:tfMm = 19.8
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 19090
+            double steel:profile:massPerMeterKg = 147
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD360x162"
+        {
+            string steel:profile:designation = "HD360x162"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 364
+            double steel:profile:bMm = 371
+            double steel:profile:twMm = 13.3
+            double steel:profile:tfMm = 21.8
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 20930
+            double steel:profile:massPerMeterKg = 162
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD360x179"
+        {
+            string steel:profile:designation = "HD360x179"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 368
+            double steel:profile:bMm = 373
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 23.9
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 23130
+            double steel:profile:massPerMeterKg = 179
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD360x196"
+        {
+            string steel:profile:designation = "HD360x196"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 372
+            double steel:profile:bMm = 374
+            double steel:profile:twMm = 16.4
+            double steel:profile:tfMm = 26.2
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 25330
+            double steel:profile:massPerMeterKg = 196
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x187"
+        {
+            string steel:profile:designation = "HD400x187"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 368
+            double steel:profile:bMm = 391
+            double steel:profile:twMm = 15
+            double steel:profile:tfMm = 24
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 24060
+            double steel:profile:massPerMeterKg = 187
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x216"
+        {
+            string steel:profile:designation = "HD400x216"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 375
+            double steel:profile:bMm = 394
+            double steel:profile:twMm = 17.3
+            double steel:profile:tfMm = 27.7
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 27850
+            double steel:profile:massPerMeterKg = 216
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x237"
+        {
+            string steel:profile:designation = "HD400x237"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 380
+            double steel:profile:bMm = 395
+            double steel:profile:twMm = 18.9
+            double steel:profile:tfMm = 30.2
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 30390
+            double steel:profile:massPerMeterKg = 237
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x262"
+        {
+            string steel:profile:designation = "HD400x262"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 387
+            double steel:profile:bMm = 398
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 33.3
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 33760
+            double steel:profile:massPerMeterKg = 262
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x287"
+        {
+            string steel:profile:designation = "HD400x287"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 393
+            double steel:profile:bMm = 399
+            double steel:profile:twMm = 22.6
+            double steel:profile:tfMm = 36.6
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 36930
+            double steel:profile:massPerMeterKg = 287
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x314"
+        {
+            string steel:profile:designation = "HD400x314"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 399
+            double steel:profile:bMm = 401
+            double steel:profile:twMm = 24.9
+            double steel:profile:tfMm = 39.6
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 40220
+            double steel:profile:massPerMeterKg = 314
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x347"
+        {
+            string steel:profile:designation = "HD400x347"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 407
+            double steel:profile:bMm = 404
+            double steel:profile:twMm = 27.2
+            double steel:profile:tfMm = 43.7
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 44500
+            double steel:profile:massPerMeterKg = 347
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x382"
+        {
+            string steel:profile:designation = "HD400x382"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 416
+            double steel:profile:bMm = 406
+            double steel:profile:twMm = 29.8
+            double steel:profile:tfMm = 48
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 49010
+            double steel:profile:massPerMeterKg = 382
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x421"
+        {
+            string steel:profile:designation = "HD400x421"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 425
+            double steel:profile:bMm = 409
+            double steel:profile:twMm = 32.8
+            double steel:profile:tfMm = 52.6
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 54010
+            double steel:profile:massPerMeterKg = 421
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x463"
+        {
+            string steel:profile:designation = "HD400x463"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 435
+            double steel:profile:bMm = 412
+            double steel:profile:twMm = 35.8
+            double steel:profile:tfMm = 57.4
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 59260
+            double steel:profile:massPerMeterKg = 463
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x509"
+        {
+            string steel:profile:designation = "HD400x509"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 446
+            double steel:profile:bMm = 416
+            double steel:profile:twMm = 39.1
+            double steel:profile:tfMm = 62.7
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 65200
+            double steel:profile:massPerMeterKg = 509
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x551"
+        {
+            string steel:profile:designation = "HD400x551"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 455
+            double steel:profile:bMm = 418
+            double steel:profile:twMm = 42
+            double steel:profile:tfMm = 67.6
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 70440
+            double steel:profile:massPerMeterKg = 551
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x592"
+        {
+            string steel:profile:designation = "HD400x592"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 465
+            double steel:profile:bMm = 421
+            double steel:profile:twMm = 45
+            double steel:profile:tfMm = 72.3
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 75790
+            double steel:profile:massPerMeterKg = 592
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x634"
+        {
+            string steel:profile:designation = "HD400x634"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 474
+            double steel:profile:bMm = 424
+            double steel:profile:twMm = 47.6
+            double steel:profile:tfMm = 77.1
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 81100
+            double steel:profile:massPerMeterKg = 634
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x677"
+        {
+            string steel:profile:designation = "HD400x677"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 483
+            double steel:profile:bMm = 428
+            double steel:profile:twMm = 51.2
+            double steel:profile:tfMm = 81.5
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 86640
+            double steel:profile:massPerMeterKg = 677
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x744"
+        {
+            string steel:profile:designation = "HD400x744"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 498
+            double steel:profile:bMm = 432
+            double steel:profile:twMm = 55.6
+            double steel:profile:tfMm = 88.9
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 95110
+            double steel:profile:massPerMeterKg = 744
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x818"
+        {
+            string steel:profile:designation = "HD400x818"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 514
+            double steel:profile:bMm = 437
+            double steel:profile:twMm = 60.5
+            double steel:profile:tfMm = 97
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 104630
+            double steel:profile:massPerMeterKg = 818
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x900"
+        {
+            string steel:profile:designation = "HD400x900"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 531
+            double steel:profile:bMm = 442
+            double steel:profile:twMm = 65.9
+            double steel:profile:tfMm = 106
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 114990
+            double steel:profile:massPerMeterKg = 900
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x990"
+        {
+            string steel:profile:designation = "HD400x990"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 550
+            double steel:profile:bMm = 448
+            double steel:profile:twMm = 71.9
+            double steel:profile:tfMm = 115
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 126200
+            double steel:profile:massPerMeterKg = 991
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HD400x1086"
+        {
+            string steel:profile:designation = "HD400x1086"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 569
+            double steel:profile:bMm = 454
+            double steel:profile:twMm = 78
+            double steel:profile:tfMm = 125
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 138600
+            double steel:profile:massPerMeterKg = 1087.8
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP200x43"
+        {
+            string steel:profile:designation = "HP200x43"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 205
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 9
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 5500
+            double steel:profile:massPerMeterKg = 42.5
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP200x53"
+        {
+            string steel:profile:designation = "HP200x53"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 204
+            double steel:profile:bMm = 207
+            double steel:profile:twMm = 11.3
+            double steel:profile:tfMm = 11.3
+            double steel:profile:rMm = 14
+            double steel:profile:areaMm2 = 6900
+            double steel:profile:massPerMeterKg = 53.5
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP220x57"
+        {
+            string steel:profile:designation = "HP220x57"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 210
+            double steel:profile:bMm = 224.5
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 11
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 7290
+            double steel:profile:massPerMeterKg = 57.2
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP260x75"
+        {
+            string steel:profile:designation = "HP260x75"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 249
+            double steel:profile:bMm = 265
+            double steel:profile:twMm = 12
+            double steel:profile:tfMm = 12
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 9550
+            double steel:profile:massPerMeterKg = 75
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP260x87"
+        {
+            string steel:profile:designation = "HP260x87"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 253
+            double steel:profile:bMm = 267
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 14
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 11120
+            double steel:profile:massPerMeterKg = 87.3
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x79"
+        {
+            string steel:profile:designation = "HP305x79"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 299.3
+            double steel:profile:bMm = 306.4
+            double steel:profile:twMm = 11
+            double steel:profile:tfMm = 11.1
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 10130
+            double steel:profile:massPerMeterKg = 78.9
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x88"
+        {
+            string steel:profile:designation = "HP305x88"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 301.7
+            double steel:profile:bMm = 307.8
+            double steel:profile:twMm = 12.4
+            double steel:profile:tfMm = 12.3
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 11290
+            double steel:profile:massPerMeterKg = 88.5
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x95"
+        {
+            string steel:profile:designation = "HP305x95"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303.7
+            double steel:profile:bMm = 308.7
+            double steel:profile:twMm = 13.3
+            double steel:profile:tfMm = 13.3
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 12170
+            double steel:profile:massPerMeterKg = 94.9
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x110"
+        {
+            string steel:profile:designation = "HP305x110"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 307.9
+            double steel:profile:bMm = 310.7
+            double steel:profile:twMm = 15.3
+            double steel:profile:tfMm = 15.4
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 14090
+            double steel:profile:massPerMeterKg = 110
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x126"
+        {
+            string steel:profile:designation = "HP305x126"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 312.3
+            double steel:profile:bMm = 312.9
+            double steel:profile:twMm = 17.5
+            double steel:profile:tfMm = 17.6
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 16140
+            double steel:profile:massPerMeterKg = 126
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x149"
+        {
+            string steel:profile:designation = "HP305x149"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 318.5
+            double steel:profile:bMm = 316
+            double steel:profile:twMm = 20.6
+            double steel:profile:tfMm = 20.7
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 19070
+            double steel:profile:massPerMeterKg = 149
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x180"
+        {
+            string steel:profile:designation = "HP305x180"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 326.7
+            double steel:profile:bMm = 319.7
+            double steel:profile:twMm = 24.8
+            double steel:profile:tfMm = 24.8
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 23010
+            double steel:profile:massPerMeterKg = 180
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x186"
+        {
+            string steel:profile:designation = "HP305x186"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 328.3
+            double steel:profile:bMm = 320.9
+            double steel:profile:twMm = 25.5
+            double steel:profile:tfMm = 25.6
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 23770
+            double steel:profile:massPerMeterKg = 186
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP305x223"
+        {
+            string steel:profile:designation = "HP305x223"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 337.9
+            double steel:profile:bMm = 325.7
+            double steel:profile:twMm = 30.3
+            double steel:profile:tfMm = 30.4
+            double steel:profile:rMm = 18
+            double steel:profile:areaMm2 = 28480
+            double steel:profile:massPerMeterKg = 223
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP320x88"
+        {
+            string steel:profile:designation = "HP320x88"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 303
+            double steel:profile:bMm = 304
+            double steel:profile:twMm = 12
+            double steel:profile:tfMm = 12
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 11420
+            double steel:profile:massPerMeterKg = 88.5
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP320x103"
+        {
+            string steel:profile:designation = "HP320x103"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 307
+            double steel:profile:bMm = 306
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 14
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 13250
+            double steel:profile:massPerMeterKg = 103
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP320x117"
+        {
+            string steel:profile:designation = "HP320x117"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 311
+            double steel:profile:bMm = 308
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 15090
+            double steel:profile:massPerMeterKg = 117
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP320x147"
+        {
+            string steel:profile:designation = "HP320x147"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 319
+            double steel:profile:bMm = 312
+            double steel:profile:twMm = 20
+            double steel:profile:tfMm = 20
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 18830
+            double steel:profile:massPerMeterKg = 147
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP320x184"
+        {
+            string steel:profile:designation = "HP320x184"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 329
+            double steel:profile:bMm = 317
+            double steel:profile:twMm = 25
+            double steel:profile:tfMm = 25
+            double steel:profile:rMm = 30
+            double steel:profile:areaMm2 = 23600
+            double steel:profile:massPerMeterKg = 184
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP360x109"
+        {
+            string steel:profile:designation = "HP360x109"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 346.4
+            double steel:profile:bMm = 371
+            double steel:profile:twMm = 12.8
+            double steel:profile:tfMm = 12.9
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 14170
+            double steel:profile:massPerMeterKg = 109
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP360x133"
+        {
+            string steel:profile:designation = "HP360x133"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 352
+            double steel:profile:bMm = 373.8
+            double steel:profile:twMm = 15.6
+            double steel:profile:tfMm = 15.7
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 17230
+            double steel:profile:massPerMeterKg = 133
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP360x152"
+        {
+            string steel:profile:designation = "HP360x152"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356.4
+            double steel:profile:bMm = 376
+            double steel:profile:twMm = 17.8
+            double steel:profile:tfMm = 17.9
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 19660
+            double steel:profile:massPerMeterKg = 152
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP360x174"
+        {
+            string steel:profile:designation = "HP360x174"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 361.4
+            double steel:profile:bMm = 378.5
+            double steel:profile:twMm = 20.3
+            double steel:profile:tfMm = 20.4
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 22450
+            double steel:profile:massPerMeterKg = 174
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP360x180"
+        {
+            string steel:profile:designation = "HP360x180"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 362.9
+            double steel:profile:bMm = 378.8
+            double steel:profile:twMm = 21.1
+            double steel:profile:tfMm = 21.1
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 23250
+            double steel:profile:massPerMeterKg = 180
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP400x122"
+        {
+            string steel:profile:designation = "HP400x122"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 348
+            double steel:profile:bMm = 390
+            double steel:profile:twMm = 14
+            double steel:profile:tfMm = 14
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 15890
+            double steel:profile:massPerMeterKg = 122
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP400x140"
+        {
+            string steel:profile:designation = "HP400x140"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 352
+            double steel:profile:bMm = 392
+            double steel:profile:twMm = 16
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 18160
+            double steel:profile:massPerMeterKg = 140
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP400x158"
+        {
+            string steel:profile:designation = "HP400x158"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 356
+            double steel:profile:bMm = 394
+            double steel:profile:twMm = 18
+            double steel:profile:tfMm = 18
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 20440
+            double steel:profile:massPerMeterKg = 158
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP400x176"
+        {
+            string steel:profile:designation = "HP400x176"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 360
+            double steel:profile:bMm = 396
+            double steel:profile:twMm = 20
+            double steel:profile:tfMm = 20
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 22730
+            double steel:profile:massPerMeterKg = 176
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP400x194"
+        {
+            string steel:profile:designation = "HP400x194"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 364
+            double steel:profile:bMm = 398
+            double steel:profile:twMm = 22
+            double steel:profile:tfMm = 22
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 25050
+            double steel:profile:massPerMeterKg = 194
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP400x213"
+        {
+            string steel:profile:designation = "HP400x213"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 368
+            double steel:profile:bMm = 400
+            double steel:profile:twMm = 24
+            double steel:profile:tfMm = 24
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 27370
+            double steel:profile:massPerMeterKg = 213
+            string steel:profile:standard = "EN 10365:2017"
+        }
+
+        def Scope "HP400x231"
+        {
+            string steel:profile:designation = "HP400x231"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 372
+            double steel:profile:bMm = 402
+            double steel:profile:twMm = 26
+            double steel:profile:tfMm = 26
+            double steel:profile:rMm = 24
+            double steel:profile:areaMm2 = 29720
+            double steel:profile:massPerMeterKg = 231
             string steel:profile:standard = "EN 10365:2017"
         }
 
