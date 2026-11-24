@@ -8054,6 +8054,313 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_brazil_w_and_hp_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/brazil/profiles-abnt-nbr-15980.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "brazil-abnt-nbr-15980-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        // The pack carries the usa pack's A6/A6M-05a W and HP rows (274 + 11 minus the one row
+        // whose printed SI designation another row already owns: the annex prints W920 X 345
+        // for W36X231 and W36X232 alike, the Nucor-Yamato size list names W920 x 345 for W36
+        // x 232 and lists no W36 x 231, and one library cannot carry two rows under one
+        // designation).
+        assert_eq!(library.entries.len(), 284);
+        // The thirteen shapes the Nucor-Yamato catalog does not roll carry a sharp corner;
+        // every other row carries one of the catalog's radii, exactly as in the usa pack.
+        let sharp = [
+            "W 1000 x 494,0", // W40X331
+            "W 920 x 1191,0", // W36X800
+            "W 310 x 21,0",   // W12X14
+            "W 250 x 28,4",   // W10X19
+            "W 250 x 25,3",   // W10X17
+            "W 250 x 22,3",   // W10X15
+            "W 250 x 17,9",   // W10X12
+            "W 200 x 22,5",   // W8X15
+            "W 200 x 19,3",   // W8X13
+            "W 200 x 15,0",   // W8X10
+            "W 130 x 28,1",   // W5X19
+            "W 130 x 23,8",   // W5X16
+            "W 100 x 19,3",   // W4X13
+        ];
+        let catalog_radii = [8.0, 8.5, 10.0, 13.0, 15.0, 19.0, 20.0, 30.0];
+        let mut designations = Vec::new();
+        let mut warned = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // W and HP shapes have parallel flanges: the i_shape family.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // Every row declares the edition of the national standard the regional producers
+            // print for these dimensions; the values behind it are the annex's SI column.
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("ABNT NBR 15980:2024"),
+                "{}",
+                entry.designation
+            );
+            // The designation is the producers' print form, and its mass tail is the row's
+            // nominal SI mass, decimal comma, one decimal place.
+            let mass = section.mass_per_meter_kg.unwrap();
+            let tail = format!("{mass:.1}").replace('.', ",");
+            assert!(
+                entry.designation.contains(" x ") && entry.designation.ends_with(&tail),
+                "{} does not carry its mass {tail}",
+                entry.designation
+            );
+            let radius = parametric.values()[4];
+            if sharp.contains(&entry.designation.as_str()) {
+                assert_eq!(radius, 0.0, "{}", entry.designation);
+            } else {
+                assert!(
+                    catalog_radii.contains(&radius),
+                    "{}: radius {radius}",
+                    entry.designation
+                );
+            }
+            // The same declared-area expectation as the usa pack, row for row: the standards
+            // print no radius and round their SI dimensions, so 150 rows sit more than one
+            // percent from the closed-form area, none beyond five (owner decision of
+            // 2026-10-18: a warning, never a refusal). The nominal SI mass of the designation
+            // follows the area at 7850 kg/m3 within 2.2 percent.
+            let area = section.area_mm2.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.022,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            if let Some(warning) = entry.record.declared_area_warning() {
+                warned += 1;
+                assert_eq!(warning.declared_mm2, area, "{}", entry.designation);
+                assert!(
+                    warning.relative_difference < 0.05,
+                    "{}: declared area {area} mm2 is {} off the outline",
+                    entry.designation,
+                    warning.relative_difference
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        assert_eq!(warned, 150, "rows carrying the declared-area warning");
+        // Spot checks: the usa pack's re-entry value for value, under the metric designation.
+        // designation, [h, b, tw, tf, r], area mm2, nominal mass kg/m.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "W 1100 x 499,0",
+            [1118.0, 405.0, 26.0, 45.0, 30.0],
+            63500.0,
+            499.0,
+        );
+        // The W 36 X 800 designation cell prints its area before its weight in both public
+        // copies; the row is read from its metric designation W920 X 1191.
+        spot(
+            "W 920 x 1191,0",
+            [1081.0, 457.0, 60.5, 109.0, 0.0],
+            152500.0,
+            1191.0,
+        );
+        spot(
+            "W 920 x 345,0",
+            [943.0, 308.0, 22.1, 39.9, 30.0],
+            44000.0,
+            345.0,
+        );
+        spot(
+            "W 610 x 101,0",
+            [603.0, 228.0, 10.5, 14.9, 30.0],
+            13000.0,
+            101.0,
+        );
+        spot(
+            "W 310 x 60,0",
+            [303.0, 203.0, 7.5, 13.1, 19.0],
+            7610.0,
+            60.0,
+        );
+        spot("W 150 x 13,0", [148.0, 100.0, 4.3, 4.9, 8.0], 1630.0, 13.0);
+        spot("W 100 x 19,3", [106.0, 103.0, 7.1, 8.8, 0.0], 2470.0, 19.3);
+        spot(
+            "HP 360 x 174,0",
+            [361.0, 378.0, 20.4, 20.4, 30.0],
+            22200.0,
+            174.0,
+        );
+        spot(
+            "HP 200 x 53,0",
+            [204.0, 207.0, 11.3, 11.3, 13.0],
+            6840.0,
+            53.0,
+        );
+        spot("W 250 x 22,3", [254.0, 102.0, 5.8, 6.9, 0.0], 2850.0, 22.3);
+        spot("W 130 x 23,8", [127.0, 127.0, 6.1, 9.1, 0.0], 3040.0, 23.8);
+        // The declared-area warning: widest on W 610 x 101,0, where the catalog radius is
+        // larger than the fillet the standard's area allows; absent where the two agree.
+        let difference = |designation: &str| {
+            library
+                .entry(designation)
+                .unwrap()
+                .record
+                .declared_area_warning()
+                .map(|w| w.relative_difference)
+        };
+        assert!((difference("W 610 x 101,0").unwrap() - 0.0431).abs() < 0.001);
+        assert!((difference("W 310 x 60,0").unwrap() - 0.0123).abs() < 0.0005);
+        assert_eq!(difference("W 150 x 13,0"), None);
+        // The W and HP rows in the producers' designation form, 273 + 11.
+        let assortment = [
+            "W 1100 x 499,0 W 1100 x 433,0 W 1100 x 390,0 W 1100 x 343,0",
+            "W 1000 x 883,0 W 1000 x 748,0 W 1000 x 642,0 W 1000 x 591,0 W 1000 x 554,0 W 1000 x 539,0 W 1000 x 483,0 W 1000 x 443,0 W 1000 x 412,0 W 1000 x 371,0 W 1000 x 321,0 W 1000 x 296,0 W 1000 x 584,0 W 1000 x 494,0 W 1000 x 486,0 W 1000 x 438,0 W 1000 x 415,0 W 1000 x 393,0 W 1000 x 350,0 W 1000 x 314,0 W 1000 x 272,0 W 1000 x 249,0 W 1000 x 222,0",
+            "W 920 x 1191,0 W 920 x 970,0 W 920 x 787,0 W 920 x 725,0 W 920 x 656,0 W 920 x 588,0 W 920 x 537,0 W 920 x 491,0 W 920 x 449,0 W 920 x 420,0 W 920 x 390,0 W 920 x 368,0 W 920 x 381,0 W 920 x 345,0 W 920 x 313,0 W 920 x 289,0 W 920 x 271,0 W 920 x 253,0 W 920 x 238,0 W 920 x 223,0 W 920 x 201,0",
+            "W 840 x 576,0 W 840 x 527,0 W 840 x 473,0 W 840 x 433,0 W 840 x 392,0 W 840 x 359,0 W 840 x 329,0 W 840 x 299,0 W 840 x 251,0 W 840 x 226,0 W 840 x 210,0 W 840 x 193,0 W 840 x 176,0",
+            "W 760 x 582,0 W 760 x 531,0 W 760 x 484,0 W 760 x 434,0 W 760 x 389,0 W 760 x 350,0 W 760 x 314,0 W 760 x 284,0 W 760 x 257,0 W 760 x 220,0 W 760 x 196,0 W 760 x 185,0 W 760 x 173,0 W 760 x 161,0 W 760 x 147,0 W 760 x 134,0",
+            "W 690 x 802,0 W 690 x 548,0 W 690 x 500,0 W 690 x 457,0 W 690 x 419,0 W 690 x 384,0 W 690 x 350,0 W 690 x 323,0 W 690 x 289,0 W 690 x 265,0 W 690 x 240,0 W 690 x 217,0 W 690 x 192,0 W 690 x 170,0 W 690 x 152,0 W 690 x 140,0 W 690 x 125,0",
+            "W 610 x 551,0 W 610 x 498,0 W 610 x 455,0 W 610 x 415,0 W 610 x 372,0 W 610 x 341,0 W 610 x 307,0 W 610 x 285,0 W 610 x 262,0 W 610 x 241,0 W 610 x 217,0 W 610 x 195,0 W 610 x 174,0 W 610 x 155,0 W 610 x 153,0 W 610 x 140,0 W 610 x 125,0 W 610 x 113,0 W 610 x 101,0 W 610 x 92,0 W 610 x 82,0",
+            "W 530 x 300,0 W 530 x 272,0 W 530 x 248,0 W 530 x 219,0 W 530 x 196,0 W 530 x 182,0 W 530 x 165,0 W 530 x 150,0 W 530 x 138,0 W 530 x 123,0 W 530 x 109,0 W 530 x 101,0 W 530 x 92,0 W 530 x 82,0 W 530 x 72,0 W 530 x 85,0 W 530 x 74,0 W 530 x 66,0",
+            "W 460 x 464,0 W 460 x 421,0 W 460 x 384,0 W 460 x 349,0 W 460 x 315,0 W 460 x 286,0 W 460 x 260,0 W 460 x 235,0 W 460 x 213,0 W 460 x 193,0 W 460 x 177,0 W 460 x 158,0 W 460 x 144,0 W 460 x 128,0 W 460 x 113,0 W 460 x 106,0 W 460 x 97,0 W 460 x 89,0 W 460 x 82,0 W 460 x 74,0 W 460 x 68,0 W 460 x 60,0 W 460 x 52,0",
+            "W 410 x 149,0 W 410 x 132,0 W 410 x 114,0 W 410 x 100,0 W 410 x 85,0 W 410 x 75,0 W 410 x 67,0 W 410 x 60,0 W 410 x 53,0 W 410 x 46,1 W 410 x 38,8",
+            "W 360 x 1086,0 W 360 x 990,0 W 360 x 900,0 W 360 x 818,0 W 360 x 744,0 W 360 x 677,0 W 360 x 634,0 W 360 x 592,0 W 360 x 551,0 W 360 x 509,0 W 360 x 463,0 W 360 x 421,0 W 360 x 382,0 W 360 x 347,0 W 360 x 314,0 W 360 x 287,0 W 360 x 262,0 W 360 x 237,0 W 360 x 216,0 W 360 x 196,0 W 360 x 179,0 W 360 x 162,0 W 360 x 147,0 W 360 x 134,0 W 360 x 122,0 W 360 x 110,0 W 360 x 101,0 W 360 x 91,0 W 360 x 79,0 W 360 x 72,0 W 360 x 64,0 W 360 x 58,0 W 360 x 51,0 W 360 x 44,6 W 360 x 39,0 W 360 x 32,9",
+            "W 310 x 500,0 W 310 x 454,0 W 310 x 415,0 W 310 x 375,0 W 310 x 342,0 W 310 x 313,0 W 310 x 283,0 W 310 x 253,0 W 310 x 226,0 W 310 x 202,0 W 310 x 179,0 W 310 x 158,0 W 310 x 143,0 W 310 x 129,0 W 310 x 117,0 W 310 x 107,0 W 310 x 97,0 W 310 x 86,0 W 310 x 79,0 W 310 x 74,0 W 310 x 67,0 W 310 x 60,0 W 310 x 52,0 W 310 x 44,5 W 310 x 38,7 W 310 x 32,7 W 310 x 28,3 W 310 x 23,8 W 310 x 21,0",
+            "W 250 x 167,0 W 250 x 149,0 W 250 x 131,0 W 250 x 115,0 W 250 x 101,0 W 250 x 89,0 W 250 x 80,0 W 250 x 73,0 W 250 x 67,0 W 250 x 58,0 W 250 x 49,1 W 250 x 44,8 W 250 x 38,5 W 250 x 32,7 W 250 x 28,4 W 250 x 25,3 W 250 x 22,3 W 250 x 17,9",
+            "W 200 x 100,0 W 200 x 86,0 W 200 x 71,0 W 200 x 59,0 W 200 x 52,0 W 200 x 46,1 W 200 x 41,7 W 200 x 35,9 W 200 x 31,3 W 200 x 26,6 W 200 x 22,5 W 200 x 19,3 W 200 x 15,0",
+            "W 150 x 37,1 W 150 x 29,8 W 150 x 22,5 W 150 x 24,0 W 150 x 18,0 W 150 x 13,5 W 150 x 13,0",
+            "W 130 x 28,1 W 130 x 23,8",
+            "W 100 x 19,3",
+            "HP 360 x 174,0 HP 360 x 152,0 HP 360 x 132,0 HP 360 x 108,0",
+            "HP 310 x 125,0 HP 310 x 110,0 HP 310 x 93,0 HP 310 x 79,0",
+            "HP 250 x 85,0 HP 250 x 62,0",
+            "HP 200 x 53,0",
+        ];
+        // The designations carry spaces themselves, so the group strings split on the series
+        // prefix that starts every one, never on a bare space.
+        let mut expected: Vec<&str> = Vec::new();
+        for group in &assortment {
+            let mut rest: &str = group;
+            loop {
+                match rest.find(" W ").or_else(|| rest.find(" HP ")) {
+                    Some(index) => {
+                        expected.push(rest[..index].trim_end());
+                        rest = &rest[index + 1..];
+                    }
+                    None => {
+                        expected.push(rest.trim_end());
+                        break;
+                    }
+                }
+            }
+        }
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Refused, never a near match: the EDI inch form of a shipped row and its compact
+        // metric designation (the library has no aliases; the inch form resolves through the
+        // `usa` pack), the shapes of the newer editions of the standard, the two light W 150
+        // rows Gerdau rolls outside both standards, the designation W 920 x 345,0's sibling
+        // is named above, and every other spelling or family of the same annex.
+        for absent in [
+            "W44X335",
+            "W12X40",
+            "HP14X117",
+            "W36X232",
+            "W1100X499",
+            "W44x335",
+            "W 44 X 335",
+            "w 310 x 60,0",
+            "W 310 x 60",
+            "W 1100 x 607,0",
+            "W 360 x 1202,0",
+            "HP 410 x 272,0",
+            "HP 460 x 304,0",
+            "W 150 x 9,2",
+            "W 150 x 10,4",
+            "S 310 x 74,0",
+            "C 250 x 38,1",
+            "L 102 x 102 x 12,7",
+            "BT 100 x 10",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_brazil_and_usa_libraries_resolve_one_shape_under_both_designation_forms() {
+        // The library has no alias field: the same row resolves under the producers' metric
+        // designation through the `brazil` pack and under the EDI inch form through the `usa`
+        // pack, and never the other way round.
+        let brazil = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/brazil/profiles-abnt-nbr-15980.usda"
+        ))
+        .unwrap();
+        let usa = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/profiles-astm-a6-w-hp.usda"
+        ))
+        .unwrap();
+        let lookup = Lookup::new(vec![
+            Source {
+                path: "brazil".to_owned(),
+                library: brazil,
+                layer: LAYER_ENVIRONMENT,
+            },
+            Source {
+                path: "usa".to_owned(),
+                library: usa,
+                layer: LAYER_ENVIRONMENT,
+            },
+        ]);
+        let area = |designation: &str| match &lookup.find(designation).unwrap().1.record {
+            DefinitionRecord::SectionProfile { section, .. } => section.area_mm2,
+            _ => None,
+        };
+        assert_eq!(area("W 310 x 60,0"), area("W12X40"), "the same row's area");
+        assert_eq!(area("W 310 x 60,0"), Some(7610.0));
+        assert_eq!(area("HP 360 x 174,0"), area("HP14X117"));
+    }
+
+    #[test]
     fn the_shipped_china_h_section_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
