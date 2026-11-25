@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// The shipped USA environment holds the real ASTM A6/A6M-05a W and HP nominal dimensions (the
-// standard's own SI column), re-entered by hand as our own data, with the Nucor-Yamato
-// catalog as the radius source and the row cross-check; provenance and licence are in
-// `ATTRIBUTION.md` and in the library's own metadata. The expected areas and masses in this
-// file are the standard's published values.
+// The shipped USA environment holds the real ASTM A6/A6M-05a W, HP, S and C nominal
+// dimensions (the standard's own SI column), re-entered by hand as our own data, with the
+// Nucor-Yamato catalog as the radius source and the row cross-check; provenance and licence
+// are in `ATTRIBUTION.md` and in the libraries' own metadata. The expected areas and masses
+// in this file are the standard's published values.
 
 //! The `usa` environment end to end through the real `beamcraft` binary (#708, profiles
 //! slice): it is listed with its provenance beside its material library, a project created
@@ -77,7 +77,7 @@ fn num(json: &Json, path: &[&str]) -> f64 {
 #[test]
 fn the_shipped_usa_environment_lists_its_sections_and_provenance() {
     let f = Fixture::new();
-    // The environment lists 285 entries, over the 256-entry page cap, so the second page
+    // The environment lists 344 entries, over the 256-entry page cap, so the second page
     // completes the listing before the per-entry assertions.
     let listed = f.ok(&[
         "list-library",
@@ -88,12 +88,25 @@ fn the_shipped_usa_environment_lists_its_sections_and_provenance() {
     ]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(text(at(&listed, &["environment"]), "id"), "usa");
-    assert_eq!(num(&listed, &["entry_count"]), 285.0);
+    assert_eq!(num(&listed, &["entry_count"]), 344.0);
     assert_eq!(at(&listed, &["shadowed"]).array().unwrap().len(), 0);
-    // The environment now carries one profile library beside its material library.
+    // The environment carries two profile libraries beside its material library, in the
+    // order its file lists them: the S and C shapes first, the W and HP shapes second.
     let libraries = at(&listed, &["libraries"]).array().unwrap();
-    assert_eq!(libraries.len(), 1);
-    let info = at(&libraries[0], &["library"]);
+    assert_eq!(libraries.len(), 2);
+    let sc_info = at(&libraries[0], &["library"]);
+    assert_eq!(text(sc_info, "id"), "usa-astm-a6-s-c-profiles");
+    assert_eq!(
+        text(sc_info, "title"),
+        "USA hot-rolled sections (ASTM A6/A6M: S, C)"
+    );
+    assert_eq!(text(sc_info, "version"), "1");
+    assert_eq!(text(sc_info, "licence"), "MPL-2.0");
+    assert!(
+        !text(sc_info, "source").is_empty(),
+        "the source is declared"
+    );
+    let info = at(&libraries[1], &["library"]);
     assert_eq!(text(info, "id"), "usa-astm-a6-w-hp-profiles");
     assert_eq!(
         text(info, "title"),
@@ -113,9 +126,9 @@ fn the_shipped_usa_environment_lists_its_sections_and_provenance() {
         "--limit",
         "256",
     ]);
-    assert_eq!(num(&rest, &["entry_count"]), 285.0);
+    assert_eq!(num(&rest, &["entry_count"]), 344.0);
     entries.extend(at(&rest, &["entries"]).array().unwrap().iter().cloned());
-    assert_eq!(entries.len(), 285);
+    assert_eq!(entries.len(), 344);
     // Every catalogue figure below is the standard's published SI value; the radius is the
     // Nucor-Yamato catalog's, in millimetres.
     let entry = |designation: &str| {
@@ -124,6 +137,39 @@ fn the_shipped_usa_environment_lists_its_sections_and_provenance() {
             .find(|e| text(e, "designation") == designation)
             .unwrap_or_else(|| panic!("{designation} is not listed"))
     };
+    // The S and C shapes of the second library ride the tapered families with the printed
+    // 16 2/3 percent slope (k = 1/6) and a sharp toe; the root radius is the catalog's.
+    let s24 = entry("S24X121");
+    assert_eq!(text(s24, "library_id"), "usa-astm-a6-s-c-profiles");
+    assert_eq!(num(s24, &["parameters_mm", "h"]), 622.0);
+    assert_eq!(num(s24, &["parameters_mm", "b"]), 204.0);
+    assert_eq!(num(s24, &["parameters_mm", "s"]), 20.3);
+    assert_eq!(num(s24, &["parameters_mm", "t"]), 27.7);
+    assert_eq!(num(s24, &["parameters_mm", "r"]), 19.0);
+    assert_eq!(num(s24, &["parameters_mm", "r1"]), 0.0);
+    close(num(s24, &["parameters_mm", "k"]), 1.0 / 6.0, 1e-12);
+    assert_eq!(num(s24, &["area_mm2"]), 23000.0);
+    assert_eq!(num(s24, &["mass_per_meter_kg"]), 180.0);
+    assert_eq!(s24.get("declared_area_warning").unwrap(), &Json::Null);
+    let c15 = entry("C15X50");
+    assert_eq!(text(c15, "library_id"), "usa-astm-a6-s-c-profiles");
+    assert_eq!(num(c15, &["parameters_mm", "h"]), 381.0);
+    assert_eq!(num(c15, &["parameters_mm", "b"]), 94.0);
+    assert_eq!(num(c15, &["parameters_mm", "s"]), 18.2);
+    assert_eq!(num(c15, &["parameters_mm", "t"]), 16.5);
+    assert_eq!(num(c15, &["parameters_mm", "r"]), 13.0);
+    assert_eq!(num(c15, &["area_mm2"]), 9480.0);
+    assert_eq!(num(c15, &["mass_per_meter_kg"]), 74.0);
+    // A shape the catalog does not roll carries a sharp corner: radius zero.
+    assert_eq!(num(entry("S4X9.5"), &["parameters_mm", "r"]), 0.0);
+    assert_eq!(num(entry("C3X3.5"), &["parameters_mm", "r"]), 0.0);
+    // The small sharp-corner rows carry the declared-area warning; C3X3.5 is the widest case.
+    let c3 = entry("C3X3.5");
+    let warning = at(c3, &["declared_area_warning"]);
+    assert_eq!(num(warning, &["declared_mm2"]), 665.0);
+    close(num(warning, &["relative_difference"]), 0.0424, 0.001);
+    assert_eq!(num(warning, &["threshold"]), 0.01);
+    assert_eq!(num(warning, &["threshold_percent"]), 1.0);
     let w44 = entry("W44X335");
     assert_eq!(text(w44, "library_id"), "usa-astm-a6-w-hp-profiles");
     assert_eq!(num(w44, &["parameters_mm", "h"]), 1118.0);
@@ -186,6 +232,13 @@ fn a_project_created_with_the_usa_environment_resolves_its_designations() {
             .is_file(),
         "the project copy holds the ASTM A6/A6M W and HP library"
     );
+    assert!(
+        std::path::Path::new(&store)
+            .join("environment")
+            .join("profiles-astm-a6-s-c.usda")
+            .is_file(),
+        "the project copy holds the ASTM A6/A6M S and C library"
+    );
 
     // The designation round rides one process: a designation of the pack resolves through
     // the project's own environment copy, with no --library option naming any file, and
@@ -202,7 +255,7 @@ fn a_project_created_with_the_usa_environment_resolves_its_designations() {
         f64,
         f64,
     );
-    let cases: [Designation; 5] = [
+    let cases: [Designation; 7] = [
         (
             "beam", "0,0,0", "6000,0,0", "W12X40", "A992", 7610.0, 358.431,
         ),
@@ -243,12 +296,40 @@ fn a_project_created_with_the_usa_environment_resolves_its_designations() {
             6840.0,
             161.082,
         ),
+        // The second library: a tapered_i S beam and a tapered_c C column, both with the
+        // catalog radius, weigh from the same declared areas.
+        (
+            "beam",
+            "20000,0,0",
+            "26000,0,0",
+            "S12X50",
+            "Steel",
+            9480.0,
+            446.508,
+        ),
+        (
+            "column",
+            "28000,0,0",
+            "28000,0,3000",
+            "C15X50",
+            "Steel",
+            9480.0,
+            223.254,
+        ),
     ];
-    // A designation the shipped edition does not publish is refused, not silently
-    // substituted: no jumbo shape of the newer editions of the standard (W44X408, HP16X183),
-    // no other shape family of the same annex (S24X121), and not the metric designation of
-    // a shipped row either (W1100X499): the pack names its rows in the EDI inch form only.
-    let absent = ["W44X408", "HP16X183", "S24X121", "W1100X499"];
+    // A designation the environment does not ship is refused, not silently substituted: no
+    // jumbo shape of the newer editions of the standard (W44X408, HP16X183), no M, MC or L
+    // shape of the same annex (their slope, and the angles' designation form, stay open),
+    // and not the metric designation of a shipped row either (W1100X499): the pack names its
+    // rows in the EDI inch form only.
+    let absent = [
+        "W44X408",
+        "HP16X183",
+        "M12X11.6",
+        "MC18X58",
+        "L8X8X1",
+        "W1100X499",
+    ];
     let member = |profile: &str, kind: &str, start: &str, end: &str, material: &str| {
         Scripted::ok(&[
             "create-member",
@@ -290,7 +371,7 @@ fn a_project_created_with_the_usa_environment_resolves_its_designations() {
         ]));
     }
     let replies = f.script(&store, &lines);
-    // Replies 0..5 carry the members, 5..9 the refusals (the refused lines commit nothing).
+    // Replies 0..7 carry the members, 7..13 the refusals (the refused lines commit nothing).
     for (index, (_, _, _, profile, _, area, mass)) in cases.iter().enumerate() {
         let made = &replies[index];
         assert_eq!(text(made, "outcome"), "member_created", "{profile}");
@@ -301,31 +382,39 @@ fn a_project_created_with_the_usa_environment_resolves_its_designations() {
     }
     for (index, designation) in absent.iter().enumerate() {
         assert_eq!(
-            text(&replies[5 + index], "code"),
+            text(&replies[7 + index], "code"),
             "NOT_FOUND",
             "{designation}"
         );
     }
-    // The spent designations leave the picker list; the other 280 stay offered, beside the
+    // The spent designations leave the picker list; the other 337 stay offered, beside the
     // nineteen generic profiles of the `blank` fallback layer every chain reaches. The listing
     // is read in its own process: it carries every environment profile.
     let listed = f.ok(&["definitions", "--store", &store]);
     let offered = list(&listed, "environment_profiles");
-    assert_eq!(offered.len(), 299);
+    assert_eq!(offered.len(), 356);
     assert!(
         offered.iter().all(|p| text(p, "designation") != "W12X40"),
         "the spent designation is no longer offered"
     );
     assert!(
         offered.iter().any(|p| text(p, "designation") == "W44X290"),
-        "an unspent designation of the pack is offered"
+        "an unspent designation of the W and HP pack is offered"
+    );
+    assert!(
+        offered.iter().any(|p| text(p, "designation") == "S24X106"),
+        "an unspent designation of the S and C pack is offered"
+    );
+    assert!(
+        offered.iter().any(|p| text(p, "designation") == "C15X40"),
+        "an unspent C designation of the S and C pack is offered"
     );
 
     // The model is self-contained: a fresh process reopens the store and reports the same
     // catalogue figures without the environment being named.
     let inspected = f.ok(&["inspect-elements", "--store", &store]);
     let members = at(&inspected, &["members"]).array().unwrap();
-    assert_eq!(members.len(), 5);
+    assert_eq!(members.len(), 7);
     for member in members {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
