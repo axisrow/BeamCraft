@@ -96,7 +96,7 @@ impl Scope {
 }
 
 /// A single supervised command, with its original status and separate execution time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stage {
     /// Stable step name.
@@ -110,7 +110,7 @@ pub struct Stage {
 }
 
 /// A successful report is eligible only after all required steps and snapshot validation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Report {
     /// Wire format version.

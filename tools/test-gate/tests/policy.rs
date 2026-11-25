@@ -184,6 +184,13 @@ fn publish_preserves_human_text_escapes_delimiters_and_replaces_one_block() {
     assert!(report::from_body("").is_err());
     assert!(report::from_body(&format!("{body}{body}")).is_err());
     assert!(report::from_body(report::BEGIN).is_err());
+    github::confirm_stored(&body, &r).unwrap();
+    github::confirm_stored("Human text only, no machine block", &r)
+        .expect_err("a silent no-op publication must fail loudly");
+    let mut different = success();
+    different.executed_tests += 1;
+    github::confirm_stored(&body, &different)
+        .expect_err("a stored block differing from this report must fail loudly");
 }
 
 #[test]
