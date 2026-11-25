@@ -3216,10 +3216,11 @@ mod tests {
             environment.info.fastener_libraries,
             ["fasteners-rcsc-2025.usda"]
         );
-        // The profile namespace is unchanged by the fastener listing: the A6 pack keeps its
-        // entries.
-        assert_eq!(environment.sources.len(), 1);
-        assert_eq!(environment.sources[0].library.entries.len(), 285);
+        // The profile namespace is unchanged by the fastener listing: both A6 packs keep
+        // their entries.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.sources[0].library.entries.len(), 59);
+        assert_eq!(environment.sources[1].library.entries.len(), 285);
         // The RCSC fastener set rides the same environment, admitted with declared provenance.
         assert_eq!(environment.fastener_sources.len(), 1);
         let bolts = &environment.fastener_sources[0];
@@ -3934,13 +3935,20 @@ mod tests {
             "/../../environments/usa/environment.usda"
         );
         let environment = load_environment(path).unwrap();
-        assert_eq!(environment.info.libraries, ["profiles-astm-a6-w-hp.usda"]);
+        assert_eq!(
+            environment.info.libraries,
+            ["profiles-astm-a6-s-c.usda", "profiles-astm-a6-w-hp.usda"]
+        );
         assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
-        // The environment carries its profile library beside its material library and its
-        // RCSC fastener set (the fastener slice of #708).
-        assert_eq!(environment.sources.len(), 1);
+        // The environment carries its two profile libraries beside its material library and
+        // its RCSC fastener set (the fastener slice of #708).
+        assert_eq!(environment.sources.len(), 2);
         assert_eq!(
             environment.sources[0].library.info.id,
+            "usa-astm-a6-s-c-profiles"
+        );
+        assert_eq!(
+            environment.sources[1].library.info.id,
             "usa-astm-a6-w-hp-profiles"
         );
         assert_eq!(environment.fastener_sources.len(), 1);
@@ -9107,6 +9115,270 @@ mod tests {
             "W1100X499",
             "W44x335",
             "W 44 X 335",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_usa_s_and_c_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/profiles-astm-a6-s-c.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "usa-astm-a6-s-c-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 59);
+        // The S shapes ride the tapered_i family and the C shapes the tapered_c family;
+        // every row carries the approximately 16 2/3 percent inner-flange slope the
+        // standard's terminology prints for S and C (1/6 as a rise over run), and no toe
+        // radius, which no admitted source prints: a sharp toe everywhere. The root radius
+        // is the Nucor-Yamato catalog's R for the 17 S and 6 C shapes it rolls and zero
+        // (a sharp root) for the others, exactly as the W and HP pack takes it.
+        let rolled_s = [
+            "S24X121", "S24X106", "S24X100", "S24X90", "S24X80", "S20X96", "S20X86", "S20X75",
+            "S20X66", "S18X70", "S18X54.7", "S15X50", "S15X42.9", "S12X50", "S12X40.8", "S12X35",
+            "S12X31.8",
+        ];
+        let rolled_c = [
+            "C15X50", "C15X40", "C15X33.9", "C12X30", "C12X25", "C12X20.7",
+        ];
+        let mut designations = Vec::new();
+        let mut s_rows = 0;
+        let mut c_rows = 0;
+        let mut warned = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            let is_s = entry.designation.starts_with('S');
+            assert_eq!(
+                parametric.family(),
+                if is_s {
+                    SectionFamily::TaperedI
+                } else {
+                    SectionFamily::TaperedC
+                },
+                "{}",
+                entry.designation
+            );
+            if is_s {
+                s_rows += 1;
+            } else {
+                c_rows += 1;
+            }
+            let values = parametric.values();
+            assert!(
+                (values[6] - 1.0 / 6.0).abs() < 1e-12,
+                "{}: slope {} is not the printed 16 2/3 percent",
+                entry.designation,
+                values[6]
+            );
+            assert_eq!(
+                values[5], 0.0,
+                "{}: no admitted source prints a toe radius",
+                entry.designation
+            );
+            let radius = values[4];
+            let rolled: &[&str] = if is_s { &rolled_s } else { &rolled_c };
+            if rolled.contains(&entry.designation.as_str()) {
+                assert!(
+                    [10.0, 11.0, 13.0, 14.0, 19.0].contains(&radius),
+                    "{}: radius {radius}",
+                    entry.designation
+                );
+            } else {
+                assert_eq!(radius, 0.0, "{}", entry.designation);
+            }
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("ASTM A6/A6M-05a"),
+                "{}",
+                entry.designation
+            );
+            // The declared-area warning: the standard's area carries the real fillet and the
+            // toe rounding while the row keeps the catalog root radius and a sharp toe, and
+            // the SI column rounds its dimensions. 10 S rows and 17 C rows warn — twenty-six
+            // of them sharp-corner rows, and S20X86, whose closed form with the catalog's
+            // theoretical radius sits just over one percent from the declared area — none
+            // beyond 5 percent (owner decision of 2026-10-18: a warning, never a refusal).
+            // The nominal SI mass of the designation follows the area at 7850 kg/m3 within
+            // 4.4 percent (worst C5X6.7).
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.05,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            if let Some(warning) = entry.record.declared_area_warning() {
+                warned += 1;
+                assert_eq!(warning.declared_mm2, area, "{}", entry.designation);
+                assert!(
+                    warning.relative_difference < 0.05,
+                    "{}: declared area {area} mm2 is {} off the outline",
+                    entry.designation,
+                    warning.relative_difference
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        assert_eq!(s_rows, 28, "the S rows of table A2.2");
+        assert_eq!(c_rows, 31, "the C rows of table A2.5");
+        assert_eq!(warned, 27, "rows carrying the declared-area warning");
+        // Spot checks against the standard's printed SI column and the catalog's radius:
+        // designation, [h, b, s, t, r, r1, k], area mm2, nominal mass kg/m.
+        let spot = |designation: &str, values: [f64; 7], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "S24X121",
+            [622.0, 204.0, 20.3, 27.7, 19.0, 0.0, 1.0 / 6.0],
+            23000.0,
+            180.0,
+        );
+        spot(
+            "S12X50",
+            [305.0, 139.0, 17.4, 16.7, 14.0, 0.0, 1.0 / 6.0],
+            9480.0,
+            74.0,
+        );
+        spot(
+            "S4X9.5",
+            [102.0, 71.0, 8.3, 7.4, 0.0, 0.0, 1.0 / 6.0],
+            1800.0,
+            14.1,
+        );
+        spot(
+            "S3X5.7",
+            [76.0, 59.0, 4.3, 6.6, 0.0, 0.0, 1.0 / 6.0],
+            1080.0,
+            8.5,
+        );
+        spot(
+            "C15X50",
+            [381.0, 94.0, 18.2, 16.5, 13.0, 0.0, 1.0 / 6.0],
+            9480.0,
+            74.0,
+        );
+        spot(
+            "C4X5.4",
+            [102.0, 40.0, 4.7, 7.5, 0.0, 0.0, 1.0 / 6.0],
+            1030.0,
+            8.0,
+        );
+        spot(
+            "C3X3.5",
+            [76.0, 35.0, 3.4, 6.9, 0.0, 0.0, 1.0 / 6.0],
+            665.0,
+            5.2,
+        );
+        // The declared-area warning: widest on C3X3.5, whose sharp corners drop the toe
+        // rounding the standard's area includes; absent where the two agree (S24X121 and
+        // C15X50 among them).
+        let difference = |designation: &str| {
+            library
+                .entry(designation)
+                .unwrap()
+                .record
+                .declared_area_warning()
+                .map(|w| w.relative_difference)
+        };
+        assert!((difference("C3X3.5").unwrap() - 0.0424).abs() < 0.001);
+        assert!((difference("S3X5.7").unwrap() - 0.0297).abs() < 0.001);
+        assert_eq!(difference("S24X121"), None);
+        assert_eq!(difference("C15X50"), None);
+        // Both tables exactly as ASTM A6/A6M-05a Annex A2 prints them, 28 + 31.
+        let s_assortment = [
+            "S24X121 S24X106 S24X100 S24X90 S24X80",
+            "S20X96 S20X86 S20X75 S20X66",
+            "S18X70 S18X54.7",
+            "S15X50 S15X42.9",
+            "S12X50 S12X40.8 S12X35 S12X31.8",
+            "S10X35 S10X25.4",
+            "S8X23 S8X18.4",
+            "S6X17.2 S6X12.5",
+            "S5X10",
+            "S4X9.5 S4X7.7",
+            "S3X7.5 S3X5.7",
+        ];
+        let c_assortment = [
+            "C15X50 C15X40 C15X33.9",
+            "C12X30 C12X25 C12X20.7",
+            "C10X30 C10X25 C10X20 C10X15.3",
+            "C9X20 C9X15 C9X13.4",
+            "C8X18.5 C8X13.7 C8X11.5",
+            "C7X14.7 C7X12.2 C7X9.8",
+            "C6X13 C6X10.5 C6X8.2",
+            "C5X9 C5X6.7",
+            "C4X7.2 C4X5.4 C4X4.5",
+            "C3X6 C3X5 C3X4.1 C3X3.5",
+        ];
+        let mut expected: Vec<&str> = s_assortment
+            .iter()
+            .chain(c_assortment.iter())
+            .flat_map(|g| g.split(' '))
+            .collect();
+        assert_eq!(expected.len(), 59, "the assortment");
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Refused, never a near match: the M and MC shapes of the same annex (no admitted
+        // source prints their inner-flange slope, which both tapered families need), the L
+        // shapes (their own slice; the model admits angles), the metric designation of a
+        // shipped row (no aliases), every other spelling, and a W shape of the other USA
+        // library.
+        for absent in [
+            "M12X11.6",
+            "M318X18.5",
+            "MC18X58",
+            "MC460X86",
+            "L8X8X1",
+            "L203X203X28.6",
+            "S610X180",
+            "C380X74",
+            "S24x121",
+            "S 24 X 121",
+            "W12X40",
             "IPE300",
         ] {
             assert_eq!(

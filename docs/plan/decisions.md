@@ -4,6 +4,28 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-25
+
+- **USA S and C shapes ride the printed slope on the same footing as the W and HP slice; M and
+  MC wait for a source that prints their slope.** Decision on the second USA profiles slice
+  (#708), taken under the standing analogy rule (a convention the landed pack already carries
+  extends to the same annex's sibling tables): the `usa` environment's second profile library
+  ships the 28 S shapes (table A2.2, the `tapered_i` family) and 31 C shapes (table A2.5, the
+  `tapered_c` family) of ASTM A6/A6M-05a Annex A2, re-entered by hand from the same two public
+  copies the W and HP rows were read from, with the root radius from the Nucor-Yamato catalog
+  for the 17 S and 6 C shapes it rolls and a sharp corner for the others, a sharp toe on every
+  row (no admitted source prints a toe radius), and `k = 1/6` on every row — the
+  "approximately 16 2/3 %" slope the standard's own terminology prints for S and C (3.1.2.5,
+  3.1.2.7) and the catalog's general notes repeat. The designations stay in the EDI inch form
+  of the `usa` pack. The M shapes (A6 lists 22 with SI values) and MC shapes (41) stay
+  `NOT_FOUND`: both tapered families need the slope, A6's terminology prints none for M (it
+  defines them only as shapes that cannot be classified as W, S or HP), the catalog states the
+  MC slope "varies" and prints no per-row value, and neither storing a false parallel-flange
+  `k = 0` nor deriving a slope from the catalog's detailing distances is pack discipline. A
+  source that prints a per-row M or MC slope, or an owner convention declaring one, reopens
+  them. The design note is
+  [`usa-astm-a6-s-c-profiles.md`](../design/usa-astm-a6-s-c-profiles.md).
+
 ## 2026-11-24
 
 - **South America profile geometry is the A6/A6M-05a W imports, named in the standard's
