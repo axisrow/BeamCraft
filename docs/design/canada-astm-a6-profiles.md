@@ -51,8 +51,9 @@ the USA pack ships. Both names resolve to the same geometry; 569 entries carry t
   "X 18.0" (W6X12), "X 24.0" (W6X16), "X 15.0" (W8X10), "X 21.0" (W12X14) and "W360 X 39.0"
   (W14X26) — holapl rows 3447–3450, 3441 and 3350, womicsteel rows 3448–3451, 3442 and 3350 —
   so these six designations carry the printed `.0` on purpose. The sibling south-america pack
-  (#793) reads the same column of the same copies as W150x13, W150x18, W150x24, W200x15,
-  W310x21 and W360x39 without the `.0`; its follow-up issue names the rows and the evidence.
+  (#793) read the same column of the same copies as W150x13, W150x18, W150x24, W200x15,
+  W310x21 and W360x39 without the `.0`; its follow-up issue names the rows and the evidence,
+  and the pack now ships the printed forms.
   The inch alias is the USA pack's designation unchanged ("W12X40", "W6X8.5"), so the same rows
   resolve by either name across the two environments.
 - **Values.** Depth, flange width, web thickness, flange thickness, area and the nominal mass of
