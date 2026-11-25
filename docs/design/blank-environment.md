@@ -68,8 +68,11 @@ saved setting.
   and, since 2026-11-24, a fastener library with the RCSC 2025 structural bolt set (the
   F3125 A325 and A490 heavy hex bolts, 1/2 to 1-1/2 in, each row declaring the standard
   hole of Table 3.1; see `usa-rcsc-fasteners.md`) — and `environments/canada/`
-  (2026-11-15) is grades-only the same way: the complete weldable category of
-  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W). `environments/south-america/`
+  (2026-11-15) started grades-only the same way, with the complete weldable category of
+  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W), and since 2026-11-24
+  carries a profile library too: the W and HP shapes of ASTM A6/A6M-05a under the metric
+  designations the standard prints, with the EDI inch designations shipped as alias entries
+  (569 entries; see `canada-astm-a6-profiles.md`). `environments/south-america/`
   (2026-11-23, #711) started grades-only and is national: the complete grade set of NCh203.Of2006,
   the official Chilean structural steel standard, in the standard's own designations — the
   general-construction class ES (A240ES, A270ES, A345ES, M345ES, Y345ES) and the dynamic-load class
