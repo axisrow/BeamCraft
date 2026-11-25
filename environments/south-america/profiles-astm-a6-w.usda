@@ -2844,9 +2844,9 @@ def Scope "Library"
             string steel:profile:standard = "ASTM A6/A6M-05a"
         }
 
-        def Scope "W360x39"
+        def Scope "W360x39_0"
         {
-            string steel:profile:designation = "W360x39"
+            string steel:profile:designation = "W360x39.0"
             token steel:profile:family = "i_shape"
             double steel:profile:hMm = 353
             double steel:profile:bMm = 128
@@ -3264,9 +3264,9 @@ def Scope "Library"
             string steel:profile:standard = "ASTM A6/A6M-05a"
         }
 
-        def Scope "W310x21"
+        def Scope "W310x21_0"
         {
-            string steel:profile:designation = "W310x21"
+            string steel:profile:designation = "W310x21.0"
             token steel:profile:family = "i_shape"
             double steel:profile:hMm = 303
             double steel:profile:bMm = 101
@@ -3698,9 +3698,9 @@ def Scope "Library"
             string steel:profile:standard = "ASTM A6/A6M-05a"
         }
 
-        def Scope "W200x15"
+        def Scope "W200x15_0"
         {
-            string steel:profile:designation = "W200x15"
+            string steel:profile:designation = "W200x15.0"
             token steel:profile:family = "i_shape"
             double steel:profile:hMm = 200
             double steel:profile:bMm = 100
@@ -3754,9 +3754,9 @@ def Scope "Library"
             string steel:profile:standard = "ASTM A6/A6M-05a"
         }
 
-        def Scope "W150x24"
+        def Scope "W150x24_0"
         {
-            string steel:profile:designation = "W150x24"
+            string steel:profile:designation = "W150x24.0"
             token steel:profile:family = "i_shape"
             double steel:profile:hMm = 160
             double steel:profile:bMm = 102
@@ -3768,9 +3768,9 @@ def Scope "Library"
             string steel:profile:standard = "ASTM A6/A6M-05a"
         }
 
-        def Scope "W150x18"
+        def Scope "W150x18_0"
         {
-            string steel:profile:designation = "W150x18"
+            string steel:profile:designation = "W150x18.0"
             token steel:profile:family = "i_shape"
             double steel:profile:hMm = 153
             double steel:profile:bMm = 102
@@ -3796,9 +3796,9 @@ def Scope "Library"
             string steel:profile:standard = "ASTM A6/A6M-05a"
         }
 
-        def Scope "W150x13"
+        def Scope "W150x13_0"
         {
-            string steel:profile:designation = "W150x13"
+            string steel:profile:designation = "W150x13.0"
             token steel:profile:family = "i_shape"
             double steel:profile:hMm = 148
             double steel:profile:bMm = 100
