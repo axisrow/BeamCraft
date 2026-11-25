@@ -139,6 +139,24 @@ pub fn publish(root: &Path, repo: &str, number: u64, report_path: &Path) -> Resu
     if !result.success() {
         return fail("GitHub refused report publication");
     }
+    // Read the description back: a PATCH that reports success but stores no
+    // machine block (truncated input, API quirk) must fail loudly, because
+    // CI planning reads that block and a silent no-op looks broken from CI.
+    let stored = api(repo, &format!("pulls/{number}"))?;
+    confirm_stored(
+        stored.get("body").and_then(Value::as_str).unwrap_or(""),
+        &report,
+    )
+}
+
+/// Confirms a stored description holds exactly this report; a silent no-op must not pass.
+pub fn confirm_stored(body: &str, report: &Report) -> Result<()> {
+    let Ok(stored) = from_body(body) else {
+        return fail("publication did not record the machine block in the PR description");
+    };
+    if stored != *report {
+        return fail("the PR description stores a machine block different from this report");
+    }
     Ok(())
 }
 
@@ -329,17 +347,39 @@ fn live_pr(repo: &str, number: u64) -> Result<Value> {
 }
 
 /// Reads an event and validates its receipt against Git/PR facts before producing a matrix.
+///
+/// The run attempt comes from `GITHUB_RUN_ATTEMPT`; an attempt above 1 is a replay that
+/// plans from the live description only (see [`plan_with`]).
 pub fn plan(root: &Path, event: &str, payload: &Value, sha: &str, repo: &str) -> Result<Plan> {
-    plan_with(root, event, payload, sha, repo, &mut live_pr, GRACE)
+    let attempt = std::env::var("GITHUB_RUN_ATTEMPT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    plan_with(
+        root,
+        event,
+        payload,
+        sha,
+        repo,
+        attempt,
+        &mut live_pr,
+        GRACE,
+    )
 }
 
-/// [`plan`] with an injectable live-description source and grace window for tests.
+/// [`plan`] with an injectable live-description source, run attempt and grace window for tests.
+///
+/// A replayed run (`attempt > 1`) re-serves the event payload stored at the original
+/// trigger, so its description snapshot is definitionally stale: such a plan skips the
+/// snapshot fast path and reads only the live description, inside the grace window.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_with(
     root: &Path,
     event: &str,
     payload: &Value,
     sha: &str,
     repo: &str,
+    attempt: u32,
     fetch: &mut dyn FnMut(&str, u64) -> Result<Value>,
     grace: Duration,
 ) -> Result<Plan> {
@@ -354,12 +394,17 @@ pub fn plan_with(
         let head = field(pr, "/head/sha")?;
         let base = field(pr, "/base/sha")?;
         let tested_tree = tree(root, head)?;
-        if let Ok(report) = receipt_for(
-            pr.get("body").and_then(Value::as_str).unwrap_or(""),
-            head,
-            base,
-            &tested_tree,
-        ) {
+        // A replay re-serves the payload stored at the original trigger, so only
+        // a first attempt may trust the snapshot; replays plan from the live
+        // description through the grace window below.
+        if attempt <= 1
+            && let Ok(report) = receipt_for(
+                pr.get("body").and_then(Value::as_str).unwrap_or(""),
+                head,
+                base,
+                &tested_tree,
+            )
+        {
             return finalize_pr(root, pr, &report);
         }
         // Startup race: publication follows the push that started this run, so

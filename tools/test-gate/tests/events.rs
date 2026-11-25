@@ -184,6 +184,7 @@ type FakeFetch<'a> = &'a mut dyn FnMut(&str, u64) -> beamcraft_test_gate::Result
 fn plan_with_grace(
     r: &Repo,
     payload: serde_json::Value,
+    attempt: u32,
     grace: Duration,
     fetch: FakeFetch<'_>,
 ) -> beamcraft_test_gate::Result<github::Plan> {
@@ -193,6 +194,7 @@ fn plan_with_grace(
         &payload,
         r.git(&["rev-parse", "HEAD"]).trim(),
         "test/repo",
+        attempt,
         fetch,
         grace,
     )
@@ -226,7 +228,7 @@ fn a_receipt_published_after_the_push_is_found_within_the_grace_window() {
         }
     };
     let selected =
-        plan_with_grace(&r, payload, Duration::from_secs(1), &mut fetch).expect("grace receipt");
+        plan_with_grace(&r, payload, 1, Duration::from_secs(1), &mut fetch).expect("grace receipt");
     assert_eq!(selected.oses, vec!["macos-15", "windows-latest"]);
     assert_eq!(calls, 2);
 }
@@ -238,7 +240,7 @@ fn a_window_without_any_receipt_fails_bounded() {
     let payload = opened_payload("no receipt ever", &r.git(&["rev-parse", "HEAD"]), &base);
     let mut fetch = |_repo: &str, _number: u64| Ok(serde_json::json!({"body":"never"}));
     let start = Instant::now();
-    let error = plan_with_grace(&r, payload, Duration::from_secs(1), &mut fetch)
+    let error = plan_with_grace(&r, payload, 1, Duration::from_secs(1), &mut fetch)
         .expect_err("an absent receipt must still fail");
     assert!(
         start.elapsed() < Duration::from_secs(10),
@@ -258,7 +260,7 @@ fn a_live_receipt_for_another_head_never_satisfies_this_run() {
     let live = report::with_report("", &newer).unwrap();
     let payload = opened_payload("stale snapshot", &report.commit, &base);
     let mut fetch = |_repo: &str, _number: u64| Ok(serde_json::json!({"body":live.clone()}));
-    let error = plan_with_grace(&r, payload, Duration::from_secs(1), &mut fetch)
+    let error = plan_with_grace(&r, payload, 1, Duration::from_secs(1), &mut fetch)
         .expect_err("a newer head's receipt is not this run's evidence");
     assert!(error.to_string().contains("grace window"), "{error}");
 }
@@ -273,6 +275,47 @@ fn a_current_payload_receipt_never_reaches_the_live_poll() {
     let mut fetch = |_repo: &str, _number: u64| -> beamcraft_test_gate::Result<serde_json::Value> {
         panic!("the fast path must not consult the API")
     };
-    let selected = plan_with_grace(&r, payload, Duration::from_secs(30), &mut fetch).unwrap();
+    let selected = plan_with_grace(&r, payload, 1, Duration::from_secs(30), &mut fetch).unwrap();
+    assert_eq!(selected.oses, vec!["macos-15", "windows-latest"]);
+}
+
+#[test]
+fn a_replay_skips_the_snapshot_and_plans_from_the_live_description_only() {
+    let r = Repo::new();
+    let base = r.git(&["rev-parse", "HEAD"]);
+    let report = r.report(&base);
+    std::fs::write(r.root.join("README.md"), "advanced\n").unwrap();
+    r.commit("newer head, live receipt not for this run");
+    let newer = r.report(&base);
+    let live = report::with_report("", &newer).unwrap();
+    // The replayed payload carries a snapshot receipt that is current for this
+    // run; a replay must still refuse it and plan from the live description.
+    let stale_snapshot = report::with_report("Human text", &report).unwrap();
+    let payload = opened_payload(&stale_snapshot, &report.commit, &base);
+    let mut fetch = |_repo: &str, _number: u64| Ok(serde_json::json!({"body":live.clone()}));
+    let error = plan_with_grace(&r, payload, 2, Duration::from_secs(1), &mut fetch)
+        .expect_err("a replay must not trust the event snapshot's receipt");
+    assert!(error.to_string().contains("grace window"), "{error}");
+}
+
+#[test]
+fn a_replay_finds_a_receipt_published_after_the_original_trigger() {
+    let r = Repo::new();
+    let base = r.git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        r.root.join("apps/beamcraft-cli/src/one.rs"),
+        "// changed CLI\n",
+    )
+    .unwrap();
+    r.commit("CLI change");
+    let report = r.report(&base);
+    let good = report::with_report("Human text", &report).unwrap();
+    let payload = opened_payload("no receipt yet", &report.commit, &base);
+    let mut fetch = |_repo: &str, number: u64| {
+        assert_eq!(number, 7);
+        Ok(serde_json::json!({"body":good.clone()}))
+    };
+    let selected = plan_with_grace(&r, payload, 2, Duration::from_secs(1), &mut fetch)
+        .expect("a replay reads the published live receipt");
     assert_eq!(selected.oses, vec!["macos-15", "windows-latest"]);
 }

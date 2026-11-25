@@ -76,10 +76,13 @@ A `pull_request` run starts before its receipt exists, because publication follo
 triggered the run. `ci-plan` keeps the event snapshot as the fast path and, when it holds no
 receipt current for the run's head and base, polls the live description for at most two minutes
 before failing; every attempt keeps the head/base/tree binding, and a window without a receipt is
-a failure. Master pushes and manual dispatches read the live description directly. Publication
+a failure. A rerun (`run_attempt > 1`) replays the payload stored at the original trigger, so it
+skips that snapshot and reads only the live description inside its own grace window. Master pushes
+and manual dispatches read the live description directly. Publication
 fires nothing: `ci.yml` does not trigger on the `edited` event, so no receipt-bearing run follows
 the first one and no run ends cancelled because of a publish; the first run finds the receipt
-through its own grace-window poll.
+through its own grace-window poll, and publication verifies the stored block and fails loudly
+instead of exiting silently without one.
 
 Make `CI verdict` the required PR check and require branches to be up to date in the integration
 branch's GitHub protection/ruleset. The verdict rechecks live head/base before it succeeds;
