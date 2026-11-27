@@ -1248,6 +1248,15 @@ pub(crate) fn decode(
     opened: &Opened,
     control: &Control,
 ) -> Result<Decoded, Refusal> {
+    decode_observing(reader, opened, control, |_| {})
+}
+
+fn decode_observing(
+    reader: &Reader,
+    opened: &Opened,
+    control: &Control,
+    observe: impl FnOnce(&[Prim]),
+) -> Result<Decoded, Refusal> {
     let mut prims = Vec::new();
     let mut cursor = None;
     loop {
@@ -1477,6 +1486,7 @@ pub(crate) fn decode(
     // The bolt groups are drawn once the parts they clamp are decoded: each fastener's nut
     // stack seats on the far face of its joint (issue 562 item 5).
     crate::bolt::attach_bolt_scene(&mut decoded, bolt_views)?;
+    observe(&prims);
     Ok(decoded)
 }
 
@@ -2569,6 +2579,14 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, Refusal> {
 
 /// [`inspect`] for one already opened and verified revision (the head or an earlier one).
 pub fn inspect_revision(revision: &Revision) -> Result<Inspection, Refusal> {
+    inspect_revision_observing(revision, |_| {})
+}
+
+/// Reads task evidence from the same validated and resolved prims used by model inspection.
+pub(crate) fn inspect_revision_observing(
+    revision: &Revision,
+    observe: impl FnOnce(&[Prim]),
+) -> Result<Inspection, Refusal> {
     let content = revision.manifest().content();
     let assets = content
         .entries()
@@ -2581,10 +2599,11 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, Refusal> {
             })
         })
         .collect::<Result<Vec<_>, Refusal>>()?;
-    inspect_manifest_assets(
+    inspect_manifest_assets_observing(
         revision.manifest(),
         revision.info().manifest_digest(),
         assets,
+        observe,
     )
 }
 
@@ -2594,6 +2613,15 @@ pub(crate) fn inspect_manifest_assets(
     manifest: &Manifest,
     digest: ContentDigest,
     assets: Vec<Asset>,
+) -> Result<Inspection, Refusal> {
+    inspect_manifest_assets_observing(manifest, digest, assets, |_| {})
+}
+
+fn inspect_manifest_assets_observing(
+    manifest: &Manifest,
+    digest: ContentDigest,
+    assets: Vec<Asset>,
+    observe: impl FnOnce(&[Prim]),
 ) -> Result<Inspection, Refusal> {
     let content = manifest.content();
     if Sha256::digest(&manifest.encode()).map_err(|_| integrity("source manifest digest failed"))?
@@ -2640,7 +2668,7 @@ pub(crate) fn inspect_manifest_assets(
     }
     let index = reader.element_index(&opened.context, &control)?;
     reader.verify_index(&index, &control)?;
-    let decoded = decode(&reader, &opened, &control)?;
+    let decoded = decode_observing(&reader, &opened, &control, observe)?;
     let (plates, members) = evaluate_decoded(&decoded)?;
     let unsupported_plates = evaluate_committed_drafts_with_cache(&decoded)?;
     let quantities = verify_derived(&plates, &members, &decoded, false)?;

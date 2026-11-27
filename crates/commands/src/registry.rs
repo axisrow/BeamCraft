@@ -2612,6 +2612,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[
             req("--store", "ROOT"),
+            opt("--revision", "UUID"),
             opt("--element", "UUID"),
             opt("--offset", "N"),
             opt("--limit", "N"),

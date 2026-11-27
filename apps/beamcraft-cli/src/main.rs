@@ -153,6 +153,7 @@ fn main() -> std::process::ExitCode {
         Some(Route::ExportView) => return export_view(&args),
         Some(Route::ScreenshotView) => {
             let (json, exit) = view_screenshot::execute(&args);
+            let (json, exit) = check_cmd::with_summary(&args, json, exit);
             return print_json(&json, exit);
         }
         Some(Route::Export) => {
@@ -289,7 +290,10 @@ fn export_view(args: &[std::ffi::OsString]) -> std::process::ExitCode {
             }
             std::process::ExitCode::SUCCESS
         }
-        view_export::Output::Json(json, exit) => print_json(&json, exit),
+        view_export::Output::Json(json, exit) => {
+            let (json, exit) = check_cmd::with_summary(args, json, exit);
+            print_json(&json, exit)
+        }
     }
 }
 fn print_json(json: &Json, exit: u8) -> std::process::ExitCode {

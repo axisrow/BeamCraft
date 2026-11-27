@@ -1560,7 +1560,7 @@ export-bom --store ROOT --out FILE [--summary FILE]
 read.
 
 ```text
-check-model --store ROOT [--element UUID] [--offset N] [--limit N]
+check-model --store ROOT [--revision UUID] [--element UUID] [--offset N] [--limit N]
 ```
 
 ## schedules

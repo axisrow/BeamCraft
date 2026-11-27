@@ -4,8 +4,9 @@
 //! Help owned by the checks command family (Q03).
 
 pub(super) const HELP: &str = concat!(
-    "Checks (Q03): check-model --store ROOT [--element UUID] [--offset N] [--limit N] (checks ",
-    "one identified revision: the committed head at the moment the check starts, named in the ",
+    "Checks (Q03): check-model --store ROOT [--revision UUID] [--element UUID] [--offset N] ",
+    "[--limit N] (checks one identified revision: the requested retained revision or the ",
+    "committed head at the moment the check starts, named in the ",
     "reply; --element narrows the scope to that element's subtree. The supported set is the ",
     "geometric PART_CLASH rule with the 0.5 mm contact tolerance, the completeness rules ",
     "PART_WITHOUT_MATERIAL, PART_DEGENERATE and QUANTITY_STALE, the connectivity rules ",
@@ -38,5 +39,10 @@ pub(super) const HELP: &str = concat!(
     "`checks.status` unavailable with the reason instead — checks are never silently green. ",
     "Set BEAMCRAFT_CHECKS_SUMMARY=off to omit the summary from this process's write ",
     "replies (the window's opt-out until it has a checks panel; unset or any other value ",
-    "keeps summaries on)",
+    "keeps summaries on). For an independently approved task, the task runner supplies ",
+    "BEAMCRAFT_TASK_SPEC and BEAMCRAFT_TASK_SPEC_SHA256 together. These identify a versioned ",
+    "JSON specification and its approved digest. The check uses the approved inputs even if ",
+    "the model lacks a required record. Task-bound writes and exports report concrete findings ",
+    "alongside the result and keep their normal exit codes. Use check-model --revision with ",
+    "next_offset to read further findings of the same result revision.",
 );

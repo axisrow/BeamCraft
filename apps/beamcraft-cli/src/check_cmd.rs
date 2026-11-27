@@ -12,17 +12,21 @@
 use beamcraft_commands::check::{self, Bucket, CheckReport, Coverage};
 use beamcraft_commands::plate::inspect_revision;
 use beamcraft_commands::registry::{self, Route};
+use beamcraft_commands::task_check::{MAX_SPEC_BYTES, TaskFinding, TaskSpec, VERSION};
 use beamcraft_host::{
     revision::{Revision, RevisionStore, Uuid7},
     storage::BlobStore,
 };
 use beamcraft_json::{Json, Limits};
+use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use session::Refusal;
 use session::draft;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::io::Write;
+use std::sync::OnceLock;
 
 type Run<T> = Result<T, Refusal>;
 
@@ -32,6 +36,122 @@ fn invalid(message: &'static str) -> Refusal {
         code: ErrorCode::InvalidArgument,
         message,
     }
+}
+
+enum TaskBinding {
+    Unconfigured,
+    Approved(TaskSpec),
+    Unavailable(Refusal),
+}
+
+fn task_binding() -> &'static TaskBinding {
+    static TASK: OnceLock<TaskBinding> = OnceLock::new();
+    TASK.get_or_init(|| {
+        let path = std::env::var_os("BEAMCRAFT_TASK_SPEC");
+        let expected = std::env::var_os("BEAMCRAFT_TASK_SPEC_SHA256");
+        if path.is_none() && expected.is_none() {
+            return TaskBinding::Unconfigured;
+        }
+        let load = || -> Run<TaskSpec> {
+            let expected = expected
+                .as_deref()
+                .and_then(|text| text.to_str())
+                .and_then(|text| text.parse::<ContentDigest>().ok())
+                .ok_or_else(|| {
+                    invalid("BEAMCRAFT_TASK_SPEC_SHA256 must identify the approved specification")
+                })?;
+            let path = path
+                .as_deref()
+                .and_then(|path| path.to_str())
+                .ok_or_else(|| {
+                    invalid("BEAMCRAFT_TASK_SPEC must name the approved specification file")
+                })?;
+            let bytes = beamcraft_commands::source_file::read_file(path, MAX_SPEC_BYTES).map_err(
+                |code| {
+                    Refusal::new(
+                        code,
+                        "the approved task specification file could not be read",
+                    )
+                },
+            )?;
+            TaskSpec::decode(&bytes, expected)
+        };
+        match load() {
+            Ok(spec) => TaskBinding::Approved(spec),
+            Err(error) => TaskBinding::Unavailable(error),
+        }
+    })
+}
+
+/// Whether this process is checking an independently supplied task.
+pub(crate) fn task_configured() -> bool {
+    !matches!(task_binding(), TaskBinding::Unconfigured)
+}
+
+fn task_finding_json(finding: TaskFinding) -> Json {
+    Json::object([
+        ("code", Json::text(finding.code)),
+        ("status", Json::text(finding.status)),
+        (
+            "requirement",
+            finding
+                .requirement
+                .map_or(Json::Null, |i| Json::uint(i as u64)),
+        ),
+        ("target", Json::text(finding.target)),
+        ("message", Json::text(finding.message)),
+        ("expected", finding.expected),
+        ("actual", finding.actual),
+    ])
+}
+
+fn check_revision(
+    revision: &Revision,
+    element: Option<ElementId>,
+    offset: usize,
+    limit: usize,
+) -> Run<(CheckReport, Option<Json>)> {
+    let inputs = inputs_of(revision)?;
+    let binding = task_binding();
+    if let TaskBinding::Approved(spec) = binding {
+        let checked = spec.check_revision(revision, inputs, element, offset, limit)?;
+        let task = Json::object([
+            ("version", Json::uint(VERSION)),
+            ("sha256", Json::text(checked.digest.to_string())),
+            ("status", Json::text(checked.model.status)),
+            (
+                "reason",
+                element.map_or(Json::Null, |_| Json::text("partial_geometry_scope")),
+            ),
+            ("requirements", Json::uint(checked.requirement_count as u64)),
+            (
+                "findings",
+                Json::Array(
+                    checked
+                        .findings
+                        .into_iter()
+                        .map(task_finding_json)
+                        .collect(),
+                ),
+            ),
+        ]);
+        return Ok((checked.model, Some(task)));
+    }
+    let inspection = inspect_revision(revision)?;
+    let mut model = check::check_model(&inspection, &inputs, element, offset, limit)?;
+    let task = if let TaskBinding::Unavailable(refusal) = binding {
+        if model.status != "red" {
+            model.status = "unknown";
+        }
+        Some(Json::object([
+            ("status", Json::text("unknown")),
+            ("code", Json::text(refusal.code.as_str())),
+            ("reason", Json::text(refusal.message)),
+        ]))
+    } else {
+        None
+    };
+    Ok((model, task))
 }
 
 /// The recorded inputs of the verified head: the declared joint intents
@@ -87,10 +207,13 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 fn run(args: &[OsString]) -> Run<(Json, u8)> {
-    let options: BTreeMap<&str, &str> =
-        crate::bom_cmd::pairs(args, &["--store", "--element", "--offset", "--limit"], 8)?
-            .into_iter()
-            .collect();
+    let options: BTreeMap<&str, &str> = crate::bom_cmd::pairs(
+        args,
+        &["--store", "--revision", "--element", "--offset", "--limit"],
+        10,
+    )?
+    .into_iter()
+    .collect();
     let store = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
@@ -108,10 +231,11 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
         })
         .transpose()?;
     let (offset, limit) = crate::plate_cmd::page_of(&options)?;
-    let revision = store.open()?;
-    let inspection = inspect_revision(&revision)?;
-    let inputs = inputs_of(&revision)?;
-    let report = check::check_model(&inspection, &inputs, element, offset, limit)?;
+    let revision = match options.get("--revision") {
+        Some(id) => revision_by_id(&store, id)?,
+        None => store.open()?,
+    };
+    let (report, task) = check_revision(&revision, element, offset, limit)?;
     let buckets = report
         .coverage
         .iter()
@@ -127,7 +251,7 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
         .iter()
         .filter(|row| matches!(row.bucket, Bucket::Unknown(_)))
         .count();
-    let json = Json::object([
+    let mut json = Json::object([
         ("outcome", Json::text("model_checked")),
         ("revision_id", Json::text(report.revision_id.clone())),
         (
@@ -165,6 +289,29 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
             Json::Array(report.findings.iter().map(finding_json).collect()),
         ),
     ]);
+    if let Json::Object(entries) = &mut json {
+        entries.insert(
+            "task".to_owned(),
+            task.unwrap_or_else(|| task_unknown("task_approval_missing")),
+        );
+        entries.insert(
+            "manifest_digest".to_owned(),
+            Json::text(revision.info().manifest_digest().to_string()),
+        );
+        entries.insert(
+            "next_offset".to_owned(),
+            next_offset(
+                report.findings_total,
+                offset.saturating_add(report.findings.len()),
+            ),
+        );
+        if draft::is_open() && task_configured() {
+            entries.insert(
+                "draft_checks".to_owned(),
+                task_unknown("draft_not_evaluated"),
+            );
+        }
+    }
     let exit = if report.status == "red" { 2 } else { 0 };
     Ok((json, exit))
 }
@@ -295,19 +442,8 @@ fn number(value: f64) -> Json {
     Json::number(value).unwrap_or(Json::Null)
 }
 
-/// The routes whose write commands operate on the model store: the modelling,
-/// definition and construction routes, the recorded-input route and the
-/// reference and numbering routes. A successful write on one of them carries
-/// the `checks` summary. The other routes deliberately carry none: `Generic`
-/// runs the store-level primitives (`put-blob`, `commit-revision`, recovery)
-/// whose layers need not be model content; the export routes (`ExportView`,
-/// `ScreenshotView`, `Export`) and `Bom`, `Schedule`, `Changeset`, `Drawing`
-/// and `Ifc` render output files or their own documents; `Views` manages
-/// display state and `Library` the named library file; `History`, `Coordinator`
-/// and `Coordination` manage compaction, leases and coordination descriptors;
-/// `Project` provisions a fresh store and changes no modelled revision; and
-/// `Session`, `Batch` and `Commands` run no model write in their own process —
-/// those return before `dispatch`, so the summary seam never sees them.
+/// Standalone modelling routes that publish a revision and carry the slice 5 summary.
+/// Task-bound commands also classify the remaining write routes from the registry.
 const MODEL_WRITE_ROUTES: &[Route] = &[
     Route::Plate,
     Route::Weld,
@@ -327,21 +463,19 @@ const MODEL_WRITE_ROUTES: &[Route] = &[
 /// The findings page the summary materializes: the status, counts and total
 /// are whole-scope regardless of the page, so one finding is enough.
 const SUMMARY_PAGE_LIMIT: usize = 1;
+const TASK_PAGE_LIMIT: usize = 32;
+const MODEL_ROOT_OPTIONS: &[&str] = &["--store", "--workspace-dir", "--published", "--model-store"];
 
 /// The window opt-out (contract section 11): `BEAMCRAFT_CHECKS_SUMMARY` set to
 /// exactly `off` omits the summary from write replies for this process; unset
 /// or any other value keeps summaries on.
 pub(crate) fn checks_opted_out() -> bool {
-    std::env::var("BEAMCRAFT_CHECKS_SUMMARY").as_deref() == Ok("off")
+    !task_configured() && std::env::var("BEAMCRAFT_CHECKS_SUMMARY").as_deref() == Ok("off")
 }
 
-/// Attaches the `checks` summary to a successful write reply (contract
-/// section 11): the summary checks the result revision named by the write
-/// reply, including an earlier replay, and reports counts only. A refused write
-/// keeps its rejected reply with no summary; the summary never changes the
-/// write's exit code, because the write happened. A command running inside an
-/// open draft batch reports the draft as not evaluated instead of checking
-/// the saved head.
+/// Attaches checks to a successful write. The result revision can be an
+/// earlier replay. Task-bound replies include findings and classify writes
+/// without a verifiable revision as unknown. Drafted writes are unevaluated.
 pub(crate) fn with_summary(args: &[OsString], json: Json, exit: u8) -> (Json, u8) {
     if exit != 0 || checks_opted_out() {
         return (json, exit);
@@ -352,10 +486,32 @@ pub(crate) fn with_summary(args: &[OsString], json: Json, exit: u8) -> (Json, u8
     let Some(entry) = registry::COMMANDS.iter().find(|entry| entry.name == word) else {
         return (json, exit);
     };
-    if entry.access != registry::Access::Write || !MODEL_WRITE_ROUTES.contains(&entry.route) {
+    if entry.access != registry::Access::Write {
         return (json, exit);
     }
-    let Some(root) = store_root(args) else {
+    if task_configured() {
+        let mut roots = MODEL_ROOT_OPTIONS
+            .iter()
+            .filter_map(|key| store_option(entry, args, key))
+            .collect::<Vec<_>>();
+        if let Ok(root) = json
+            .get("project")
+            .and_then(|project| project.get("path"))
+            .and_then(Json::string)
+        {
+            roots.push(root);
+        }
+        let checks = if draft::is_open() {
+            task_unknown("draft_not_evaluated")
+        } else {
+            task_summary_for_roots(&roots, &json)
+        };
+        return (insert_checks(json, checks), exit);
+    }
+    if !MODEL_WRITE_ROUTES.contains(&entry.route) {
+        return (json, exit);
+    }
+    let Some(root) = store_option(entry, args, "--store") else {
         return (json, exit);
     };
     let checks = if draft::is_open() {
@@ -371,17 +527,27 @@ pub(crate) fn with_summary(args: &[OsString], json: Json, exit: u8) -> (Json, u8
     (insert_checks(json, checks), exit)
 }
 
-/// The `--store` value of a command line: strict option pairs, the value right
-/// after the key. A line that reached exit 0 already passed the pair grammar.
-fn store_root(args: &[OsString]) -> Option<&str> {
-    args.get(1..)?
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .find_map(|pair| match pair {
-            [key, value] if key.to_str() == Some("--store") => value.to_str(),
-            _ => None,
-        })
+/// Finds the supplied root without interpreting a command option's value as an option.
+fn store_option<'a>(
+    entry: &registry::Command,
+    args: &'a [OsString],
+    name: &str,
+) -> Option<&'a str> {
+    let mut tokens = args.iter().skip(1);
+    while let Some(key) = tokens.next().and_then(|key| key.to_str()) {
+        if entry
+            .params
+            .iter()
+            .any(|param| param.name == key && param.value.is_empty())
+        {
+            continue;
+        }
+        let value = tokens.next()?;
+        if key == name {
+            return value.to_str();
+        }
+    }
+    None
 }
 
 /// The summary for a store named by root: an operational failure of the
@@ -401,40 +567,211 @@ fn summary_for_root(root: &str, reply: &Json) -> Json {
 /// inspected) becomes `unavailable` with the refusal's message and code, so
 /// the successful write result travels with an honest "not checked".
 pub(crate) fn summary_for_store(store: &RevisionStore, reply: &Json) -> Json {
-    let summary = (|| -> Run<Json> {
-        let id = reply
-            .get("revision")
-            .and_then(|r| r.get("revision_id"))
-            .and_then(Json::string)
-            .map_err(|_| invalid("the write result does not identify its revision"))?;
-        let id =
-            Uuid7::parse(id).map_err(|_| invalid("the write result has an invalid revision"))?;
-        let sequence = reply
-            .get("revision")
-            .and_then(|r| r.get("sequence"))
-            .and_then(Json::string)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .ok_or_else(|| invalid("the write result does not identify its revision sequence"))?;
-        let revision = store.open_at(sequence)?;
-        if revision.info().revision() != &id {
-            return Err(invalid(
-                "the write result revision does not match the opened snapshot",
-            ));
+    match result_revision(store, reply) {
+        Ok(revision) => summary_of_revision(&revision),
+        Err(refusal) if task_configured() => {
+            task_unknown(&format!("{} ({})", refusal.message, refusal.code.as_str(),))
         }
-        let inspection = inspect_revision(&revision)?;
-        let inputs = inputs_of(&revision)?;
-        let report = check::check_model(&inspection, &inputs, None, 0, SUMMARY_PAGE_LIMIT)?;
-        Ok(Json::object([
-            ("revision_id", Json::text(report.revision_id.clone())),
-            ("status", Json::text(report.status)),
-            ("counts", counts_json(&report)),
-            ("findings_total", Json::uint(report.findings_total as u64)),
-        ]))
-    })();
-    match summary {
-        Ok(json) => json,
         Err(refusal) => unavailable(&format!("{} ({})", refusal.message, refusal.code.as_str())),
+    }
+}
+
+fn result_revision(store: &RevisionStore, reply: &Json) -> Run<Revision> {
+    let summary = reply
+        .get("revision")
+        .or_else(|_| reply.get("project").and_then(|p| p.get("revision")))
+        .or_else(|_| reply.get("draft_head"))
+        .or_else(|_| reply.get("workspace").and_then(|w| w.get("draft_head")))
+        .or_else(|_| reply.get("changeset"))
+        .unwrap_or(reply);
+    let id = summary
+        .get("revision_id")
+        .and_then(Json::string)
+        .map_err(|_| invalid("the command result does not identify its revision"))?;
+    let Ok(sequence) = summary.get("sequence") else {
+        return revision_by_id(store, id);
+    };
+    let sequence = sequence
+        .unsigned()
+        .ok()
+        .or_else(|| sequence.string().ok().and_then(|s| s.parse::<u64>().ok()))
+        .ok_or_else(|| invalid("the command result has an invalid revision sequence"))?;
+    let revision = store.open_at(sequence)?;
+    if revision.info().revision().as_str() != id {
+        return Err(invalid(
+            "the command result revision does not match the opened snapshot",
+        ));
+    }
+    if let Ok(digest) = summary.get("manifest_digest").and_then(Json::string)
+        && revision.info().manifest_digest().to_string() != digest
+    {
+        return Err(invalid(
+            "the command result manifest does not match the opened snapshot",
+        ));
+    }
+    Ok(revision)
+}
+
+fn revision_by_id(store: &RevisionStore, id: &str) -> Run<Revision> {
+    let id = Uuid7::parse(id).map_err(|_| invalid("expected a UUIDv7 revision id"))?;
+    let sequence = store.sequence_of(&id)?.ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::NotFound,
+            "the result revision is unavailable in this store",
+        )
+    })?;
+    let revision = store.open_at(sequence)?;
+    if revision.info().revision() != &id {
+        return Err(invalid(
+            "the command result revision does not match the opened snapshot",
+        ));
+    }
+    Ok(revision)
+}
+
+fn summary_of_revision(revision: &Revision) -> Json {
+    match revision_summary(revision) {
+        Ok(report) => report,
+        Err(error) if task_configured() => Json::object([
+            ("status", Json::text("unknown")),
+            ("code", Json::text(error.code.as_str())),
+            ("reason", Json::text(error.message)),
+            (
+                "revision_id",
+                Json::text(revision.info().revision().as_str()),
+            ),
+            (
+                "manifest_digest",
+                Json::text(revision.info().manifest_digest().to_string()),
+            ),
+        ]),
+        Err(error) => unavailable(&format!("{} ({})", error.message, error.code.as_str())),
+    }
+}
+
+fn revision_summary(revision: &Revision) -> Run<Json> {
+    let limit = if task_configured() {
+        usize::MAX
+    } else {
+        SUMMARY_PAGE_LIMIT
+    };
+    let (report, task) = check_revision(revision, None, 0, limit)?;
+    let mut result = Json::object([
+        ("revision_id", Json::text(report.revision_id.clone())),
+        ("status", Json::text(report.status)),
+        ("counts", counts_json(&report)),
+        ("findings_total", Json::uint(report.findings_total as u64)),
+    ]);
+    if let Json::Object(entries) = &mut result {
+        let Some(task) = task else {
+            entries.insert("task".to_owned(), task_unknown("task_approval_missing"));
+            return Ok(result);
+        };
+        let unchecked = report
+            .coverage
+            .iter()
+            .filter(|row| matches!(row.bucket, Bucket::Unknown(_)))
+            .collect::<Vec<_>>();
+        let total = report.findings_total.max(unchecked.len());
+        let manifest = revision.info().manifest_digest().to_string();
+        let finding_rows = |offset| {
+            Json::Array(
+                report
+                    .findings
+                    .iter()
+                    .skip(offset)
+                    .take(TASK_PAGE_LIMIT)
+                    .map(finding_json)
+                    .collect(),
+            )
+        };
+        let unchecked_rows = |offset| {
+            Json::Array(
+                unchecked
+                    .iter()
+                    .skip(offset)
+                    .take(TASK_PAGE_LIMIT)
+                    .map(|row| row_json(row))
+                    .collect(),
+            )
+        };
+        for offset in (TASK_PAGE_LIMIT..total).step_by(TASK_PAGE_LIMIT) {
+            let checks = Json::object([
+                ("revision_id", Json::text(&report.revision_id)),
+                ("manifest_digest", Json::text(&manifest)),
+                ("status", Json::text(report.status)),
+                (
+                    "task_sha256",
+                    task.get("sha256").cloned().unwrap_or(Json::Null),
+                ),
+                ("offset", Json::uint(offset as u64)),
+                (
+                    "next_offset",
+                    next_offset(total, offset.saturating_add(TASK_PAGE_LIMIT)),
+                ),
+                ("findings_total", Json::uint(report.findings_total as u64)),
+                ("findings", finding_rows(offset)),
+                ("unchecked_total", Json::uint(unchecked.len() as u64)),
+                ("unchecked", unchecked_rows(offset)),
+            ]);
+            write_task_report(checks);
+        }
+        entries.insert("task".to_owned(), task);
+        entries.insert("manifest_digest".to_owned(), Json::text(manifest));
+        entries.insert("findings".to_owned(), finding_rows(0));
+        entries.insert(
+            "unchecked_total".to_owned(),
+            Json::uint(unchecked.len() as u64),
+        );
+        entries.insert("unchecked".to_owned(), unchecked_rows(0));
+        entries.insert(
+            "next_offset".to_owned(),
+            next_offset(total, TASK_PAGE_LIMIT),
+        );
+        entries.insert("scope".to_owned(), Json::text("model"));
+    }
+    Ok(result)
+}
+
+fn task_summary_for_roots(roots: &[&str], reply: &Json) -> Json {
+    let mut reason = "the command did not identify a verifiable model store";
+    for store in roots
+        .iter()
+        .filter(|root| std::path::Path::new(root).is_dir())
+        .filter_map(|root| BlobStore::new(root).ok())
+        .map(RevisionStore::new)
+    {
+        match result_revision(&store, reply) {
+            Ok(revision) => return summary_of_revision(&revision),
+            Err(error) => reason = error.message,
+        }
+    }
+    task_unknown(reason)
+}
+
+fn next_offset(total: usize, seen: usize) -> Json {
+    if seen < total {
+        Json::uint(seen as u64)
+    } else {
+        Json::Null
+    }
+}
+
+pub(crate) fn task_unknown(reason: &str) -> Json {
+    Json::object([
+        ("status", Json::text("unknown")),
+        ("reason", Json::text(reason)),
+    ])
+}
+
+/// Sends a task report beside a binary result or a reply whose JSON budget is already full.
+pub(crate) fn write_task_report(checks: Json) {
+    let reply = Json::object([("outcome", Json::text("task_checks")), ("checks", checks)]);
+    let mut err = std::io::stderr().lock();
+    if let Ok(bytes) = reply.encode(&Limits::DEFAULT) {
+        let _ = err.write_all(&bytes).and_then(|()| err.write_all(b"\n"));
+    } else {
+        let _ = err.write_all(b"{\"outcome\":\"task_checks\",\"checks\":{\"status\":\"unknown\",\"reason\":\"task report exceeded the reply budget\"}}\n");
     }
 }
 
@@ -461,14 +798,26 @@ pub(crate) fn insert_checks(reply: Json, checks: Json) -> Json {
     if with_summary.encode(&Limits::DEFAULT).is_ok() {
         return with_summary;
     }
-    let mut entries = match &with_summary {
-        Json::Object(entries) => entries.clone(),
+    let mut entries = match with_summary {
+        Json::Object(entries) => entries,
         _ => return reply,
     };
-    entries.insert(
-        "checks".to_owned(),
-        unavailable("the checks summary did not fit the reply budget"),
-    );
+    let compact = if task_configured() {
+        let Some(checks) = entries.remove("checks") else {
+            return reply;
+        };
+        let mut marker = BTreeMap::from([("report_on".to_owned(), Json::text("stderr"))]);
+        for field in ["status", "reason", "revision_id", "manifest_digest"] {
+            if let Ok(value) = checks.get(field) {
+                marker.insert(field.to_owned(), value.clone());
+            }
+        }
+        write_task_report(checks);
+        Json::Object(marker)
+    } else {
+        unavailable("the checks summary did not fit the reply budget")
+    };
+    entries.insert("checks".to_owned(), compact);
     let shrunk = Json::Object(entries);
     if shrunk.encode(&Limits::DEFAULT).is_ok() {
         shrunk

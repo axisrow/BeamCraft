@@ -108,7 +108,12 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
     let mut envelope = script_envelope(&kept, total_commands, failed, omitted);
     while envelope.encode(&Limits::DEFAULT).is_err() {
         match kept.pop() {
-            Some(_) => {
+            Some(reply) => {
+                if crate::check_cmd::task_configured()
+                    && let Ok(checks) = reply.get("reply").and_then(|reply| reply.get("checks"))
+                {
+                    crate::check_cmd::write_task_report(checks.clone());
+                }
                 omitted += 1;
                 envelope = script_envelope(&kept, total_commands, failed, omitted);
             }

@@ -190,7 +190,8 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
         code: e.code(),
         message: "store root is not usable",
     })?;
-    let inspection = inspect(&RevisionStore::new(blobs))?;
+    let revision_store = RevisionStore::new(blobs);
+    let inspection = inspect(&revision_store)?;
     // A plate kept without geometry (D-7 degenerate drafts, K1 unsupported planes) has no
     // body to draw: the snapshot leaves it out and the reply names it, so one bad contour
     // never makes the whole revision unviewable (issue 545). Numbering, BOM and IFC still
@@ -275,9 +276,15 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
             );
             section(&mut head, Some(&grids))?;
         }
+        if crate::check_cmd::task_configured() {
+            report_task_checks(&revision_store, &inspection.revision.revision_id);
+        }
         return Ok(Output::Framed { head, bundle });
     }
     if *out == "-" {
+        if crate::check_cmd::task_configured() {
+            report_task_checks(&revision_store, &inspection.revision.revision_id);
+        }
         return Ok(Output::Raw(bundle));
     }
     let mut file = std::fs::OpenOptions::new()
@@ -313,12 +320,23 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
     ))
 }
 
+fn report_task_checks(store: &RevisionStore, revision_id: &str) {
+    let result = Json::object([("revision_id", Json::text(revision_id))]);
+    let checks = crate::check_cmd::summary_for_store(store, &result);
+    crate::check_cmd::write_task_report(checks);
+}
+
 /// The bundle of a source IFC file ([`crate::ifc_view`]): raw bytes for `--out -`, else a
 /// new file and the JSON summary. The reply keeps the source facts beside the snapshot
 /// facts, so the file a picture came from is named in the same answer.
 fn run_source(source: &str, out: &str) -> Result<Output, Refusal> {
     let (bundle, facts) = crate::ifc_view::bundle(source)?;
     if out == "-" {
+        if crate::check_cmd::task_configured() {
+            crate::check_cmd::write_task_report(crate::check_cmd::task_unknown(
+                "the IFC source is not bound to a verified BeamCraft revision",
+            ));
+        }
         return Ok(Output::Raw(bundle));
     }
     let mut file = std::fs::OpenOptions::new()

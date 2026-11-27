@@ -178,8 +178,9 @@ impl<'a> Session<'a> {
             "batch-abort" => self.batch_abort(),
             _ => self.command(word, tokens),
         };
+        let checked = json.get("outcome").and_then(Json::string) == Ok("model_checked");
         let mut answers = vec![(json, exit)];
-        if exit != 0 && draft::is_open() {
+        if exit != 0 && !checked && draft::is_open() {
             let abandoned = draft::take().map(|state| state.commands.len());
             self.batch_ops.clear();
             self.guard = None;
@@ -236,7 +237,8 @@ impl<'a> Session<'a> {
                 "the command names another store than the session holds",
             ));
         }
-        if !draft::is_open() {
+        // The checker only reads a committed revision, even during a draft batch.
+        if !draft::is_open() || route == Some(Route::Check) {
             return Ok(());
         }
         let word = tokens.first().map(String::as_str).unwrap_or_default();
