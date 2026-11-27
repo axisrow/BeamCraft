@@ -763,3 +763,78 @@ The acceptance fixtures follow #634's acceptance list; what slice 1 adds is the 
    leave them unknown; a context selection alone (section 6) never activates a rule.
 4. The owner decision on automatic cut geometry (recalculation versus editing) stays open and
    is recorded in `docs/plan/decisions.md`; this contract assumes it is not granted.
+
+## 14. Approved task requirements
+
+The task runner binds a specification to an initialized project before modelling begins. The
+owner or a trusted template workflow prepares and approves the file. The runner supplies the
+file path as `BEAMCRAFT_TASK_SPEC` and the approved SHA-256 of its exact bytes as
+`BEAMCRAFT_TASK_SPEC_SHA256`. Keep the digest in the runner's trusted configuration and supply
+both settings to every BeamCraft process for the task. The process snapshots the validated
+specification on first use. An approved change supplies a new digest and starts a new process
+or session.
+
+The file is UTF-8 JSON, at most 64 KiB. Version 1 has a `version` of `1`, a `project_id`
+UUIDv7, a `requirements` array and an optional `template` object. After template expansion
+there must be 1 to 128 requirements. Each requirement applies to the specified model fact
+even if the builder omits its target or associated record. This follows the distinction
+between applicability and requirements in the [buildingSMART IDS specification guide](https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/specifications.md).
+
+| Requirement `type` | Other fields | Evidence checked |
+| --- | --- | --- |
+| `element` | `id`, `kind` | An active element has the specified UUID and element kind. |
+| `absent_element` | `id` | No active element carries the specified UUID. |
+| `attribute` | `path`, `name`, `value` | A composed prim has the specified typed value. Value checks can require an authored operation record, such as `steel:cut:operationId`. |
+| `relationship` | `path`, `name`, `targets` | The composed relationship has exactly the specified ordered prim paths. |
+| `layer` | `name`, `sha256` | The verified manifest contains the named layer with the approved digest. |
+| `corner_cut` | `target`, `neighbours`, `required_mm`, `tolerance_mm`, `purpose`, optional `upper_bound` | The active rib and both neighbours are present. A unique model record agrees with the approved requirement. The final geometry independently meets the approved dimension. The optional `upper_bound` carries `max_mm` and `tolerance_mm`. |
+| `required_check` | `target`, `check` | An explicitly requested assessment outside the supported evaluators is reported as `unknown` with `TASK_CHECK_UNSUPPORTED`. |
+
+The `column_base_v1` template requires `type`, seven distinct element IDs in the fields
+`footing`, `pedestal`, `base_plate`, `column`, `rib_a`, `rib_b`, `assembly`, and the
+dimensions `required_mm` and `tolerance_mm`. It requires the six parts in the same assembly
+and a clearance cut at both inner rib corners adjoining the base plate and the column. This
+template represents the #559 model with the footing and pedestal authored as columns. Its
+dimensions are supplied by the approved task. Extra requirements can specify the plate
+thickness or a recorded column trim. [#559](https://github.com/axisrow/BeamCraft/issues/559)
+
+For each approved corner, a missing record produces `TASK_CORNER_RECORD_MISSING`. A different
+size, tolerance, purpose or bound produces `TASK_CORNER_RECORD_MISMATCH`. BeamCraft measures
+the final solid using the approved dimensions in either case. A missing part or a contradicted
+model fact produces `TASK_MODEL_MISMATCH`. The verdict is `red` if any known requirement
+fails. Ambiguous geometry, invalid or unreadable approval, partial scope and unsupported
+assessments produce `unknown` when no known failure applies. A standalone geometry check with
+no task configuration reports `task.status: "unknown"` and `task_approval_missing` alongside
+the ordinary geometry status.
+
+Task-bound replies carry the verified revision ID, manifest digest, status and approval
+digest when available. `task.findings` reports task facts with a stable code, target, expected
+and actual values. A requirement index addresses the approved array followed by the template's
+expanded requirements. Large values may be summarized in diagnostics. `findings` contains
+the Q03 geometry diagnostics and `findings_total` counts those diagnostics. Write and export
+summaries include `unchecked` rows with the affected elements and reasons for unavailable
+geometry checks.
+`check-model --revision UUID --offset N` reads a retained result even if the head has moved.
+
+Successful model writes and store-backed exports return `checks` alongside their operation
+outcome. They keep their normal exit codes for red and unknown results. An open batch
+reports `draft_not_evaluated` until the commit evaluates the published revision. A completed
+check of the committed store preserves the open batch even when the check is red. When an
+adapter cannot identify a verified model revision, its successful result carries an
+`unknown` reason.
+
+Task-bound write and export replies include the first 32 geometry findings and unchecked
+element rows. BeamCraft sends subsequent pages
+automatically as JSON lines on stderr with `outcome: "task_checks"`. Each page identifies
+the same revision and approval digest, with an `offset` and `next_offset`. A binary
+`export-view --out -` result keeps its bytes on stdout and sends its checks on stderr. The
+same channel carries checks that exceed a command or script reply's budget. The task runner
+must capture both streams and deliver the check reports to the model. The legacy
+`BEAMCRAFT_CHECKS_SUMMARY=off` setting applies to standalone model checks.
+
+The CLI command registry is the operation inventory. `beamcraft commands` exposes the
+current command names, families, access and options. Audit write entries taking `--store`,
+`--workspace-dir`, `--published` or `--model-store`, as well as the project creation, batch
+commit, script and early export routes. Real-binary coverage of the #559 reproduction
+exercises part creation and deletion, trim, assembly membership, authored records, revision
+reads, session and batch updates, publication, and IFC and view exports.

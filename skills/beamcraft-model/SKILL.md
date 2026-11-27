@@ -35,6 +35,12 @@ cargo build --offline -p beamcraft-cli --bins
   exit 4 or 124 replays without knowing the id it never saw.
 - **Exit codes.** 0 success, 2 input or validation refusal, 3 backend unavailable,
   4 outcome unknown, 124 deadline, 130 cancelled.
+- **Approved tasks.** Keep the task runner's `BEAMCRAFT_TASK_SPEC` and
+  `BEAMCRAFT_TASK_SPEC_SHA256` in every BeamCraft call for the task. Capture stdout and
+  stderr, including JSON lines with `outcome: "task_checks"`. Read the task verdict and
+  findings for the resulting revision after edits, publication and export. Write or export
+  success confirms the operation completed even if its checks report red or unknown.
+  The final task check needs the approved digest and the revision being delivered.
 
 ## References - follow the one the task needs
 
