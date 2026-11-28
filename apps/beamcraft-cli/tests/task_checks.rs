@@ -613,7 +613,7 @@ fn unsupported_requirements_and_missing_approval_stay_visible() {
     assert_eq!(text(&standalone, "status"), "green");
     assert_eq!(
         text(at(&standalone, &["task"]), "reason"),
-        "task_approval_missing"
+        "TASK_APPROVAL_MISSING"
     );
     let fixture = bind(
         shared,

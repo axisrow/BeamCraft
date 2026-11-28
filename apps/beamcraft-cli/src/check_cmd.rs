@@ -292,7 +292,7 @@ fn run(args: &[OsString]) -> Run<(Json, u8)> {
     if let Json::Object(entries) = &mut json {
         entries.insert(
             "task".to_owned(),
-            task.unwrap_or_else(|| task_unknown("task_approval_missing")),
+            task.unwrap_or_else(|| task_unknown("TASK_APPROVAL_MISSING")),
         );
         entries.insert(
             "manifest_digest".to_owned(),
@@ -464,7 +464,7 @@ const MODEL_WRITE_ROUTES: &[Route] = &[
 /// are whole-scope regardless of the page, so one finding is enough.
 const SUMMARY_PAGE_LIMIT: usize = 1;
 const TASK_PAGE_LIMIT: usize = 32;
-const MODEL_ROOT_OPTIONS: &[&str] = &["--store", "--workspace-dir", "--published", "--model-store"];
+const MODEL_ROOT_OPTIONS: &[&str] = &["--store", "--workspace-dir", "--model-store"];
 
 /// The window opt-out (contract section 11): `BEAMCRAFT_CHECKS_SUMMARY` set to
 /// exactly `off` omits the summary from write replies for this process; unset
@@ -664,7 +664,7 @@ fn revision_summary(revision: &Revision) -> Run<Json> {
     ]);
     if let Json::Object(entries) = &mut result {
         let Some(task) = task else {
-            entries.insert("task".to_owned(), task_unknown("task_approval_missing"));
+            entries.insert("task".to_owned(), task_unknown("TASK_APPROVAL_MISSING"));
             return Ok(result);
         };
         let unchecked = report
