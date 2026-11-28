@@ -800,11 +800,11 @@ thickness or a recorded column trim. [#559](https://github.com/axisrow/BeamCraft
 
 For each approved corner, a missing record produces `TASK_CORNER_RECORD_MISSING`. A different
 size, tolerance, purpose or bound produces `TASK_CORNER_RECORD_MISMATCH`. BeamCraft measures
-the final solid using the approved dimensions in either case. A missing part or a contradicted
+the final solid against the approved dimensions in either case. A missing part or a contradicted
 model fact produces `TASK_MODEL_MISMATCH`. The verdict is `red` if any known requirement
 fails. Ambiguous geometry, invalid or unreadable approval, partial scope and unsupported
 assessments produce `unknown` when no known failure applies. A standalone geometry check with
-no task configuration reports `task.status: "unknown"` and `task_approval_missing` alongside
+no task configuration reports `task.status: "unknown"` and `TASK_APPROVAL_MISSING` alongside
 the ordinary geometry status.
 
 Task-bound replies carry the verified revision ID, manifest digest, status and approval
@@ -833,8 +833,8 @@ must capture both streams and deliver the check reports to the model. The legacy
 `BEAMCRAFT_CHECKS_SUMMARY=off` setting applies to standalone model checks.
 
 The CLI command registry is the operation inventory. `beamcraft commands` exposes the
-current command names, families, access and options. Audit write entries taking `--store`,
-`--workspace-dir`, `--published` or `--model-store`, as well as the project creation, batch
+current command names, families, access and options. The #559 audit covers write entries
+taking `--store`, `--workspace-dir` or `--model-store`, as well as the project creation, batch
 commit, script and early export routes. Real-binary coverage of the #559 reproduction
 exercises part creation and deletion, trim, assembly membership, authored records, revision
 reads, session and batch updates, publication, and IFC and view exports.
