@@ -136,6 +136,7 @@ mod south_america_materials;
 mod start;
 mod t015_grid_rights;
 mod t018_magnetic;
+mod task_checks;
 mod transform;
 mod u19_scopes;
 mod undo;

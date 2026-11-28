@@ -232,7 +232,14 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
     // Both files are written and synced before either is installed, so a refused report leaves
     // the destinations as they were.
     let prepared = prepare_export(&store, &request, Path::new(out))?;
-    let json = report_json(&prepared.report)?;
+    let mut json = report_json(&prepared.report)?;
+    if crate::check_cmd::task_configured() {
+        let checks = crate::check_cmd::summary_for_store(&store, &json);
+        // The IFC report is streamed separately from bounded control replies.
+        if let Json::Object(entries) = &mut json {
+            entries.insert("checks".to_owned(), checks);
+        }
+    }
     let staged_report = report_path
         .map(|path| {
             let encoded = render(&json).into_bytes();
